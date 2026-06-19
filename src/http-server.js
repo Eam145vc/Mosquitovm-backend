@@ -57,6 +57,8 @@ import { createStripeCheckout, fetchStripeSession } from './stripe.js';
 import * as announceLog from './announce-log.js';
 import { publishVoice, publishCommand } from './mqtt-publisher.js';
 import { buildVoiceMessage } from './amount-to-wavs.js';
+import { startLatency, markVoicePublished } from './latency.js';
+import { getStats as getLatencyStats } from './latency-store.js';
 import { handlePubSubPush } from './pubsub-handler.js';
 import { watchInbox } from './gmail-api.js';
 import { registerSupportRoutes } from './support/support-routes.js';
@@ -826,6 +828,19 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     });
   });
 
+  // Estadísticas de latencia del pipeline de pago (global + por comercio + detalle).
+  app.get('/admin/latency', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    // Resuelve accountId → nombre del comercio (business_name de su orden, o el email).
+    const resolveName = (accountId) => {
+      const ord = listOrders().find((o) => o.account_id === accountId && o.business_name);
+      if (ord) return ord.business_name;
+      const acc = getAccount(accountId);
+      return acc ? acc.email : null;
+    };
+    return getLatencyStats(resolveName);
+  });
+
   app.get('/admin/clients/:id/detail', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
     const acc = getAccount(req.params.id);
@@ -1046,6 +1061,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     }
 
     const body = req.body || {};
+    // Inicia la medición de latencia del pipeline apenas llega el correo (fija receivedAt).
+    const lat = startLatency(body);
     // ForwardEmail puede mandar: { recipients, from, subject, text, html, raw, headers } (JSON)
     // o el raw MIME. Normalizamos.
     let from = '';
@@ -1131,7 +1148,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
         if (result && onPaymentDetected) {
           wasPayment = true;
           logger.info({ alias, accountId: account.id, ...result }, 'payment detected (fe webhook)');
-          onPaymentDetected({ ...result, accountId: account.id, speakerId: account.speaker_id, from, subject });
+          onPaymentDetected({ ...result, accountId: account.id, speakerId: account.speaker_id, from, subject, _lat: lat });
         }
       } else {
         logger.info({ alias, from, knownBank: isKnownBankSender(from) }, 'fe webhook: remitente no confiable, no se procesa como pago');

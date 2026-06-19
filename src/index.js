@@ -7,6 +7,7 @@ import { ImapWatcher } from './imap-watcher.js';
 import { GmailPoller } from './gmail-poller.js';
 import { publishVoice, connect as mqttConnect, close as mqttClose, onSpeakerStatus } from './mqtt-publisher.js';
 import { buildVoiceMessage } from './amount-to-wavs.js';
+import { markVoicePublished } from './latency.js';
 import { startHttp } from './http-server.js';
 import { config } from './config.js';
 import { logger } from './logger.js';
@@ -63,6 +64,12 @@ async function announcePayment(payment) {
     });
     logger.info({ playAudibleMsg, speakerId: payment.speakerId, ...payment }, 'announcing payment');
     await publishVoice(playAudibleMsg, { amount: payment.amount, speakerId: payment.speakerId });
+    // Cierra la medición de latencia del pipeline (solo si vino del webhook FE).
+    if (payment._lat) {
+      markVoicePublished(payment._lat, {
+        accountId: payment.accountId, amount: payment.amount, bank: payment.bank, source: 'fe-webhook',
+      });
+    }
   } catch (e) {
     logger.error({ err: e.message }, 'announce failed');
   }
