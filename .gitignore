@@ -1,0 +1,28 @@
+# Dependencias
+node_modules/
+
+# Secretos y entorno
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+
+# Base de datos / estado runtime
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+data/
+
+# Backups dejados por deploys manuales
+*.bak
+*.bak.*
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
