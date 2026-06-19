@@ -1,0 +1,41 @@
+name: Deploy backend al VM
+
+# Se dispara al hacer push a main. Conecta por SSH al VM, actualiza el código
+# desde GitHub y reinicia el backend con PM2. El .env del VM NO se toca (vive
+# solo en el VM, fuera de git).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}   # permite dispararlo a mano desde la pestaña Actions
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          port: 22022
+          script_stop: true
+          script: |
+            set -e
+            cd /home/deploy/sono/backend
+            echo "==> git fetch + reset a origin/main"
+            git fetch --depth 1 origin main
+            git reset --hard origin/main
+            echo "==> npm install (solo prod)"
+            npm ci --omit=dev --no-audit --no-fund || npm install --omit=dev --no-audit --no-fund
+            echo "==> reiniciar PM2"
+            pm2 restart sono-backend --update-env
+            sleep 3
+            echo "==> healthcheck"
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:47821/healthz)
+            echo "healthz: $code"
+            test "$code" = "200"
