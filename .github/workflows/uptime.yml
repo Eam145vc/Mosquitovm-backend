@@ -1,0 +1,31 @@
+name: Uptime monitor (externo)
+
+# Vigila api.sono.lat desde fuera del VM. Si /healthz no responde 200,
+# avisa por Telegram (Sono_co_bot). El schedule de GitHub es impreciso
+# (puede tardar 5-15 min), pero es gratis y externo al VM.
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # cada ~10 min (GitHub no garantiza puntualidad)
+  workflow_dispatch: {}        # permite probarlo a mano desde Actions
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chequear api.sono.lat/healthz
+        env:
+          BOT: ${{ secrets.TG_BOT_TOKEN }}
+          CHAT: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          set +e
+          code=$(curl -s -o /tmp/body -w "%{http_code}" --max-time 25 https://api.sono.lat/healthz)
+          echo "HTTP $code"
+          if [ "$code" = "200" ]; then
+            echo "OK — api.sono.lat responde"
+            exit 0
+          fi
+          echo "CAIDO (HTTP $code) — avisando por Telegram"
+          MSG="🔴 ALERTA Sono: api.sono.lat NO responde (HTTP $code). El VM o el backend pueden estar caidos. Revisar: https://github.com/${GITHUB_REPOSITORY}/actions"
+          curl -s -X POST "https://api.telegram.org/bot${BOT}/sendMessage" \
+            -d "chat_id=${CHAT}" --data-urlencode "text=${MSG}" > /dev/null
+          exit 1
