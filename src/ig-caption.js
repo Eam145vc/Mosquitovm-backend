@@ -15,6 +15,9 @@ Eres el community manager de Sonó (sono.lat): un altavoz IoT que anuncia por vo
 QR que recibe un comercio en Colombia ("Recibiste cinco mil pesos"). El público son dueños
 de comercios y emprendedores colombianos.
 
+IMPORTANTE: "Sonó" es el NOMBRE de la marca (el altavoz de pagos), NO la palabra "sueño"
+ni "dormir". SIEMPRE escribe en ESPAÑOL de Colombia. NUNCA en portugués ni otro idioma.
+
 Tu tarea: mirar la imagen o video adjunto y escribir TRES (3) opciones DISTINTAS de CAPTION
 para un post de Instagram, con ángulos diferentes (ej: una emocional/del dolor, otra directa
 al beneficio, otra más fresca/divertida). Cada una debe poder publicarse tal cual.
@@ -87,8 +90,12 @@ export async function generateCaption(buffer, mimeType, hint = '') {
     if (!raw) throw new Error('Gemini no devolvió nada');
 
     const parsed = safeParse(raw);
-    let captions = Array.isArray(parsed?.captions) ? parsed.captions : null;
-    // Fallback: si no vino el JSON esperado, usar el texto crudo como 1 caption.
+    // Gemini puede devolver {"captions":[...]} O un array directo [...]. Aceptar ambos.
+    let captions = null;
+    if (Array.isArray(parsed)) captions = parsed;
+    else if (Array.isArray(parsed?.captions)) captions = parsed.captions;
+    // Fallback: si no se pudo parsear como array, usar el texto crudo como 1 caption
+    // (quitando fences). Mejor 1 caption limpio que el JSON crudo con comillas/escapes.
     if (!captions || captions.length === 0) {
       const single = raw.replace(/^```[a-z]*\n?/i, '').replace(/```$/, '').trim();
       captions = [single];
@@ -103,13 +110,16 @@ export async function generateCaption(buffer, mimeType, hint = '') {
   }
 }
 
-// Parseo tolerante del JSON (puede venir envuelto en ```json … ```).
+// Parseo tolerante del JSON (puede venir envuelto en ```json … ```, como objeto o array).
 function safeParse(raw) {
   if (!raw) return null;
   let s = raw.trim();
   if (s.startsWith('```')) s = s.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
   try { return JSON.parse(s); } catch {}
-  const m = s.match(/\{[\s\S]*\}/);
-  if (m) { try { return JSON.parse(m[0]); } catch {} }
+  // Buscar el primer array [...] o el primer objeto {...}, lo que aparezca antes.
+  const arr = s.match(/\[[\s\S]*\]/);
+  if (arr) { try { return JSON.parse(arr[0]); } catch {} }
+  const obj = s.match(/\{[\s\S]*\}/);
+  if (obj) { try { return JSON.parse(obj[0]); } catch {} }
   return null;
 }
