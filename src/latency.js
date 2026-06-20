@@ -82,16 +82,21 @@ function extractLastReceived(body) {
  * Devuelve un objeto que luego se completa con markVoicePublished().
  */
 export function startLatency(body) {
-  const receivedAt = Date.now();           // [C]
-  const bankDate = extractBankDate(body);  // [A]
-  const feReceived = extractLastReceived(body); // [B]
+  const receivedAt = Date.now();           // [C] llegada al backend
+  // [A] fecha del banco: el MX la manda en body.date (ISO); fallback a headers.
+  const bankDate = body?.date ? parseDate(body.date) : extractBankDate(body);
+  // [B] cuándo el MX (mx.sono.lat) recibió el correo del banco. Reloj del MX,
+  //     mucho más preciso que el header Date (que es resolución de segundos del banco).
+  const mxReceived = Number(body?.receivedAtMs) || null;
   return {
     receivedAt,
     bankDate,
-    feReceived,
-    // tramos (ms); null si falta el timestamp de origen
-    bankToBackendMs: bankDate ? receivedAt - bankDate : null,    // A→C
-    feToBackendMs: feReceived ? receivedAt - feReceived : null,  // B→C
+    mxReceived,
+    // Banco→Sonó: del Date del banco hasta que el MX lo recibió (lo más cercano al
+    // "viaje real" banco→nosotros). Si no hay mxReceived, usamos receivedAt.
+    bankToBackendMs: bankDate ? (mxReceived || receivedAt) - bankDate : null,
+    // MX→backend: del recibo en el MX hasta el webhook (nuestra red interna).
+    feToBackendMs: mxReceived ? receivedAt - mxReceived : null,
     backendToVoiceMs: null,                                       // C→D (se completa luego)
   };
 }
