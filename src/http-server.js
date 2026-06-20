@@ -990,6 +990,10 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
       return reply.code(401).send({ error: 'unauthorized' });
     }
 
+    // Medición de latencia (igual que /webhook/email-fe). Este endpoint lo usa el MX
+    // propio (mx.sono.lat), así que también debe alimentar el panel /admin → Latencia.
+    const lat = startLatency(req.body || {});
+
     const { alias, from = '', subject = '', text = '', html = '' } = req.body || {};
     if (!alias) return reply.code(400).send({ error: 'alias requerido' });
 
@@ -1013,6 +1017,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
           accountId: account.id,
           speakerId: account.speaker_id,
           from, subject,
+          _lat: lat,
         });
       }
     } catch (e) {
