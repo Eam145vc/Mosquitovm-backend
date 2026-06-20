@@ -91,6 +91,13 @@ const ConfigSchema = z.object({
   // API de ForwardEmail: crea un alias por cliente (recipients = correo + webhook).
   FE_API_TOKEN: z.string().default(''),
 
+  // ---- Instagram (publicar desde el admin con la Graph API) ----
+  // Page Access Token PERMANENTE (token de la página vinculada a la cuenta IG Business).
+  // El IG_USER_ID es el instagram_business_account.id de la página.
+  IG_ACCESS_TOKEN: z.string().default(''),
+  IG_USER_ID: z.string().default(''),
+  IG_GRAPH_VERSION: z.string().default('v25.0'),
+
   // ---- Bot de soporte (Gemini) ----
   GEMINI_API_KEY: z.string().default(''),
   GEMINI_MODEL: z.string().default('gemini-flash-latest'),
@@ -133,5 +140,6 @@ parsed.hasMp = Boolean(parsed.MP_ACCESS_TOKEN);
 parsed.hasStripe = Boolean(parsed.STRIPE_SECRET_KEY);
 parsed.hasEfipay = Boolean(parsed.EFIPAY_TOKEN);
 parsed.hasAdminLogin = Boolean(parsed.ADMIN_USER && parsed.ADMIN_PASS && parsed.ADMIN_TOKEN);
+parsed.hasInstagram = Boolean(parsed.IG_ACCESS_TOKEN && parsed.IG_USER_ID);
 
 export const config = parsed;

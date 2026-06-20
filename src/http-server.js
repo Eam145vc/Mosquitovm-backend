@@ -63,9 +63,16 @@ import { getStats as getLatencyStats } from './latency-store.js';
 import { handlePubSubPush } from './pubsub-handler.js';
 import { watchInbox } from './gmail-api.js';
 import { registerSupportRoutes } from './support/support-routes.js';
+import { publishToInstagram, getInstagramAccount } from './instagram.js';
 
 const QR_DIR = path.join(path.dirname(config.DB_PATH), 'qr');
 fs.mkdirSync(QR_DIR, { recursive: true });
+
+// Archivos temporales para publicar en Instagram. Graph DESCARGA la imagen/video desde
+// una URL pública, así que guardamos el archivo acá y lo servimos en /ig-media/<file>.
+// Se borran tras publicar.
+const IG_DIR = path.join(path.dirname(config.DB_PATH), 'ig-media');
+fs.mkdirSync(IG_DIR, { recursive: true });
 
 const PAID_STATES = ['paid', 'pendiente_qr', 'ready_to_ship', 'shipped'];
 const isPaid = (o) => o && PAID_STATES.includes(o.status);
@@ -104,7 +111,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     methods: ['GET', 'POST', 'PATCH'],
     credentials: true,
   });
-  app.register(fastifyMultipart, { limits: { fileSize: 5 * 1024 * 1024 } });
+  // 100MB: el QR son KBs, pero un reel de Instagram puede pesar decenas de MB.
+  app.register(fastifyMultipart, { limits: { fileSize: 100 * 1024 * 1024, files: 12 } });
 
   const requireAdmin = (req, reply) => {
     if (!config.ADMIN_TOKEN) { reply.code(503).send({ error: 'admin disabled' }); return false; }
@@ -1106,6 +1114,88 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     } catch (e) {
       logger.error({ spkr, err: e.message }, 'admin test cmd failed');
       return reply.code(502).send({ error: 'no se pudo publicar al speaker' });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Instagram (publicar desde el panel admin con la Graph API)
+  // -------------------------------------------------------------------------
+
+  const IG_MIME_EXT = {
+    'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png',
+    'video/mp4': 'mp4', 'video/quicktime': 'mov',
+  };
+  const isVideoMime = (m) => String(m || '').startsWith('video/');
+
+  // Sirve los archivos temporales para que Instagram los descargue. Público a propósito
+  // (Graph entra sin auth), pero con nombre aleatorio (no adivinable) y vida corta.
+  app.get('/ig-media/:file', async (req, reply) => {
+    const name = path.basename(req.params.file); // evita path traversal
+    const fp = path.join(IG_DIR, name);
+    if (!fs.existsSync(fp)) return reply.code(404).send({ error: 'no encontrado' });
+    const ext = path.extname(name).slice(1).toLowerCase();
+    const mime = ext === 'png' ? 'image/png' : ext === 'mp4' ? 'video/mp4'
+      : ext === 'mov' ? 'video/quicktime' : 'image/jpeg';
+    reply.header('Content-Type', mime);
+    return reply.send(fs.readFileSync(fp));
+  });
+
+  // Estado de la integración: si está configurada y, si lo está, datos de la cuenta IG.
+  app.get('/admin/ig/account', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    if (!config.hasInstagram) return { configured: false };
+    try {
+      const acc = await getInstagramAccount();
+      return { configured: true, account: acc };
+    } catch (e) {
+      logger.error({ err: e.message }, 'ig account failed');
+      return { configured: true, account: null, error: e.message };
+    }
+  });
+
+  // Publicar: multipart con N archivos (campo "files") + caption (campo "caption").
+  // 1 archivo = foto/reel · 2+ = carrusel. Los archivos se guardan, se les da URL
+  // pública, se publican vía Graph y se borran.
+  app.post('/admin/ig/publish', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    if (!config.hasInstagram) return reply.code(503).send({ error: 'Instagram no configurado' });
+
+    const saved = []; // {filename, type}
+    let caption = '';
+    try {
+      for await (const part of req.parts()) {
+        if (part.type === 'file') {
+          const ext = IG_MIME_EXT[part.mimetype];
+          if (!ext) { await part.toBuffer(); continue; } // ignorar tipos no soportados
+          const buf = await part.toBuffer();
+          const filename = `${crypto.randomBytes(12).toString('hex')}.${ext}`;
+          fs.writeFileSync(path.join(IG_DIR, filename), buf);
+          saved.push({ filename, type: isVideoMime(part.mimetype) ? 'video' : 'image' });
+        } else if (part.fieldname === 'caption') {
+          caption = String(part.value || '');
+        }
+      }
+
+      if (saved.length === 0) {
+        return reply.code(400).send({ error: 'Subí al menos una imagen o video (jpg/png/mp4).' });
+      }
+      if (saved.length > 10) {
+        return reply.code(400).send({ error: 'Máximo 10 archivos por carrusel.' });
+      }
+
+      const base = config.PUBLIC_BASE_URL.replace(/\/$/, '');
+      const items = saved.map((s) => ({ url: `${base}/ig-media/${s.filename}`, type: s.type }));
+
+      logger.info({ n: items.length, caption: caption.slice(0, 40) }, 'ig: publicando');
+      const result = await publishToInstagram({ items, caption });
+      return { ok: true, ...result };
+    } catch (e) {
+      logger.error({ err: e.message }, 'ig publish failed');
+      return reply.code(502).send({ error: e.message || 'No se pudo publicar en Instagram.' });
+    } finally {
+      for (const s of saved) {
+        try { fs.unlinkSync(path.join(IG_DIR, s.filename)); } catch {}
+      }
     }
   });
 
