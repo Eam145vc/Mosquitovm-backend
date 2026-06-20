@@ -111,11 +111,30 @@ export function getStats(resolveName) {
     lastAt: a.lastAt || null,
   })).sort((x, y) => (y.lastAt || 0) - (x.lastAt || 0));
 
+  // Por BANCO: cada entidad (bancolombia, nequi, daviplata...) tiene latencia muy
+  // distinta (Nequi ~1s, Bancolombia ~5s). Promediarlas juntas engaña; las separamos.
+  const byBank = {};
+  for (const s of samples) {
+    const b = s.bank || 'unknown';
+    if (!byBank[b]) byBank[b] = { bank: b, n: 0, sumBank: 0, nBank: 0, sumUs: 0, nUs: 0, bankVals: [] };
+    const e = byBank[b];
+    e.n += 1;
+    if (s.bankToBackendMs != null) { e.sumBank += s.bankToBackendMs; e.nBank += 1; e.bankVals.push(s.bankToBackendMs); }
+    if (s.backendToVoiceMs != null) { e.sumUs += s.backendToVoiceMs; e.nUs += 1; }
+  }
+  const perBank = Object.values(byBank).map((e) => ({
+    bank: e.bank,
+    n: e.n,
+    avgBankMs: avg(e.sumBank, e.nBank),   // banco→Sonó (la latencia propia de esa entidad)
+    p95BankMs: p95(e.bankVals),
+    avgUsMs: avg(e.sumUs, e.nUs),
+  })).sort((x, y) => y.n - x.n);
+
   // Detalle reciente (últimas 50, más nuevas primero).
   const recent = samples.slice(-50).reverse().map((s) => ({
     ...s,
     name: (resolveName && s.accountId && resolveName(s.accountId)) || null,
   }));
 
-  return { global, perClient, recent };
+  return { global, perBank, perClient, recent };
 }
