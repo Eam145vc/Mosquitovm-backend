@@ -155,6 +155,120 @@ export async function chargeCard(orderId, amountCents, card, payer, browser = nu
   return { status, approved, transactionId: tx.transaction_id || null, redirect, raw: data };
 }
 
+/**
+ * Genera el payment tipo "api" (paso 1 común a PSE/Bre-B/efectivo) → {payment_id, token}.
+ * El customer_payer base lo arma el caller. Devuelve los ids para el paso 2.
+ */
+async function generateApiPayment(orderId, amountCents, description) {
+  const amount = Math.round(amountCents / 100);
+  const gen = await efiPost('/payment/generate-payment', {
+    payment: { description, amount, currency_type: 'COP', checkout_type: 'api' },
+    advanced_options: { references: [orderId] },
+    office: config.EFIPAY_OFFICE,
+  });
+  if (!gen.payment_id || !gen.token) {
+    throw new Error(`EfiPay generate-payment sin id/token: ${JSON.stringify(gen).slice(0, 200)}`);
+  }
+  return gen;
+}
+
+/** POST de checkout sin reintento (no se reintenta un cobro). Devuelve {ok, data, status}. */
+async function checkoutPost(path, body) {
+  const resp = await fetch(`${EFI_API}${path}`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify(body),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    throw new Error(`EfiPay ${path} HTTP ${resp.status}: ${JSON.stringify(data.errors || data.message || data).slice(0, 300)}`);
+  }
+  return data;
+}
+
+/** Saca {status, approved, transactionId, redirect} de una respuesta de checkout. */
+function readCheckoutResult(data) {
+  const tx = data.transaction || {};
+  const status = tx.status || data.status || null;
+  const approved = /aprob|approv/i.test(String(status || ''));
+  // PSE → URL del banco; Bre-B → QR/deeplink; efectivo → cupón.
+  const redirect =
+    data.url || data.redirect || tx.url_bank || tx.bank_url ||
+    data.pse?.bankURL || tx.url_response || null;
+  return { status, approved, transactionId: tx.transaction_id || null, redirect, raw: data };
+}
+
+/**
+ * Cobro PSE embebido. `pse` = { financialInstitutionCode, userType('person'|'company'),
+ * identificationType, identificationNumber, fullName, cellphoneNumber, address, email }.
+ * Devuelve redirect = URL del banco (el resultado final llega por webhook).
+ */
+export async function chargePse(orderId, amountCents, payer, pse, description = 'Sonó · servicio') {
+  if (!config.hasEfipay) throw new Error('EfiPay no configurado (EFIPAY_TOKEN)');
+  const gen = await generateApiPayment(orderId, amountCents, description);
+  const data = await checkoutPost('/payment/transaction-checkout/pse', {
+    payment: { id: gen.payment_id, token: gen.token },
+    customer_payer: { name: payer.name, email: payer.email },
+    pse: {
+      financialInstitutionCode: String(pse.financialInstitutionCode),
+      userType: pse.userType || 'person',
+      identificationType: pse.identificationType || 'CedulaDeCiudadania',
+      identificationNumber: String(pse.identificationNumber),
+      fullName: pse.fullName || payer.name,
+      cellphoneNumber: String(pse.cellphoneNumber || '').replace(/\D/g, ''),
+      address: pse.address || 'No informado',
+      email: pse.email || payer.email,
+      redirect: `${config.FRONTEND_BASE_URL}/activar-pro?order=${orderId}`,
+    },
+  });
+  return readCheckoutResult(data);
+}
+
+/**
+ * Cobro Bre-B embebido. Genera un QR/push a la app del banco vigente 30 min.
+ * `cellphone` = celular del pagador. El resultado final llega por webhook.
+ */
+export async function chargeBreb(orderId, amountCents, payer, cellphone, description = 'Sonó · servicio') {
+  if (!config.hasEfipay) throw new Error('EfiPay no configurado (EFIPAY_TOKEN)');
+  const gen = await generateApiPayment(orderId, amountCents, description);
+  const data = await checkoutPost('/payment/transaction-checkout/bre-b', {
+    payment: { id: gen.payment_id, token: gen.token },
+    customer_payer: { name: payer.name, email: payer.email },
+    breb: { cellphone_number: String(cellphone || '').replace(/\D/g, '') },
+  });
+  return readCheckoutResult(data);
+}
+
+/**
+ * Cobro en efectivo embebido. Genera un cupón para pagar en corresponsal.
+ * `cash` = { network/association_code del corresponsal elegido } (ver available-cash).
+ * El resultado final llega por webhook.
+ */
+export async function chargeCash(orderId, amountCents, payer, cash, description = 'Sonó · servicio') {
+  if (!config.hasEfipay) throw new Error('EfiPay no configurado (EFIPAY_TOKEN)');
+  const gen = await generateApiPayment(orderId, amountCents, description);
+  const data = await checkoutPost('/payment/transaction-checkout/cash', {
+    payment: { id: gen.payment_id, token: gen.token },
+    customer_payer: { name: payer.name, email: payer.email },
+    cash: cash || {},
+  });
+  return readCheckoutResult(data);
+}
+
+/** Recursos para los formularios del front (lista bancos PSE, tipos de id PSE, efectivos). */
+export async function getResource(name) {
+  if (!config.hasEfipay) throw new Error('EfiPay no configurado (EFIPAY_TOKEN)');
+  const map = {
+    'pse-banks': '/resources/checkout/pse-banks',
+    'pse-id-types': '/resources/checkout/pse-identification-types',
+    'cash': '/resources/checkout/available-cash',
+    'methods': '/resources/available-payment-methods',
+  };
+  const path = map[name];
+  if (!path) throw new Error(`recurso desconocido: ${name}`);
+  const resp = await fetch(`${EFI_API}${path}`, { headers: authHeaders() });
+  if (!resp.ok) throw new Error(`EfiPay ${path} HTTP ${resp.status}`);
+  return resp.json();
+}
+
 /** Consulta el estado de una transacción/pago por su id. Devuelve el objeto o null. */
 export async function fetchEfiTransaction(transactionId) {
   if (!config.hasEfipay) return null;

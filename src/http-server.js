@@ -54,7 +54,7 @@ import { isChangeConfirmation } from './change-confirm.js';
 import { isTrustedBankEmail, isKnownBankSender } from './sender-filter.js';
 import { forwardPayment, paymentRedirectUrl, fetchPayment, paymentIdFromWebhook, createPreference } from './mercadopago.js';
 import { createStripeCheckout, fetchStripeSession } from './stripe.js';
-import { generatePaymentLink, chargeCard, fetchEfiTransaction, isValidEfiWebhook, parseEfiWebhook } from './efipay.js';
+import { generatePaymentLink, chargeCard, chargePse, chargeBreb, chargeCash, getResource, fetchEfiTransaction, isValidEfiWebhook, parseEfiWebhook } from './efipay.js';
 import * as announceLog from './announce-log.js';
 import { publishVoice, publishCommand } from './mqtt-publisher.js';
 import { buildVoiceMessage } from './amount-to-wavs.js';
@@ -311,6 +311,65 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
         error: 'No pudimos procesar el pago. Revisá los datos de la tarjeta o probá con otra.',
         detail: e.message,
       });
+    }
+  });
+
+  // Recursos de EfiPay para los formularios del front (bancos PSE, tipos de id, efectivos).
+  // Cacheados 1h en memoria (cambian rara vez). name ∈ pse-banks|pse-id-types|cash|methods.
+  const efiResCache = new Map();
+  app.get('/checkout/efipay-resources/:name', async (req, reply) => {
+    if (!config.hasEfipay) return reply.code(503).send({ error: 'no configurado' });
+    const name = req.params.name;
+    const hit = efiResCache.get(name);
+    if (hit && Date.now() - hit.t < 3600_000) return hit.data;
+    try {
+      const data = await getResource(name);
+      efiResCache.set(name, { data, t: Date.now() });
+      return data;
+    } catch (e) {
+      logger.error({ name, err: e.message }, 'efipay resource failed');
+      return reply.code(502).send({ error: 'no pudimos cargar el recurso' });
+    }
+  });
+
+  // Cobro EfiPay por PSE / Bre-B / efectivo. Devuelve redirect (banco/QR/cupón); el
+  // resultado FINAL llega por /webhook/efipay (estos métodos no aprueban al instante).
+  app.post('/checkout/efipay-alt', async (req, reply) => {
+    if (!config.hasEfipay) return reply.code(503).send({ error: 'checkout no configurado' });
+    const { orderId, method, payer, pse, breb_cellphone, cash } = req.body || {};
+    const order = getOrder(orderId);
+    if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
+    if (isPaid(order)) return { status: 'approved', approved: true };
+    if (!payer?.email || !payer?.name) return reply.code(400).send({ error: 'faltan datos del pagador' });
+    try {
+      let result;
+      if (method === 'pse') {
+        if (!pse?.financialInstitutionCode || pse.financialInstitutionCode === '0') {
+          return reply.code(400).send({ error: 'elegí tu banco' });
+        }
+        result = await chargePse(orderId, order.amount_cents, payer, { ...pse, address: pse.address || order.address });
+      } else if (method === 'breb') {
+        const cel = breb_cellphone || order.phone;
+        if (!cel) return reply.code(400).send({ error: 'falta el celular' });
+        result = await chargeBreb(orderId, order.amount_cents, payer, cel);
+      } else if (method === 'cash') {
+        result = await chargeCash(orderId, order.amount_cents, payer, cash || {});
+      } else {
+        return reply.code(400).send({ error: 'método inválido' });
+      }
+      // No marcamos pagado acá: PSE/Bre-B/cash confirman por webhook. Solo si ya aprobó.
+      if (result.approved) {
+        const nextCharge = Date.now() + 365 * 24 * 3600 * 1000;
+        updateOrder(orderId, {
+          status: 'pendiente_qr', wompi_txn_id: String(result.transactionId || ''),
+          mp_payer_email: payer.email, next_charge_at: nextCharge,
+        });
+      }
+      logger.info({ orderId, method, status: result.status, hasRedirect: Boolean(result.redirect) }, 'efipay alt iniciado');
+      return { status: result.status, approved: result.approved, redirect: result.redirect };
+    } catch (e) {
+      logger.error({ orderId, method, err: e.message }, 'efipay alt failed');
+      return reply.code(502).send({ error: 'No pudimos iniciar el pago. Probá de nuevo.', detail: e.message });
     }
   });
 
