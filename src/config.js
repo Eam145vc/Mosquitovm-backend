@@ -74,6 +74,8 @@ const ConfigSchema = z.object({
   EMAIL_WEBHOOK_SECRET: z.string().default(''),
   // Dominio de los alias (ej. 'sono.lat' → alias juan-abc@sono.lat).
   MAIL_DOMAIN: z.string().default('sono.lat'),
+  // Subdominio (MX = Forward Email) donde se crean los aliases para reenvío al cliente.
+  FWD_DOMAIN: z.string().default('fwd.sono.lat'),
   // API de Cloudflare (legacy, ya no se usa — migrado a ForwardEmail).
   CF_API_TOKEN: z.string().default(''),
   CF_ACCOUNT_ID: z.string().default(''),

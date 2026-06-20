@@ -16,15 +16,17 @@ import { randomBytes } from 'node:crypto';
 
 const FE_API = 'https://api.forwardemail.net/v1';
 
+// Dominio donde se crean los aliases en Forward Email. Con la arquitectura nueva
+// (MX propio mx.sono.lat), el correo del banco llega a NUESTRO server, que lo reenvía
+// a <alias>@fwd.sono.lat. Forward Email recibe ahí y lo entrega al correo del cliente.
+// Por eso el alias se crea en fwd.sono.lat (no en sono.lat, cuyo MX ya es nuestro server).
+function fwdDomain() {
+  return config.FWD_DOMAIN || `fwd.${config.MAIL_DOMAIN}`;
+}
+
 function authHeader() {
   // Basic auth: usuario = token, password vacío.
   return 'Basic ' + Buffer.from(`${config.FE_API_TOKEN}:`).toString('base64');
-}
-
-/** URL del webhook (incluye el secreto) que recibe cada correo del alias. */
-function webhookUrl() {
-  const base = (config.PUBLIC_BASE_URL || 'https://api.sono.lat').replace(/\/$/, '');
-  return `${base}/webhook/email-fe?key=${encodeURIComponent(config.EMAIL_WEBHOOK_SECRET)}`;
 }
 
 /** Genera un nombre de alias legible + sufijo aleatorio: "soyjuan@gmail.com" -> "soyjuan-k3f9". */
@@ -46,10 +48,13 @@ export async function createClientAlias({ name, forwardTo }) {
     logger.warn('forwardemail: FE_API_TOKEN no configurado, salteando creación de alias');
     return { skipped: true };
   }
-  const recipients = [forwardTo, webhookUrl()].join(',');
+  // Recipient = SOLO el correo del cliente. El webhook ya NO va acá: el MX propio
+  // (mx.sono.lat) recibe del banco, llama al webhook y reenvía a este alias en fwd.
+  const recipients = forwardTo;
+  const domain = fwdDomain();
   try {
     const params = new URLSearchParams({ name, recipients, is_enabled: 'true' });
-    const resp = await fetch(`${FE_API}/domains/${config.MAIL_DOMAIN}/aliases`, {
+    const resp = await fetch(`${FE_API}/domains/${domain}/aliases`, {
       method: 'POST',
       headers: {
         Authorization: authHeader(),
@@ -75,14 +80,15 @@ export async function createClientAlias({ name, forwardTo }) {
 /** Borra un alias por nombre (busca su id primero). Best-effort, no crítico. */
 export async function deleteClientAlias(name) {
   if (!config.FE_API_TOKEN) return { skipped: true };
+  const domain = fwdDomain();
   try {
-    const list = await fetch(`${FE_API}/domains/${config.MAIL_DOMAIN}/aliases?name=${encodeURIComponent(name)}`, {
+    const list = await fetch(`${FE_API}/domains/${domain}/aliases?name=${encodeURIComponent(name)}`, {
       headers: { Authorization: authHeader() },
     });
     const arr = await list.json();
     const hit = Array.isArray(arr) ? arr.find((a) => a.name === name) : null;
     if (!hit) return { ok: true, notFound: true };
-    const del = await fetch(`${FE_API}/domains/${config.MAIL_DOMAIN}/aliases/${hit.id}`, {
+    const del = await fetch(`${FE_API}/domains/${domain}/aliases/${hit.id}`, {
       method: 'DELETE',
       headers: { Authorization: authHeader() },
     });
