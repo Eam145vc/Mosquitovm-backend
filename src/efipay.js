@@ -195,10 +195,17 @@ function readCheckoutResult(data) {
     data.pse?.bankURL || tx.url_response || null;
   // Bre-B: qr_breb.qr_code_image (data URI/PNG) o qr_code_data (string EMVCo) para
   // mostrar el QR DENTRO de sono.lat. En modo test vienen null (solo producción).
+  // ⚠️ EfiPay a veces serializa el base64 como bytestring de Python: b'iVBOR...' →
+  // hay que pelar el prefijo b' y la comilla final, sino la imagen queda rota.
+  const cleanB64 = (v) => {
+    if (typeof v !== 'string') return v || null;
+    const m = v.match(/^b['"](.*)['"]$/s); // b'....' o b"...."
+    return m ? m[1] : v;
+  };
   const qrSrc = data.qr_breb || tx.qr_breb || {};
-  const qr = (qrSrc.qr_code_image || qrSrc.qr_code_data)
-    ? { image: qrSrc.qr_code_image || null, data: qrSrc.qr_code_data || null }
-    : null;
+  const qrImage = cleanB64(qrSrc.qr_code_image);
+  const qrData = cleanB64(qrSrc.qr_code_data);
+  const qr = (qrImage || qrData) ? { image: qrImage || null, data: qrData || null } : null;
   return { status, approved, transactionId: tx.transaction_id || null, redirect, qr, raw: data };
 }
 
