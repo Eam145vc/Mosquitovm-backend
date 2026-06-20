@@ -59,6 +59,15 @@ const ConfigSchema = z.object({
   // Servicio anual (dispositivo gratis). 200.000 COP = 20.000.000 centavos.
   PRICE_COP_CENTS: z.coerce.number().int().default(20000000),
 
+  // ---- Checkout EfiPay (pasarela colombiana, comercio 5498) ----
+  // Token del panel (Desarrollador API key). Pago por link (todos los métodos) +
+  // suscripción recurrente por tarjeta. Host: https://sag.efipay.co
+  EFIPAY_TOKEN: z.string().default(''),
+  // ID de sucursal del comercio (Principal = 6055).
+  EFIPAY_OFFICE: z.coerce.number().int().default(6055),
+  // Token Webhooks del panel, para validar las notificaciones entrantes.
+  EFIPAY_WEBHOOK_TOKEN: z.string().default(''),
+
   // ---- Frontend (sono-web) para redirects del wizard ----
   FRONTEND_BASE_URL: z.string().url().default('http://localhost:3000'),
 
@@ -122,6 +131,7 @@ parsed.hasOAuth = Boolean(parsed.GOOGLE_CLIENT_ID && parsed.GOOGLE_CLIENT_SECRET
 parsed.hasMsOAuth = Boolean(parsed.MICROSOFT_CLIENT_ID && parsed.MICROSOFT_CLIENT_SECRET);
 parsed.hasMp = Boolean(parsed.MP_ACCESS_TOKEN);
 parsed.hasStripe = Boolean(parsed.STRIPE_SECRET_KEY);
+parsed.hasEfipay = Boolean(parsed.EFIPAY_TOKEN);
 parsed.hasAdminLogin = Boolean(parsed.ADMIN_USER && parsed.ADMIN_PASS && parsed.ADMIN_TOKEN);
 
 export const config = parsed;

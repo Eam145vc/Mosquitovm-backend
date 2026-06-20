@@ -54,6 +54,7 @@ import { isChangeConfirmation } from './change-confirm.js';
 import { isTrustedBankEmail, isKnownBankSender } from './sender-filter.js';
 import { forwardPayment, paymentRedirectUrl, fetchPayment, paymentIdFromWebhook, createPreference } from './mercadopago.js';
 import { createStripeCheckout, fetchStripeSession } from './stripe.js';
+import { generatePaymentLink, chargeCard, fetchEfiTransaction, isValidEfiWebhook, parseEfiWebhook } from './efipay.js';
 import * as announceLog from './announce-log.js';
 import { publishVoice, publishCommand } from './mqtt-publisher.js';
 import { buildVoiceMessage } from './amount-to-wavs.js';
@@ -179,14 +180,19 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
       // diagnóstico MP: solo orderId + publicKey, el front monta el Brick directo
       return { orderId, amount: Math.round(amountCents / 100), publicKey: config.MP_PUBLIC_KEY };
     }
-    if (config.hasStripe) {
+    // EfiPay embebido: el front monta su propio formulario de tarjeta y cobra por
+    // /checkout/efipay-pay. Acá solo devolvemos orderId + monto (sin proveedor externo).
+    if (config.hasEfipay) {
+      return { orderId, amount: Math.round(amountCents / 100), provider: 'efipay' };
+    }
+    if (!checkoutUrl && config.hasStripe) {
       try {
         stripeClientSecret = await createStripeCheckout(orderId, amountCents);
       } catch (e) {
         logger.error({ orderId, err: e.message }, 'stripe checkout failed');
       }
     }
-    if (!stripeClientSecret) {
+    if (!checkoutUrl && !stripeClientSecret) {
       try {
         checkoutUrl = await createPreference(orderId, amountCents);
       } catch (e) {
@@ -257,6 +263,57 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     }
   });
 
+  // Pago EMBEBIDO con EfiPay: el front manda los datos de tarjeta, cobramos por API.
+  // ⚠️ Recibe datos PCI (número de tarjeta). NO loguear req.body. El monto se fuerza
+  // desde la orden (nunca confiar en el front).
+  app.post('/checkout/efipay-pay', async (req, reply) => {
+    if (!config.hasEfipay) return reply.code(503).send({ error: 'checkout no configurado' });
+    const { orderId, card, payer, browser_information } = req.body || {};
+    const order = getOrder(orderId);
+    if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
+    if (isPaid(order)) return { status: 'approved' };
+    if (!card?.number || !card?.cvv || !card?.datetime || !card?.holder) {
+      return reply.code(400).send({ error: 'faltan datos de la tarjeta' });
+    }
+    if (!payer?.email || !payer?.name) {
+      return reply.code(400).send({ error: 'faltan datos del pagador' });
+    }
+    try {
+      // Completamos el payer con los datos de envío de la orden (EfiPay exige dirección).
+      const fullPayer = {
+        name: payer.name,
+        email: payer.email,
+        city: payer.city || order.city || 'Bogota',
+        state: payer.state || order.city || 'Bogota',
+        address1: payer.address1 || order.address || 'No informado',
+        address2: payer.address2 || order.address || 'No informado',
+        zipCode: payer.zipCode || '110111',
+      };
+      const cardWithPhone = { ...card, phone: card.phone || order.phone };
+      const result = await chargeCard(
+        orderId, order.amount_cents, cardWithPhone, fullPayer, browser_information || null, 'Sonó · servicio',
+      );
+      if (result.approved) {
+        const nextCharge = Date.now() + 365 * 24 * 3600 * 1000;
+        updateOrder(orderId, {
+          status: 'pendiente_qr', wompi_txn_id: String(result.transactionId || ''),
+          mp_payer_email: payer.email, next_charge_at: nextCharge,
+        });
+        logger.info({ orderId, txn: result.transactionId }, 'pago aprobado (efipay embebido)');
+      } else {
+        logger.info({ orderId, status: result.status }, 'efipay embebido no aprobado');
+      }
+      return { status: result.status, approved: result.approved, redirect: result.redirect };
+    } catch (e) {
+      // e.message NO contiene datos de tarjeta (chargeCard solo expone errors/message de EfiPay).
+      logger.error({ orderId, err: e.message }, 'efipay embebido failed');
+      return reply.code(502).send({
+        error: 'No pudimos procesar el pago. Revisá los datos de la tarjeta o probá con otra.',
+        detail: e.message,
+      });
+    }
+  });
+
   // Webhook de MercadoPago: notifica cambios de la suscripción y los cobros recurrentes.
   app.post('/webhook/mp', async (req, reply) => {
     reply.code(200).send({ ok: true }); // responder rápido
@@ -276,6 +333,30 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
         }
       } catch (e) {
         logger.error({ err: e.message }, 'mp webhook error');
+      }
+    });
+  });
+
+  // Webhook de EfiPay: notifica el resultado del pago por link. Conciliamos por la
+  // referencia (= orderId, que mandamos en advanced_options.references al generar el link).
+  app.post('/webhook/efipay', async (req, reply) => {
+    if (!isValidEfiWebhook(req)) return reply.code(401).send({ error: 'token invalido' });
+    reply.code(200).send({ ok: true }); // responder rápido
+    setImmediate(async () => {
+      try {
+        const { reference, status, transactionId } = parseEfiWebhook(req);
+        if (!reference) return;
+        const order = getOrder(String(reference));
+        if (!order) return;
+        const ok = /aprob|approv|exito|success|paid/i.test(String(status || ''));
+        if (ok && !isPaid(order)) {
+          updateOrder(order.id, { status: 'pendiente_qr', wompi_txn_id: String(transactionId || '') });
+          logger.info({ orderId: order.id, txn: transactionId }, 'pago aprobado (efipay webhook)');
+        } else {
+          logger.info({ orderId: order.id, status }, 'efipay webhook (no aprobado)');
+        }
+      } catch (e) {
+        logger.error({ err: e.message }, 'efipay webhook error');
       }
     });
   });
