@@ -1172,9 +1172,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
         }
       }
       if (!buffer) return reply.code(400).send({ error: 'Subí una imagen o video para analizar.' });
-      const caption = await generateCaption(buffer, mimeType, hint);
-      logger.info({ mimeType, len: caption.length }, 'ig: caption generado');
-      return { ok: true, caption };
+      const captions = await generateCaption(buffer, mimeType, hint);
+      logger.info({ mimeType, n: captions.length }, 'ig: captions generados');
+      return { ok: true, captions };
     } catch (e) {
       logger.error({ err: e.message }, 'ig caption failed');
       return reply.code(502).send({ error: e.message || 'No se pudo generar el caption.' });
