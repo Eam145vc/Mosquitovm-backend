@@ -157,7 +157,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
   // por el dispositivo (la mensualidad de $30.000 va por suscripción aparte).
   // "test" = orden de diagnóstico de la página /test-mp ($5.000, va directo al
   // Brick de MercadoPago sin Stripe ni Checkout Pro). El admin la ve como TEST.
-  const PLAN_PRICES_CENTS = { anual: 29_900_000, mensual: 8_900_000, test: 500_000 };
+  const PLAN_PRICES_CENTS = { anual: 19_900_000, mensual: 8_900_000, test: 500_000 };
 
   // Paso 1: crea la orden con los datos de envío. Devuelve el monto (pesos) y la public key
   // para que el front renderice el formulario de tarjeta (Bricks) embebido.
