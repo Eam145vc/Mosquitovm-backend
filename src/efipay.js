@@ -184,16 +184,22 @@ async function checkoutPost(path, body) {
   return data;
 }
 
-/** Saca {status, approved, transactionId, redirect} de una respuesta de checkout. */
+/** Saca {status, approved, transactionId, redirect, qr} de una respuesta de checkout. */
 function readCheckoutResult(data) {
   const tx = data.transaction || {};
   const status = tx.status || data.status || null;
   const approved = /aprob|approv/i.test(String(status || ''));
-  // PSE → URL del banco; Bre-B → QR/deeplink; efectivo → cupón.
+  // PSE → URL del banco; Bre-B → QR (embebible); efectivo → cupón.
   const redirect =
     data.url || data.redirect || tx.url_bank || tx.bank_url ||
     data.pse?.bankURL || tx.url_response || null;
-  return { status, approved, transactionId: tx.transaction_id || null, redirect, raw: data };
+  // Bre-B: qr_breb.qr_code_image (data URI/PNG) o qr_code_data (string EMVCo) para
+  // mostrar el QR DENTRO de sono.lat. En modo test vienen null (solo producción).
+  const qrSrc = data.qr_breb || tx.qr_breb || {};
+  const qr = (qrSrc.qr_code_image || qrSrc.qr_code_data)
+    ? { image: qrSrc.qr_code_image || null, data: qrSrc.qr_code_data || null }
+    : null;
+  return { status, approved, transactionId: tx.transaction_id || null, redirect, qr, raw: data };
 }
 
 /**

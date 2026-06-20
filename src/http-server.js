@@ -92,6 +92,7 @@ function orderView(o) {
     hasQr: Boolean(o.qr_path),
     hasShipping: Boolean(o.business_name),
     payerEmail: o.mp_payer_email || null,  // para pre-rellenar el correo del método redirect
+    customerEmail: o.customer_email || null, // correo del checkout, para prellenar el onboarding
   };
 }
 
@@ -162,14 +163,19 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
   // Paso 1: crea la orden con los datos de envío. Devuelve el monto (pesos) y la public key
   // para que el front renderice el formulario de tarjeta (Bricks) embebido.
   app.post('/checkout/create', async (req, reply) => {
-    if (!config.hasMp) return reply.code(503).send({ error: 'checkout no configurado' });
-    const { business_name, bank, address, city, phone, plan } = req.body || {};
+    if (!config.hasEfipay && !config.hasStripe && !config.hasMp) {
+      return reply.code(503).send({ error: 'checkout no configurado' });
+    }
+    const { business_name, bank, address, city, phone, email, plan } = req.body || {};
     if (!business_name || !address || !phone) {
       return reply.code(400).send({ error: 'faltan nombre, direccion o telefono' });
     }
     const amountCents = PLAN_PRICES_CENTS[plan] ?? PLAN_PRICES_CENTS.anual;
     const orderId = createOrder({ amountCents });            // external_reference = orderId
-    updateOrder(orderId, { business_name, bank: bank || null, address, city: city || null, phone });
+    updateOrder(orderId, {
+      business_name, bank: bank || null, address, city: city || null, phone,
+      customer_email: email || null,
+    });
     logger.info({ orderId, plan: plan || 'anual', amountCents, business_name }, 'orden creada');
     // Proveedor de pago: 1º Stripe embebido (dentro de sono.lat; la cuenta MP no
     // procesa por API directa, error 412/9510) → 2º Checkout Pro de MercadoPago
@@ -365,8 +371,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
           mp_payer_email: payer.email, next_charge_at: nextCharge,
         });
       }
-      logger.info({ orderId, method, status: result.status, hasRedirect: Boolean(result.redirect) }, 'efipay alt iniciado');
-      return { status: result.status, approved: result.approved, redirect: result.redirect };
+      logger.info({ orderId, method, status: result.status, hasRedirect: Boolean(result.redirect), hasQr: Boolean(result.qr) }, 'efipay alt iniciado');
+      // Bre-B con QR → el front lo muestra embebido (no redirige). PSE/cash → redirect.
+      return { status: result.status, approved: result.approved, redirect: result.redirect, qr: result.qr || null };
     } catch (e) {
       logger.error({ orderId, method, err: e.message }, 'efipay alt failed');
       return reply.code(502).send({ error: 'No pudimos iniciar el pago. Probá de nuevo.', detail: e.message });

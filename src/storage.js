@@ -94,6 +94,7 @@ export function openDb() {
       address TEXT,
       city TEXT,
       phone TEXT,
+      customer_email TEXT,
       qr_path TEXT,
       qr_mime TEXT,
       email_method TEXT,
@@ -141,6 +142,7 @@ export function openDb() {
     ['mp_card_id', 'TEXT'],
     ['mp_payer_email', 'TEXT'],
     ['next_charge_at', 'INTEGER'],
+    ['customer_email', 'TEXT'], // correo del paso 1 (sirve para prellenar el onboarding)
   ]);
   db.exec('CREATE INDEX IF NOT EXISTS idx_orders_plan ON orders(mp_plan_id)');
   ensureColumns('accounts', [
@@ -423,7 +425,7 @@ export function updateOrder(id, patch) {
   openDb();
   const allowed = new Set([
     'account_id', 'status', 'wompi_reference', 'wompi_txn_id',
-    'business_name', 'bank', 'address', 'city', 'phone',
+    'business_name', 'bank', 'address', 'city', 'phone', 'customer_email',
     'qr_path', 'qr_mime', 'email_method', 'mp_plan_id',
     'mp_customer_id', 'mp_card_id', 'mp_payer_email', 'next_charge_at',
   ]);
