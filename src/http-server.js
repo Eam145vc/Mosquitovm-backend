@@ -63,8 +63,9 @@ import { getStats as getLatencyStats } from './latency-store.js';
 import { handlePubSubPush } from './pubsub-handler.js';
 import { watchInbox } from './gmail-api.js';
 import { registerSupportRoutes } from './support/support-routes.js';
-import { publishToInstagram, getInstagramAccount } from './instagram.js';
+import { publishToInstagram, getInstagramAccount, getInstagramMedia } from './instagram.js';
 import { generateCaption } from './ig-caption.js';
+import * as igScheduler from './ig-scheduler.js';
 
 const QR_DIR = path.join(path.dirname(config.DB_PATH), 'qr');
 fs.mkdirSync(QR_DIR, { recursive: true });
@@ -1130,16 +1131,19 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
 
   // Sirve los archivos temporales para que Instagram los descargue. Público a propósito
   // (Graph entra sin auth), pero con nombre aleatorio (no adivinable) y vida corta.
-  app.get('/ig-media/:file', async (req, reply) => {
+  const serveMedia = (dir) => async (req, reply) => {
     const name = path.basename(req.params.file); // evita path traversal
-    const fp = path.join(IG_DIR, name);
+    const fp = path.join(dir, name);
     if (!fs.existsSync(fp)) return reply.code(404).send({ error: 'no encontrado' });
     const ext = path.extname(name).slice(1).toLowerCase();
     const mime = ext === 'png' ? 'image/png' : ext === 'mp4' ? 'video/mp4'
       : ext === 'mov' ? 'video/quicktime' : 'image/jpeg';
     reply.header('Content-Type', mime);
     return reply.send(fs.readFileSync(fp));
-  });
+  };
+  app.get('/ig-media/:file', serveMedia(IG_DIR));
+  // Archivos de posts PROGRAMADOS (Graph los descarga al publicar a la hora indicada).
+  app.get('/ig-scheduled/:file', serveMedia(igScheduler.mediaDir));
 
   // Estado de la integración: si está configurada y, si lo está, datos de la cuenta IG.
   app.get('/admin/ig/account', async (req, reply) => {
@@ -1224,6 +1228,89 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
       for (const s of saved) {
         try { fs.unlinkSync(path.join(IG_DIR, s.filename)); } catch {}
       }
+    }
+  });
+
+  // Feed: últimos posts publicados de la cuenta (grilla tipo perfil).
+  app.get('/admin/ig/media', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    if (!config.hasInstagram) return { media: [] };
+    try {
+      const media = await getInstagramMedia(Number(req.query.limit) || 12);
+      return { media };
+    } catch (e) {
+      logger.error({ err: e.message }, 'ig media failed');
+      return reply.code(502).send({ error: e.message });
+    }
+  });
+
+  // Posts PROGRAMADOS: listar.
+  app.get('/admin/ig/scheduled', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const base = config.PUBLIC_BASE_URL.replace(/\/$/, '');
+    return {
+      posts: igScheduler.list().map((p) => ({
+        id: p.id, caption: p.caption, status: p.status,
+        scheduled_at: p.scheduled_at, created_at: p.created_at,
+        published_at: p.published_at || null, permalink: p.permalink, error: p.error,
+        media: p.files.map((f) => ({ url: `${base}/ig-scheduled/${f.filename}`, type: f.type })),
+      })),
+    };
+  });
+
+  // Programar un post: multipart (files + caption + scheduled_at en epoch ms).
+  app.post('/admin/ig/scheduled', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    if (!config.hasInstagram) return reply.code(503).send({ error: 'Instagram no configurado' });
+    const saved = [];
+    let caption = '', scheduledAt = 0;
+    try {
+      for await (const part of req.parts()) {
+        if (part.type === 'file') {
+          const ext = IG_MIME_EXT[part.mimetype];
+          if (!ext) { await part.toBuffer(); continue; }
+          const buf = await part.toBuffer();
+          const filename = `${crypto.randomBytes(12).toString('hex')}.${ext}`;
+          fs.writeFileSync(path.join(igScheduler.mediaDir, filename), buf);
+          saved.push({ filename, type: isVideoMime(part.mimetype) ? 'video' : 'image' });
+        } else if (part.fieldname === 'caption') {
+          caption = String(part.value || '');
+        } else if (part.fieldname === 'scheduled_at') {
+          scheduledAt = Number(part.value) || 0;
+        }
+      }
+      if (saved.length === 0) return reply.code(400).send({ error: 'Subí al menos una imagen o video.' });
+      if (saved.length > 10) return reply.code(400).send({ error: 'Máximo 10 archivos por carrusel.' });
+      if (!scheduledAt || scheduledAt < Date.now() - 60000) {
+        for (const s of saved) { try { fs.unlinkSync(path.join(igScheduler.mediaDir, s.filename)); } catch {} }
+        return reply.code(400).send({ error: 'Elegí una fecha/hora futura.' });
+      }
+      const post = igScheduler.enqueue(saved, caption, scheduledAt);
+      return { ok: true, id: post.id, scheduled_at: post.scheduled_at };
+    } catch (e) {
+      for (const s of saved) { try { fs.unlinkSync(path.join(igScheduler.mediaDir, s.filename)); } catch {} }
+      logger.error({ err: e.message }, 'ig schedule failed');
+      return reply.code(502).send({ error: e.message || 'No se pudo programar el post.' });
+    }
+  });
+
+  // Cancelar un post programado (borra sus archivos).
+  app.delete('/admin/ig/scheduled/:id', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const ok = igScheduler.remove(req.params.id);
+    if (!ok) return reply.code(404).send({ error: 'post no encontrado' });
+    return { ok: true };
+  });
+
+  // Publicar YA un post programado (adelantar).
+  app.post('/admin/ig/scheduled/:id/publish', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    try {
+      const result = await igScheduler.publishNow(req.params.id);
+      return { ok: true, ...result };
+    } catch (e) {
+      logger.error({ id: req.params.id, err: e.message }, 'ig publishNow failed');
+      return reply.code(502).send({ error: e.message });
     }
   });
 

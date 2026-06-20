@@ -125,11 +125,31 @@ export async function publishToInstagram({ items, caption = '' }) {
 // Devuelve datos de la cuenta IG conectada (para verificar config en el panel).
 export async function getInstagramAccount() {
   if (!config.hasInstagram) return null;
-  const data = await graphGet(IG_USER(), { fields: 'username,name,profile_picture_url,followers_count' });
+  const data = await graphGet(IG_USER(), { fields: 'username,name,profile_picture_url,followers_count,media_count' });
   return {
     username: data.username || null,
     name: data.name || null,
     avatar: data.profile_picture_url || null,
     followers: data.followers_count ?? null,
+    mediaCount: data.media_count ?? null,
   };
+}
+
+// Trae los últimos posts publicados de la cuenta (para la grilla del feed en el panel).
+export async function getInstagramMedia(limit = 12) {
+  if (!config.hasInstagram) return [];
+  const data = await graphGet(`${IG_USER()}/media`, {
+    fields: 'id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count',
+    limit,
+  });
+  return (data.data || []).map((m) => ({
+    id: m.id,
+    caption: m.caption || '',
+    type: m.media_type,                                   // IMAGE | VIDEO | CAROUSEL_ALBUM
+    image: m.media_type === 'VIDEO' ? (m.thumbnail_url || m.media_url) : m.media_url,
+    permalink: m.permalink,
+    timestamp: m.timestamp,
+    likes: m.like_count ?? null,
+    comments: m.comments_count ?? null,
+  }));
 }
