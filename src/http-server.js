@@ -64,6 +64,7 @@ import { handlePubSubPush } from './pubsub-handler.js';
 import { watchInbox } from './gmail-api.js';
 import { registerSupportRoutes } from './support/support-routes.js';
 import { publishToInstagram, getInstagramAccount } from './instagram.js';
+import { generateCaption } from './ig-caption.js';
 
 const QR_DIR = path.join(path.dirname(config.DB_PATH), 'qr');
 fs.mkdirSync(QR_DIR, { recursive: true });
@@ -1150,6 +1151,33 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     } catch (e) {
       logger.error({ err: e.message }, 'ig account failed');
       return { configured: true, account: null, error: e.message };
+    }
+  });
+
+  // Analizar 1 archivo con Gemini Vision y generar un caption de marketing Sonó.
+  // multipart: campo "file" (imagen/video) + opcional "hint" (texto de contexto).
+  app.post('/admin/ig/caption', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    if (!config.GEMINI_API_KEY) return reply.code(503).send({ error: 'IA no configurada (falta GEMINI_API_KEY)' });
+    try {
+      let buffer = null, mimeType = '', hint = '';
+      for await (const part of req.parts()) {
+        if (part.type === 'file' && !buffer) {
+          mimeType = part.mimetype;
+          buffer = await part.toBuffer();
+        } else if (part.type === 'file') {
+          await part.toBuffer();
+        } else if (part.fieldname === 'hint') {
+          hint = String(part.value || '');
+        }
+      }
+      if (!buffer) return reply.code(400).send({ error: 'Subí una imagen o video para analizar.' });
+      const caption = await generateCaption(buffer, mimeType, hint);
+      logger.info({ mimeType, len: caption.length }, 'ig: caption generado');
+      return { ok: true, caption };
+    } catch (e) {
+      logger.error({ err: e.message }, 'ig caption failed');
+      return reply.code(502).send({ error: e.message || 'No se pudo generar el caption.' });
     }
   });
 
