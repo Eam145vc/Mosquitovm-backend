@@ -149,6 +149,8 @@ export function openDb() {
       message_id TEXT,         -- Message-ID del correo (para threading al responder)
       refs TEXT,               -- References del correo (threading)
       replied_at INTEGER,      -- cuándo se respondió desde /admin (NULL = sin responder)
+      direction TEXT NOT NULL DEFAULT 'in',  -- 'in' recibido | 'out' enviado desde el panel
+      to_addr TEXT,            -- destinatario (para los 'out')
       at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_inbox_at ON inbox(at DESC);
@@ -200,6 +202,9 @@ export function openDb() {
     ['message_id', 'TEXT'],
     ['refs', 'TEXT'],
     ['replied_at', 'INTEGER'],
+    // direction: 'in' = recibido (catch-all), 'out' = redactado/enviado desde el panel.
+    ["direction", "TEXT NOT NULL DEFAULT 'in'"],
+    ['to_addr', 'TEXT'],   // a quién va (para los 'out')
   ]);
 
   // Telemetría del speaker (auto-provisioning): el backend escucha speakers/+/status
@@ -617,12 +622,23 @@ export function markInboxReplied(id) {
   return db.prepare('UPDATE inbox SET replied_at = ?, seen = 1 WHERE id = ?').run(Date.now(), id).changes > 0;
 }
 
+/** Guarda un correo SALIENTE redactado desde el panel (historial de enviados). */
+export function saveOutboundMail({ alias, to, subject = '', text = '', messageId = null }) {
+  openDb();
+  const at = Date.now();
+  const info = db.prepare(
+    `INSERT INTO inbox (alias, direction, to_addr, from_addr, subject, text, html, is_payment, seen, message_id, at)
+     VALUES (?, 'out', ?, ?, ?, ?, '', 0, 1, ?, ?)`
+  ).run(alias || null, to || null, `${alias}@sono.lat`, subject || null, String(text || '').slice(0, 20000), messageId || null, at);
+  return { id: info.lastInsertRowid, at };
+}
+
 /** Lista correos del buzón (más recientes primero). Por defecto sin el cuerpo (liviano). */
 export function listInbox({ limit = 100, includeBody = false } = {}) {
   openDb();
   const cols = includeBody
-    ? 'id, alias, account_id, from_addr, subject, text, html, is_payment, seen, replied_at, at'
-    : 'id, alias, account_id, from_addr, subject, is_payment, seen, replied_at, at, length(text) AS text_len';
+    ? 'id, alias, account_id, direction, to_addr, from_addr, subject, text, html, is_payment, seen, replied_at, message_id, refs, at'
+    : 'id, alias, account_id, direction, to_addr, from_addr, subject, is_payment, seen, replied_at, at, length(text) AS text_len';
   return db.prepare(`SELECT ${cols} FROM inbox ORDER BY at DESC LIMIT ?`).all(limit);
 }
 

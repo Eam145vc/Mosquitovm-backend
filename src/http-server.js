@@ -45,7 +45,7 @@ import {
   updateAccountHistory, updateAccountWatch, setAccountForward, markChangeConfirmed,
   paymentsFor, subState, setSubStatus,
   saveInboxMail, listInbox, getInboxMail, markInboxSeen, deleteInboxMail, unseenInboxCount,
-  markInboxReplied,
+  markInboxReplied, saveOutboundMail,
 } from './storage.js';
 import { parseEmail } from './parsers/index.js';
 import { simpleParser } from 'mailparser';
@@ -1010,7 +1010,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     const rows = listInbox({ limit: 200 }).map((m) => ({
       id: m.id,
       alias: m.alias,
+      direction: m.direction || 'in',     // 'in' recibido | 'out' enviado desde el panel
       from: m.from_addr,
+      to: m.to_addr,
       subject: m.subject,
       isPayment: Boolean(m.is_payment),
       seen: Boolean(m.seen),
@@ -1043,11 +1045,45 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     if (!m) return reply.code(404).send({ error: 'no encontrado' });
     markInboxSeen(m.id);
     return {
-      id: m.id, alias: m.alias,
-      from: m.from_addr, subject: m.subject, text: m.text, html: m.html,
+      id: m.id, alias: m.alias, direction: m.direction || 'in',
+      from: m.from_addr, to: m.to_addr, subject: m.subject, text: m.text, html: m.html,
       isPayment: Boolean(m.is_payment), replied: Boolean(m.replied_at),
-      canReply: Boolean(config.MX_SEND_API_URL && m.from_addr), at: m.at,
+      canReply: Boolean(config.MX_SEND_API_URL && m.from_addr && (m.direction || 'in') === 'in'),
+      at: m.at,
     };
+  });
+
+  // Redactar un correo NUEVO desde el panel (tu Gmail personal quedó quemado por el reenvío).
+  // Sale firmado DKIM desde <alias>@sono.lat (vos elegís el alias). Se guarda en el buzón.
+  app.post('/admin/inbox/compose', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    if (!config.MX_SEND_API_URL) return reply.code(501).send({ error: 'Envío saliente no configurado (MX_SEND_API_URL).' });
+    const b = req.body || {};
+    const alias = String(b.alias || 'hola').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '') || 'hola';
+    const to = String(b.to || '').trim();
+    const subject = String(b.subject || '').trim();
+    const text = String(b.text || '');
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return reply.code(400).send({ error: 'Poné un destinatario válido.' });
+    if (!text.trim()) return reply.code(400).send({ error: 'Escribí el mensaje.' });
+
+    try {
+      const resp = await fetch(`${config.MX_SEND_API_URL.replace(/\/$/, '')}/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-sono-secret': config.EMAIL_WEBHOOK_SECRET },
+        body: JSON.stringify({ fromLocal: alias, fromName: 'Sonó', to, subject, text }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data.ok) {
+        logger.error({ alias, to, status: resp.status, data }, 'compose: MX rechazó');
+        return reply.code(502).send({ error: data.error || `MX respondió ${resp.status}` });
+      }
+      saveOutboundMail({ alias, to, subject, text, messageId: data.messageId });
+      logger.info({ alias, to }, 'compose enviado');
+      return { ok: true, messageId: data.messageId };
+    } catch (e) {
+      logger.error({ alias, to, err: e.message }, 'compose error');
+      return reply.code(502).send({ error: e.message });
+    }
   });
 
   // Responder un correo del buzón DESDE el alias que lo recibió (ej. admin@sono.lat),
