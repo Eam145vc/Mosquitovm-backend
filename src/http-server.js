@@ -45,6 +45,7 @@ import {
   updateAccountHistory, updateAccountWatch, setAccountForward, markChangeConfirmed,
   paymentsFor, subState, setSubStatus,
   saveInboxMail, listInbox, getInboxMail, markInboxSeen, deleteInboxMail, unseenInboxCount,
+  markInboxReplied,
 } from './storage.js';
 import { parseEmail } from './parsers/index.js';
 import { simpleParser } from 'mailparser';
@@ -1013,6 +1014,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
       subject: m.subject,
       isPayment: Boolean(m.is_payment),
       seen: Boolean(m.seen),
+      replied: Boolean(m.replied_at),
       hasBody: (m.text_len || 0) > 0,
       at: m.at,
     }));
@@ -1043,8 +1045,52 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     return {
       id: m.id, alias: m.alias,
       from: m.from_addr, subject: m.subject, text: m.text, html: m.html,
-      isPayment: Boolean(m.is_payment), at: m.at,
+      isPayment: Boolean(m.is_payment), replied: Boolean(m.replied_at),
+      canReply: Boolean(config.MX_SEND_API_URL && m.from_addr), at: m.at,
     };
+  });
+
+  // Responder un correo del buzón DESDE el alias que lo recibió (ej. admin@sono.lat),
+  // firmado con DKIM por el MX. Hace threading con el Message-ID original.
+  app.post('/admin/inbox/:id/reply', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    if (!config.MX_SEND_API_URL) return reply.code(501).send({ error: 'Envío saliente no configurado (MX_SEND_API_URL).' });
+    const m = getInboxMail(Number(req.params.id));
+    if (!m) return reply.code(404).send({ error: 'no encontrado' });
+    if (!m.from_addr) return reply.code(400).send({ error: 'el correo no tiene remitente al cual responder' });
+
+    const { text = '', subject } = req.body || {};
+    if (!String(text).trim()) return reply.code(400).send({ error: 'Escribí algo para responder.' });
+
+    const subj = subject || (m.subject && /^re:/i.test(m.subject) ? m.subject : `Re: ${m.subject || ''}`.trim());
+    // Threading: In-Reply-To = Message-ID original; References = refs + Message-ID.
+    const refs = [m.refs, m.message_id].filter(Boolean).join(' ') || undefined;
+    try {
+      const resp = await fetch(`${config.MX_SEND_API_URL.replace(/\/$/, '')}/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-sono-secret': config.EMAIL_WEBHOOK_SECRET },
+        body: JSON.stringify({
+          fromLocal: m.alias || 'admin',   // responde desde admin@sono.lat (el alias que recibió)
+          fromName: 'Sonó',
+          to: m.from_addr,
+          subject: subj,
+          text,
+          inReplyTo: m.message_id || undefined,
+          references: refs,
+        }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data.ok) {
+        logger.error({ id: m.id, status: resp.status, data }, 'inbox reply: MX rechazó');
+        return reply.code(502).send({ error: data.error || `MX respondió ${resp.status}` });
+      }
+      markInboxReplied(m.id);
+      logger.info({ id: m.id, to: m.from_addr, from: `${m.alias}@${config.MAIL_DOMAIN}` }, 'inbox reply enviado');
+      return { ok: true, messageId: data.messageId };
+    } catch (e) {
+      logger.error({ id: m.id, err: e.message }, 'inbox reply error');
+      return reply.code(502).send({ error: e.message });
+    }
   });
 
   app.delete('/admin/inbox/:id', async (req, reply) => {
@@ -1400,15 +1446,15 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     // propio (mx.sono.lat), así que también debe alimentar el panel /admin → Latencia.
     const lat = startLatency(req.body || {});
 
-    const { alias, from = '', subject = '', text = '', html = '' } = req.body || {};
+    const { alias, from = '', subject = '', text = '', html = '', messageId = null, references = null } = req.body || {};
     if (!alias) return reply.code(400).send({ error: 'alias requerido' });
 
     const account = getAccountByAlias(String(alias).toLowerCase());
     if (!account) {
       // Alias desconocido: no reenviamos a ciegas (no sabemos a quién), pero SÍ lo
-      // guardamos en el buzón (catch-all) para verlo en /admin → Buzón. Antes esto
-      // se reenviaba al correo personal; ahora queda en el panel.
-      try { saveInboxMail({ alias, accountId: null, from, subject, text, html, isPayment: false }); }
+      // guardamos en el buzón (catch-all) para verlo y responder en /admin → Buzón.
+      // Antes esto se reenviaba al correo personal; ahora queda en el panel.
+      try { saveInboxMail({ alias, accountId: null, from, subject, text, html, isPayment: false, messageId, references }); }
       catch (e) { logger.error({ alias, err: e.message }, 'inbox save (desconocido) error'); }
       logger.warn({ alias }, 'email webhook: alias desconocido (guardado en buzón)');
       return { ok: true, forwardTo: null };

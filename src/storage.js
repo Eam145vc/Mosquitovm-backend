@@ -146,6 +146,9 @@ export function openDb() {
       html TEXT,
       is_payment INTEGER NOT NULL DEFAULT 0,
       seen INTEGER NOT NULL DEFAULT 0,
+      message_id TEXT,         -- Message-ID del correo (para threading al responder)
+      refs TEXT,               -- References del correo (threading)
+      replied_at INTEGER,      -- cuándo se respondió desde /admin (NULL = sin responder)
       at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_inbox_at ON inbox(at DESC);
@@ -192,6 +195,12 @@ export function openDb() {
     ['announce_outgoing', 'INTEGER NOT NULL DEFAULT 0'],
   ]);
   db.exec('CREATE INDEX IF NOT EXISTS idx_accounts_alias ON accounts(alias)');
+  // Buzón: columnas para threading y estado de respuesta (DBs viejas no las tenían).
+  ensureColumns('inbox', [
+    ['message_id', 'TEXT'],
+    ['refs', 'TEXT'],
+    ['replied_at', 'INTEGER'],
+  ]);
 
   // Telemetría del speaker (auto-provisioning): el backend escucha speakers/+/status
   // y guarda lo último que reportó el aparato. last_seen = visto online por última vez.
@@ -589,25 +598,31 @@ export function paymentsFor(accountId, limit = 50) {
 // Todo correo que llega al MX se guarda acá para verlo en /admin → Buzón.
 
 /** Guarda un correo entrante. accountId NULL = alias desconocido (catch-all). */
-export function saveInboxMail({ alias, accountId = null, from = '', subject = '', text = '', html = '', isPayment = false }) {
+export function saveInboxMail({ alias, accountId = null, from = '', subject = '', text = '', html = '', isPayment = false, messageId = null, references = null }) {
   openDb();
   const at = Date.now();
   // Recortamos el cuerpo para no inflar la DB (el HTML del banco puede ser enorme).
   const t = String(text || '').slice(0, 20000);
   const h = String(html || '').slice(0, 60000);
   const info = db.prepare(
-    `INSERT INTO inbox (alias, account_id, from_addr, subject, text, html, is_payment, at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(alias || null, accountId, from || null, subject || null, t, h, isPayment ? 1 : 0, at);
+    `INSERT INTO inbox (alias, account_id, from_addr, subject, text, html, is_payment, message_id, refs, at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(alias || null, accountId, from || null, subject || null, t, h, isPayment ? 1 : 0, messageId || null, references || null, at);
   return { id: info.lastInsertRowid, at };
+}
+
+/** Marca un correo del buzón como respondido. */
+export function markInboxReplied(id) {
+  openDb();
+  return db.prepare('UPDATE inbox SET replied_at = ?, seen = 1 WHERE id = ?').run(Date.now(), id).changes > 0;
 }
 
 /** Lista correos del buzón (más recientes primero). Por defecto sin el cuerpo (liviano). */
 export function listInbox({ limit = 100, includeBody = false } = {}) {
   openDb();
   const cols = includeBody
-    ? 'id, alias, account_id, from_addr, subject, text, html, is_payment, seen, at'
-    : 'id, alias, account_id, from_addr, subject, is_payment, seen, at, length(text) AS text_len';
+    ? 'id, alias, account_id, from_addr, subject, text, html, is_payment, seen, replied_at, at'
+    : 'id, alias, account_id, from_addr, subject, is_payment, seen, replied_at, at, length(text) AS text_len';
   return db.prepare(`SELECT ${cols} FROM inbox ORDER BY at DESC LIMIT ?`).all(limit);
 }
 

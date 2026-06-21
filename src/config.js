@@ -85,6 +85,9 @@ const ConfigSchema = z.object({
   MAIL_DOMAIN: z.string().default('sono.lat'),
   // Subdominio (MX = Forward Email) donde se crean los aliases para reenvío al cliente.
   FWD_DOMAIN: z.string().default('fwd.sono.lat'),
+  // API HTTP interna del MX propio para ENVIAR correo saliente (responder desde /admin).
+  // Ej. http://86.48.30.120:8025 (auth con EMAIL_WEBHOOK_SECRET). Vacío = responder off.
+  MX_SEND_API_URL: z.string().default(''),
   // API de Cloudflare (legacy, ya no se usa — migrado a ForwardEmail).
   CF_API_TOKEN: z.string().default(''),
   CF_ACCOUNT_ID: z.string().default(''),
