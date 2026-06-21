@@ -44,6 +44,7 @@ import {
   createDevice, getDevice, listDevices, assignDevice, unassignDevice, setDeviceStatus,
   updateAccountHistory, updateAccountWatch, setAccountForward, markChangeConfirmed,
   paymentsFor, subState, setSubStatus,
+  saveInboxMail, listInbox, getInboxMail, markInboxSeen, deleteInboxMail, unseenInboxCount,
 } from './storage.js';
 import { parseEmail } from './parsers/index.js';
 import { simpleParser } from 'mailparser';
@@ -1000,6 +1001,57 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     return getLatencyStats(resolveName);
   });
 
+  // ── Buzón (catch-all): correo que entra al MX a un alias DESCONOCIDO ──
+  // (los de clientes conocidos NO se guardan acá; van al buzón de cada cliente).
+  // Reemplaza el viejo reenvío del catch-all al correo personal. Agrupado por alias.
+  app.get('/admin/inbox', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const rows = listInbox({ limit: 200 }).map((m) => ({
+      id: m.id,
+      alias: m.alias,
+      from: m.from_addr,
+      subject: m.subject,
+      isPayment: Boolean(m.is_payment),
+      seen: Boolean(m.seen),
+      hasBody: (m.text_len || 0) > 0,
+      at: m.at,
+    }));
+    // Resumen por alias: a qué destino llegó cada correo (cuántos, sin leer, pagos).
+    const byAliasMap = new Map();
+    for (const m of rows) {
+      const key = m.alias || '(sin alias)';
+      let g = byAliasMap.get(key);
+      if (!g) {
+        g = { alias: key, count: 0, unseen: 0, payments: 0, lastAt: 0 };
+        byAliasMap.set(key, g);
+      }
+      g.count++;
+      if (!m.seen) g.unseen++;
+      if (m.isPayment) g.payments++;
+      if (m.at > g.lastAt) g.lastAt = m.at;
+    }
+    const byAlias = [...byAliasMap.values()].sort((a, b) => b.lastAt - a.lastAt);
+    return { unseen: unseenInboxCount(), byAlias, mails: rows };
+  });
+
+  // Un correo completo (cuerpo). Al abrirlo lo marca leído.
+  app.get('/admin/inbox/:id', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const m = getInboxMail(Number(req.params.id));
+    if (!m) return reply.code(404).send({ error: 'no encontrado' });
+    markInboxSeen(m.id);
+    return {
+      id: m.id, alias: m.alias,
+      from: m.from_addr, subject: m.subject, text: m.text, html: m.html,
+      isPayment: Boolean(m.is_payment), at: m.at,
+    };
+  });
+
+  app.delete('/admin/inbox/:id', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    return { ok: deleteInboxMail(Number(req.params.id)) };
+  });
+
   app.get('/admin/clients/:id/detail', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
     const acc = getAccount(req.params.id);
@@ -1353,12 +1405,16 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
 
     const account = getAccountByAlias(String(alias).toLowerCase());
     if (!account) {
-      // Alias desconocido: no reenviamos a ciegas (no sabemos a quién). Lo descartamos.
-      logger.warn({ alias }, 'email webhook: alias desconocido');
+      // Alias desconocido: no reenviamos a ciegas (no sabemos a quién), pero SÍ lo
+      // guardamos en el buzón (catch-all) para verlo en /admin → Buzón. Antes esto
+      // se reenviaba al correo personal; ahora queda en el panel.
+      try { saveInboxMail({ alias, accountId: null, from, subject, text, html, isPayment: false }); }
+      catch (e) { logger.error({ alias, err: e.message }, 'inbox save (desconocido) error'); }
+      logger.warn({ alias }, 'email webhook: alias desconocido (guardado en buzón)');
       return { ok: true, forwardTo: null };
     }
 
-    // ¿Es una notificación de pago? Parseamos SOLO para extraer monto+banco. No guardamos el correo.
+    // ¿Es una notificación de pago? Parseamos SOLO para extraer monto+banco.
     // PRIORIDAD: el pago va PRIMERO (hacer sonar el IoT con el mínimo delay).
     let wasPayment = false;
     try {
@@ -1390,8 +1446,12 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
       }
     }
 
-    // Reenvío transparente: devolvemos a dónde reenviar (el Worker hace el forward).
-    // forwardTo viene descifrado por hydrateAccount. Si no hay, el Worker no reenvía.
+    // NO guardamos en el buzón los correos de clientes conocidos: esos se reenvían a
+    // su buzón y le corresponden a cada cliente por separado. El buzón de /admin es
+    // SOLO el catch-all (alias desconocidos, ver arriba).
+
+    // Reenvío transparente: devolvemos a dónde reenviar (el MX hace el forward).
+    // forwardTo viene descifrado por hydrateAccount. Si no hay, el MX no reenvía.
     return { ok: true, forwardTo: account.forwardTo || null };
   });
 

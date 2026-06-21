@@ -132,6 +132,23 @@ export function openDb() {
       at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_payments_account ON payments(account_id, at DESC);
+
+    -- Buzón: TODO correo que llega al MX a @sono.lat se guarda acá (sea de un cliente
+    -- conocido o de un alias desconocido = catch-all). Reemplaza el reenvío del catch-all
+    -- al correo personal: ahora se ve en /admin → Buzón. account_id NULL = desconocido.
+    CREATE TABLE IF NOT EXISTS inbox (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      alias TEXT,
+      account_id TEXT,
+      from_addr TEXT,
+      subject TEXT,
+      text TEXT,
+      html TEXT,
+      is_payment INTEGER NOT NULL DEFAULT 0,
+      seen INTEGER NOT NULL DEFAULT 0,
+      at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_inbox_at ON inbox(at DESC);
   `);
 
   // Migraciones: agregar columnas si las tablas ya existian de una version vieja.
@@ -566,4 +583,54 @@ export function paymentsFor(accountId, limit = 50) {
   return db.prepare(
     'SELECT id, amount, bank, payer, at FROM payments WHERE account_id = ? ORDER BY at DESC LIMIT ?'
   ).all(accountId, limit);
+}
+
+// ── Buzón (catch-all) ─────────────────────────────────────────────────────────
+// Todo correo que llega al MX se guarda acá para verlo en /admin → Buzón.
+
+/** Guarda un correo entrante. accountId NULL = alias desconocido (catch-all). */
+export function saveInboxMail({ alias, accountId = null, from = '', subject = '', text = '', html = '', isPayment = false }) {
+  openDb();
+  const at = Date.now();
+  // Recortamos el cuerpo para no inflar la DB (el HTML del banco puede ser enorme).
+  const t = String(text || '').slice(0, 20000);
+  const h = String(html || '').slice(0, 60000);
+  const info = db.prepare(
+    `INSERT INTO inbox (alias, account_id, from_addr, subject, text, html, is_payment, at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(alias || null, accountId, from || null, subject || null, t, h, isPayment ? 1 : 0, at);
+  return { id: info.lastInsertRowid, at };
+}
+
+/** Lista correos del buzón (más recientes primero). Por defecto sin el cuerpo (liviano). */
+export function listInbox({ limit = 100, includeBody = false } = {}) {
+  openDb();
+  const cols = includeBody
+    ? 'id, alias, account_id, from_addr, subject, text, html, is_payment, seen, at'
+    : 'id, alias, account_id, from_addr, subject, is_payment, seen, at, length(text) AS text_len';
+  return db.prepare(`SELECT ${cols} FROM inbox ORDER BY at DESC LIMIT ?`).all(limit);
+}
+
+/** Un correo completo del buzón (con cuerpo). */
+export function getInboxMail(id) {
+  openDb();
+  return db.prepare('SELECT * FROM inbox WHERE id = ?').get(id) || null;
+}
+
+/** Marca un correo como leído. */
+export function markInboxSeen(id) {
+  openDb();
+  return db.prepare('UPDATE inbox SET seen = 1 WHERE id = ?').run(id).changes > 0;
+}
+
+/** Borra un correo del buzón. */
+export function deleteInboxMail(id) {
+  openDb();
+  return db.prepare('DELETE FROM inbox WHERE id = ?').run(id).changes > 0;
+}
+
+/** Cuántos correos sin leer (para el badge del tab). */
+export function unseenInboxCount() {
+  openDb();
+  return db.prepare('SELECT COUNT(*) AS n FROM inbox WHERE seen = 0').get().n;
 }
