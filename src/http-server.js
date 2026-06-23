@@ -142,6 +142,27 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     }
   };
 
+  // RUTEO MULTIPUNTO: decide en QUÉ speaker suena un pago.
+  //  - Cuenta con 1 (o 0) device → el speaker de la cuenta (comportamiento de siempre).
+  //  - Cuenta con 2+ devices (varios locales) → match por la llave Bre-B del pago:
+  //      match → el speaker de ese local; sin match → null (NO suena, para no confundir).
+  // Devuelve { speakerId } si hay que anunciar, o { speakerId: null, unrouted: true } si no.
+  const pickSpeaker = (account, payment) => {
+    const devices = listDevicesByAccount(account.id);
+    if (devices.length <= 1) {
+      // un solo local: suena en su speaker (el de la cuenta o el único device).
+      return { speakerId: account.speaker_id || (devices[0] && devices[0].spkr_id) || null };
+    }
+    // multipunto: rutear por llave.
+    const key = payment.brebKey ? normalizeKey(payment.brebKey) : null;
+    if (key) {
+      const dev = findDeviceByKey(account.id, key);
+      if (dev) return { speakerId: dev.spkr_id, localName: dev.local_name };
+    }
+    // sin llave parseable o llave que no coincide con ningún local → NO suena + aviso.
+    return { speakerId: null, unrouted: true, key };
+  };
+
   // Login del panel: usuario + contraseña → devuelve el token Bearer que usan los /admin/*.
   // Comparación en tiempo constante para no filtrar credenciales por timing.
   const safeEq = (a, b) => {
@@ -1613,14 +1634,29 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
       const result = parseEmail({ from: String(from).toLowerCase(), subject, text, html });
       if (result && onPaymentDetected) {
         wasPayment = true;
-        logger.info({ alias, accountId: account.id, ...result }, 'payment detected (email webhook)');
-        onPaymentDetected({
-          ...result,
-          accountId: account.id,
-          speakerId: account.speaker_id,
-          from, subject,
-          _lat: lat,
-        });
+        const route = pickSpeaker(account, result);
+        logger.info({ alias, accountId: account.id, ...result, routedTo: route.speakerId, unrouted: route.unrouted || false }, 'payment detected (email webhook)');
+        if (route.unrouted) {
+          // Multipunto: no se pudo determinar el local (llave desconocida) → NO suena.
+          // Queda un aviso en el buzón del admin (el panel del usuario aún no existe).
+          try {
+            saveInboxMail({
+              alias, accountId: account.id, from,
+              subject: `⚠ Pago sin local asignado ($${result.amount}) — llave: ${result.brebKey || 'sin llave'}`,
+              text: `Llegó un pago de $${result.amount} pero su llave Bre-B (${result.brebKey || 'no detectada'}) no coincide con ningún local de esta cuenta. No se anunció para no confundir. Asocia la llave al QR del local correspondiente.`,
+              html: '', isPayment: false, messageId: null, references: null,
+            });
+          } catch (e) { logger.error({ err: e.message }, 'multipunto: no se pudo guardar aviso de pago sin rutear'); }
+          logger.warn({ alias, accountId: account.id, amount: result.amount, key: route.key }, 'multipunto: pago NO ruteado (llave sin local), no se anuncia');
+        } else {
+          onPaymentDetected({
+            ...result,
+            accountId: account.id,
+            speakerId: route.speakerId,
+            from, subject,
+            _lat: lat,
+          });
+        }
       }
     } catch (e) {
       logger.error({ alias, err: e.message }, 'email webhook parse error');
@@ -1758,8 +1794,21 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
         const result = parseEmail({ from: String(from).toLowerCase(), subject, text, html });
         if (result && onPaymentDetected) {
           wasPayment = true;
-          logger.info({ alias, accountId: account.id, ...result }, 'payment detected (fe webhook)');
-          onPaymentDetected({ ...result, accountId: account.id, speakerId: account.speaker_id, from, subject, _lat: lat });
+          const route = pickSpeaker(account, result);
+          logger.info({ alias, accountId: account.id, ...result, routedTo: route.speakerId, unrouted: route.unrouted || false }, 'payment detected (fe webhook)');
+          if (route.unrouted) {
+            try {
+              saveInboxMail({
+                alias, accountId: account.id, from,
+                subject: `⚠ Pago sin local asignado ($${result.amount}) — llave: ${result.brebKey || 'sin llave'}`,
+                text: `Llegó un pago de $${result.amount} pero su llave Bre-B (${result.brebKey || 'no detectada'}) no coincide con ningún local de esta cuenta. No se anunció para no confundir. Asocia la llave al QR del local correspondiente.`,
+                html: '', isPayment: false, messageId: null, references: null,
+              });
+            } catch (e) { logger.error({ err: e.message }, 'multipunto: no se pudo guardar aviso de pago sin rutear'); }
+            logger.warn({ alias, accountId: account.id, amount: result.amount, key: route.key }, 'multipunto: pago NO ruteado (llave sin local), no se anuncia');
+          } else {
+            onPaymentDetected({ ...result, accountId: account.id, speakerId: route.speakerId, from, subject, _lat: lat });
+          }
         }
       } else {
         logger.info({ alias, from, knownBank: isKnownBankSender(from) }, 'fe webhook: remitente no confiable, no se procesa como pago');
