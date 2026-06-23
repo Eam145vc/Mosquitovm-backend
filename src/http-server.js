@@ -93,16 +93,25 @@ const MIME_EXT = {
  *  El envio se recoge ANTES de pagar (checkout), asi que el post-pago son 2 pasos:
  *  1=correo, 2=qr, 3=listo. */
 function orderView(o) {
+  // El correo cuenta como LISTO solo si hay PRUEBA de que el reenvío funciona: o el banco
+  // confirmó el cambio (change_confirmed), o ya llegó al menos un pago por esa cuenta.
+  // Tener account_id NO basta: el cliente pudo poner su correo y crear la cuenta, pero si
+  // no completó el cambio en el banco, debe seguir en el paso 1 (si no, saltaría al QR sin
+  // que los pagos lleguen de verdad).
+  const acc = o.account_id ? getAccount(o.account_id) : null;
+  const hasReceivedPayment = o.account_id ? paymentsFor(o.account_id, 1).length > 0 : false;
+  const emailReady = Boolean(acc && (acc.change_confirmed || hasReceivedPayment));
   let step = 1;
-  if (o.account_id) step = 2;
-  if (o.account_id && o.qr_path) step = 3;
+  if (emailReady) step = 2;
+  if (emailReady && o.qr_path) step = 3;
   return {
     order: o.id,
     paid: isPaid(o),
     status: o.status,
     step,
     emailMethod: o.email_method || null,
-    hasEmail: Boolean(o.account_id),
+    hasEmail: emailReady,
+    emailConnected: Boolean(o.account_id), // cuenta creada (correo puesto), aunque no confirmado
     hasQr: Boolean(o.qr_path),
     hasShipping: Boolean(o.business_name),
     payerEmail: o.mp_payer_email || null,  // para pre-rellenar el correo del método redirect
