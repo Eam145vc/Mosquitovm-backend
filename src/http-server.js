@@ -166,13 +166,14 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
   // -------------------------------------------------------------------------
 
   // Precios de lanzamiento en centavos COP (espejo de sono-web/lib/plans.ts):
-  // anual = $299.000 un solo pago con dispositivo incluido · mensual = $89.000 hoy
-  // por el dispositivo (la mensualidad de $30.000 va por suscripción aparte).
+  // Un solo plan: pago único de $199.000 = dispositivo + 1er año de servicio + envío.
+  // El cliente se lleva el aparato. La renovación ($99.000/año) NO se cobra acá: va
+  // por recordatorio/cobro manual a partir del 2º año (no se muestra en el checkout).
   // "test" = orden de diagnóstico de la página /test-mp ($5.000, va directo al
   // Brick de MercadoPago sin Stripe ni Checkout Pro). El admin la ve como TEST.
-  // mensual = 1er mes $29.900 + envío $15.000 = $44.900 hoy (dispositivo gratis).
-  // anual = $199.000 (dispositivo + envío incluidos). test = $5.000 diagnóstico.
-  const PLAN_PRICES_CENTS = { anual: 19_900_000, mensual: 4_490_000, test: 500_000 };
+  // El plan "mensual" quedó DEPRECADO (jun-2026): cualquier plan distinto de "test"
+  // cae al precio único de $199.000 (PLAN_PRICES_CENTS.anual via el ?? de abajo).
+  const PLAN_PRICES_CENTS = { anual: 19_900_000, test: 500_000 };
 
   // Paso 1: crea la orden con los datos de envío. Devuelve el monto (pesos) y la public key
   // para que el front renderice el formulario de tarjeta (Bricks) embebido.
