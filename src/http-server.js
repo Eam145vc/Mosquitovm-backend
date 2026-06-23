@@ -42,11 +42,13 @@ import {
   upsertAccount, listAccounts, getAccount, getAccountByEmail, getAccountByAlias, setAccountSpeaker,
   createOrder, getOrder, getOrderByPlanId, updateOrder, listOrders,
   createDevice, getDevice, listDevices, assignDevice, unassignDevice, setDeviceStatus,
+  setDeviceBrebKey, listDevicesByAccount, findDeviceByKey,
   updateAccountHistory, updateAccountWatch, setAccountForward, markChangeConfirmed,
   paymentsFor, subState, setSubStatus,
   saveInboxMail, listInbox, getInboxMail, markInboxSeen, deleteInboxMail, unseenInboxCount,
   markInboxReplied, saveOutboundMail,
 } from './storage.js';
+import { decodeBrebImage, normalizeKey } from './breb-qr.js';
 import { parseEmail } from './parsers/index.js';
 import { simpleParser } from 'mailparser';
 import { generateAlias, createClientAlias } from './forwardemail.js';
@@ -820,6 +822,39 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     if (order.business_name) patch.status = 'ready_to_ship';
     updateOrder(order.id, patch);
     logger.info({ orderId: order.id, bytes: buf.length }, 'qr subido');
+
+    // Multipunto: decodificar el QR Bre-B para extraer la LLAVE del local y guardarla en
+    // el device de esta orden (sirve para rutear los pagos al speaker correcto). Solo
+    // imágenes (los PDF no se decodifican acá). Si falla, NO rompemos la subida del QR.
+    if (file.mimetype.startsWith('image/')) {
+      try {
+        const decoded = await decodeBrebImage(buf);
+        if (decoded && decoded.routable && decoded.key) {
+          const dev = listDevices().find((d) => d.order_id === order.id);
+          if (dev) {
+            setDeviceBrebKey(dev.spkr_id, {
+              key: normalizeKey(decoded.key),
+              qrJson: { raw: decoded.raw, key: decoded.key, keyType: decoded.keyType },
+              localName: decoded.merchantName || order.business_name || null,
+            });
+            logger.info({ orderId: order.id, spkr: dev.spkr_id, key: decoded.key, keyType: decoded.keyType }, 'multipunto: llave Bre-B asociada al device');
+          } else {
+            // El device aún no está asignado: guardamos la llave en la orden para
+            // transferirla al device cuando se asigne el speaker (al despachar).
+            updateOrder(order.id, {
+              breb_key: normalizeKey(decoded.key),
+              breb_qr_json: JSON.stringify({ raw: decoded.raw, key: decoded.key, keyType: decoded.keyType }),
+              local_name: decoded.merchantName || order.business_name || null,
+            });
+            logger.info({ orderId: order.id, key: decoded.key }, 'multipunto: llave detectada, device aún sin asignar (se asociará al asignar el speaker)');
+          }
+        } else {
+          logger.warn({ orderId: order.id }, 'multipunto: QR sin llave ruteable (no se pudo asociar)');
+        }
+      } catch (e) {
+        logger.warn({ orderId: order.id, err: e.message }, 'multipunto: fallo al decodificar el QR (la subida sigue OK)');
+      }
+    }
     return { ok: true };
   });
 
@@ -970,6 +1005,16 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     assignDevice(spkr_id, o.id);
     // Si la cuenta ya existe, vincular ya; si no, se hereda al conectar el correo.
     if (o.account_id) setAccountSpeaker(o.account_id, spkr_id);
+    // Multipunto: si la orden ya tenía la llave Bre-B (del QR subido antes de asignar el
+    // device), la transferimos al device ahora para que pueda rutear pagos.
+    if (o.breb_key) {
+      setDeviceBrebKey(spkr_id, {
+        key: o.breb_key,
+        qrJson: o.breb_qr_json ? JSON.parse(o.breb_qr_json) : null,
+        localName: o.local_name || o.business_name || null,
+      });
+      logger.info({ orderId: o.id, spkr_id, key: o.breb_key }, 'multipunto: llave Bre-B transferida de la orden al device');
+    }
     logger.info({ orderId: o.id, spkr_id, account: o.account_id || '(pendiente)' }, 'device asignado a la orden');
     return { ok: true, spkr_id, account_id: o.account_id || null };
   });

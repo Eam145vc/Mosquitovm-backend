@@ -176,6 +176,11 @@ export function openDb() {
     // payment_id de EfiPay del pago en curso (PSE/Bre-B/efectivo): permite consultar el
     // estado por API si el webhook no llega (red de seguridad anti-pagos-atascados).
     ['efi_payment_id', 'TEXT'],
+    // Llave Bre-B del QR (multipunto): se guarda acá si el device aún no está asignado;
+    // al asignar el speaker se transfiere al device.
+    ['breb_key', 'TEXT'],
+    ['breb_qr_json', 'TEXT'],
+    ['local_name', 'TEXT'],
   ]);
   db.exec('CREATE INDEX IF NOT EXISTS idx_orders_plan ON orders(mp_plan_id)');
   // Índice para que el job de cobro encuentre rápido las cuotas vencidas.
@@ -481,6 +486,8 @@ export function updateOrder(id, patch) {
     'plan', 'card_token', 'installments_total', 'installments_paid',
     'installment_next_at', 'installment_fails', 'installments_state',
     'efi_payment_id',
+    // llave Bre-B del QR (multipunto)
+    'breb_key', 'breb_qr_json', 'local_name',
   ]);
   const keys = Object.keys(patch).filter(k => allowed.has(k));
   if (keys.length === 0) return false;
