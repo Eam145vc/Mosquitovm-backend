@@ -328,6 +328,26 @@ export function setAccountForward(id, { alias, forwardTo }) {
     .run(alias, forwardTo ? encrypt(forwardTo) : null, Date.now(), id);
 }
 
+/**
+ * Busca una cuenta EXISTENTE cuyo correo de reenvío (forward_to, cifrado) coincida con
+ * `forwardTo`. Sirve para detectar, en el onboarding, que el cliente ya tiene una cuenta
+ * con ese correo (multipunto: ofrecerle asociar el nuevo local a la misma cuenta).
+ * Excluye la cuenta `exceptId` (la de la orden actual). Devuelve la cuenta hidratada o null.
+ */
+export function findAccountByForward(forwardTo, exceptId = null) {
+  openDb();
+  if (!forwardTo) return null;
+  const target = String(forwardTo).trim().toLowerCase();
+  const rows = db.prepare('SELECT * FROM accounts WHERE forward_to_enc IS NOT NULL').all();
+  for (const r of rows) {
+    if (r.id === exceptId) continue;
+    let dec = null;
+    try { dec = decrypt(r.forward_to_enc); } catch { continue; }
+    if (dec && dec.trim().toLowerCase() === target) return hydrateAccount(r);
+  }
+  return null;
+}
+
 /** Marca que el banco confirmó el cambio de correo (cierra el onboarding automático). */
 export function markChangeConfirmed(id) {
   openDb();

@@ -43,7 +43,7 @@ import {
   createOrder, getOrder, getOrderByPlanId, updateOrder, listOrders,
   createDevice, getDevice, listDevices, assignDevice, unassignDevice, setDeviceStatus,
   setDeviceBrebKey, listDevicesByAccount, findDeviceByKey,
-  updateAccountHistory, updateAccountWatch, setAccountForward, markChangeConfirmed,
+  updateAccountHistory, updateAccountWatch, setAccountForward, findAccountByForward, markChangeConfirmed,
   paymentsFor, subState, setSubStatus,
   saveInboxMail, listInbox, getInboxMail, markInboxSeen, deleteInboxMail, unseenInboxCount,
   markInboxReplied, saveOutboundMail,
@@ -783,19 +783,53 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
     if (!isPaid(order)) return reply.code(402).send({ error: 'orden no pagada' });
 
-    const forwardTo = String((req.body || {}).email || '').trim().toLowerCase();
+    const body = req.body || {};
+    const forwardTo = String(body.email || '').trim().toLowerCase();
     if (!forwardTo || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(forwardTo)) {
-      return reply.code(400).send({ error: 'Poné un correo válido.' });
+      return reply.code(400).send({ error: 'Pon un correo válido.' });
     }
+    // associate: la elección del cliente cuando el correo ya existía (true = mismo negocio,
+    // otro local; false = cuenta nueva separada). undefined = aún no preguntado.
+    const associate = body.associate;
 
     const accountId = order.account_id || order.id;
+
+    // MULTIPUNTO: ¿este correo ya está en otra cuenta? (otro local del mismo negocio)
+    const existing = findAccountByForward(forwardTo, accountId);
+    if (existing && associate === undefined) {
+      // Aún no preguntamos: el front debe mostrar "¿es otro local del mismo negocio?".
+      return {
+        ok: false,
+        needsAssociationChoice: true,
+        existingAlias: existing.email,                 // alias de Sonó ya en uso
+        existingBusinessName: existing.business_name || null,
+      };
+    }
+
+    // Si el cliente dijo "sí, mismo negocio" y existe → REUSAR el alias/cuenta existente.
+    if (existing && associate === true) {
+      const reAlias = existing.alias || existing.email.split('@')[0];
+      // El alias en ForwardEmail ya existe (lo creó la 1ª orden); no lo recreamos.
+      // Vinculamos ESTA orden a la cuenta existente; el ruteo por llave separa los locales.
+      linkOrderToAccount(order, existing.id, 'redirect');
+      logger.info({ orderId: order.id, accountId: existing.id, alias: existing.email }, 'multipunto: orden asociada a cuenta existente (mismo correo)');
+      return {
+        ok: true,
+        alias: existing.email,
+        forwardTo,
+        associated: true,
+        needsVerification: false,
+      };
+    }
+
+    // Flujo normal (correo nuevo, o el cliente eligió cuenta separada): alias nuevo.
     const alias = generateAlias(forwardTo);
 
     // Crear el alias en ForwardEmail (recipients = correo del cliente + webhook del speaker).
     const fe = await createClientAlias({ name: alias, forwardTo });
     if (!fe.ok && !fe.skipped) {
       logger.error({ orderId: order.id, alias, err: fe.error }, 'email-redirect: fallo crear alias FE');
-      return reply.code(502).send({ error: 'No pudimos generar tu correo. Probá de nuevo.' });
+      return reply.code(502).send({ error: 'No pudimos generar tu correo. Prueba de nuevo.' });
     }
 
     // Guardar la cuenta (sin watcher; el ingreso es por webhook).
