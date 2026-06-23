@@ -112,3 +112,37 @@ describe('HTML fallback', () => {
     assert.equal(r.bank, 'bancolombia');
   });
 });
+
+describe('Bancolombia Bre-B (llave + cuenta para ruteo multipunto)', () => {
+  // Texto real de un email de pago Bre-B de Bancolombia (jun-2026).
+  const textBreB =
+    'Bancolombia: TEST, recibiste un pago de EMMANUEL ALVAREZ MARTINEZ por $100.00 ' +
+    'en tu cuenta *4369 conectado a la llave @test883 el 09/06/2026 a las 11:24. ' +
+    'Con codigo QR es facil y de una. Dudas al 018000912345.';
+
+  test('extrae la llave alfanumérica @test883', () => {
+    const r = parseEmail({ from: 'alertasynotificaciones@bancolombia.com', subject: 'Alertas y Notificaciones', text: textBreB });
+    assert.equal(r.brebKey, '@test883');
+  });
+
+  test('extrae los últimos dígitos de la cuenta (*4369)', () => {
+    const r = parseEmail({ from: 'alertasynotificaciones@bancolombia.com', subject: 'Alertas y Notificaciones', text: textBreB });
+    assert.equal(r.account, '4369');
+  });
+
+  test('sigue extrayendo el monto del pago Bre-B', () => {
+    const r = parseEmail({ from: 'alertasynotificaciones@bancolombia.com', subject: 'Alertas y Notificaciones', text: textBreB });
+    assert.equal(r.amount, 100);
+    assert.equal(r.direction, 'in');
+  });
+
+  test('email sin llave → brebKey null, no rompe', () => {
+    const r = parseEmail({
+      from: 'alertasynotificaciones@notificacionesbancolombia.com',
+      subject: 'Bancolombia te informa',
+      text: 'Recibiste una transferencia por $50.000 de PEDRO PEREZ.',
+    });
+    assert.equal(r.amount, 50000);
+    assert.equal(r.brebKey ?? null, null);
+  });
+});

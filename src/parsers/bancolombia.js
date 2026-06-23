@@ -22,8 +22,27 @@ export function matches(from, subject = '') {
   );
 }
 
+// Extrae la llave Bre-B y la cuenta del texto del email, para el ruteo multipunto.
+// Email real: "...en tu cuenta *4369 conectado a la llave @test883 el 09/06/2026..."
+// La llave puede ser @alfanumérica, celular, cédula o correo (Bre-B). Devolvemos lo que
+// aparezca tras "llave"; null si no hay. `account` = últimos dígitos tras "cuenta *".
+function extractBrebRouting(text) {
+  let brebKey = null;
+  let account = null;
+  // "conectado a la llave @test883" / "llave: 3001234567" / "llave juan@correo.com"
+  const mKey = text.match(/llave[:\s]+(@?[\w.@\-]+)/i);
+  if (mKey) brebKey = mKey[1].replace(/[.,;]+$/, '');
+  // "en tu cuenta *4369" / "cuenta terminada en 4369"
+  const mAcc = text.match(/cuenta\s+(?:terminada\s+en\s+)?\*?(\d{3,})/i);
+  if (mAcc) account = mAcc[1];
+  return { brebKey, account };
+}
+
 export function parse(text) {
   if (!text) return null;
+
+  // Llave + cuenta para ruteo multipunto (no afecta la detección de monto).
+  const { brebKey, account } = extractBrebRouting(text);
 
   // 1) INGRESOS con verbo explícito PEGADO al monto. Van primero: si el correo
   //    dice "recibiste un pago por $X", es ingreso sin importar el resto.
@@ -42,7 +61,7 @@ export function parse(text) {
     if (m) {
       const amount = parseAmount(m[1]);
       if (amount > 0) {
-        return { amount, currency: 'COP', bank: 'bancolombia', ref: null, direction: 'in' };
+        return { amount, currency: 'COP', bank: 'bancolombia', ref: null, direction: 'in', brebKey, account };
       }
     }
   }
@@ -52,7 +71,7 @@ export function parse(text) {
   //    correo porque...") contiene "recib" y hacía anunciar egresos como ingresos.
   const outAmount = parseOutgoingAmount(text);
   if (outAmount > 0) {
-    return { amount: outAmount, currency: 'COP', bank: 'bancolombia', ref: null, direction: 'out' };
+    return { amount: outAmount, currency: 'COP', bank: 'bancolombia', ref: null, direction: 'out', brebKey, account };
   }
 
   // 3) Genérico "$X" pelado: SOLO si el correo no menciona ningún verbo de egreso.
@@ -61,7 +80,7 @@ export function parse(text) {
     if (m) {
       const amount = parseAmount(m[1]);
       if (amount > 0) {
-        return { amount, currency: 'COP', bank: 'bancolombia', ref: null, direction: 'in' };
+        return { amount, currency: 'COP', bank: 'bancolombia', ref: null, direction: 'in', brebKey, account };
       }
     }
   }
