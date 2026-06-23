@@ -58,6 +58,7 @@ import { forwardPayment, paymentRedirectUrl, fetchPayment, paymentIdFromWebhook,
 import { createStripeCheckout, fetchStripeSession } from './stripe.js';
 import { generatePaymentLink, chargeCard, chargePse, chargeBreb, chargeCash, getResource, fetchEfiTransaction, fetchEfiStatus, isValidEfiWebhook, parseEfiWebhook, tokenizeCard } from './efipay.js';
 import * as announceLog from './announce-log.js';
+import { sendActivationEmail } from './activation-email.js';
 import { publishVoice, publishCommand } from './mqtt-publisher.js';
 import { buildVoiceMessage } from './amount-to-wavs.js';
 import { startLatency, markVoicePublished } from './latency.js';
@@ -331,6 +332,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
           mp_payer_email: payer.email, next_charge_at: nextCharge,
         });
         logger.info({ orderId, txn: result.transactionId }, 'pago aprobado (efipay embebido)');
+        // Correo con el link de activación (red de seguridad si cierra la pantalla).
+        sendActivationEmail(getOrder(orderId)).catch(() => {});
 
         // ── Plan en cuotas: la 1ª cuota ya está cobrada. Tokenizamos la tarjeta para
         //    cobrar las cuotas 2-3 (sin re-pedir la tarjeta) y programamos la 2ª a +30d.
@@ -426,6 +429,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
           status: 'pendiente_qr', wompi_txn_id: String(result.transactionId || ''),
           mp_payer_email: payer.email, next_charge_at: nextCharge,
         });
+        sendActivationEmail(getOrder(orderId)).catch(() => {});
       }
       logger.info({ orderId, method, status: result.status, paymentId: result.paymentId, hasRedirect: Boolean(result.redirect), hasQr: Boolean(result.qr) }, 'efipay alt iniciado');
       // Bre-B con QR → el front lo muestra embebido (no redirige). PSE/cash → redirect.
@@ -474,6 +478,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
         if (ok && !isPaid(order)) {
           updateOrder(order.id, { status: 'pendiente_qr', wompi_txn_id: String(transactionId || '') });
           logger.info({ orderId: order.id, txn: transactionId }, 'pago aprobado (efipay webhook)');
+          sendActivationEmail(getOrder(order.id)).catch(() => {});
         } else {
           logger.info({ orderId: order.id, status }, 'efipay webhook (no aprobado)');
         }
@@ -499,6 +504,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
           updateOrder(o.id, { status: 'pendiente_qr', wompi_txn_id: `efi-status-${o.efi_payment_id}`, next_charge_at: nextCharge });
           logger.info({ orderId: o.id, paymentId: o.efi_payment_id }, 'pago confirmado por polling de estado (webhook no llegó)');
           o = getOrder(o.id);
+          sendActivationEmail(o).catch(() => {});
         }
       } catch (e) {
         logger.warn({ orderId: o.id, err: e.message }, 'polling de estado EfiPay falló (se reintenta en el próximo poll)');
