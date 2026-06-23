@@ -165,8 +165,21 @@ export function openDb() {
     ['mp_payer_email', 'TEXT'],
     ['next_charge_at', 'INTEGER'],
     ['customer_email', 'TEXT'], // correo del paso 1 (sirve para prellenar el onboarding)
+    // ── Plan de pago en cuotas (1ª cuota en el checkout; 2ª y 3ª por cobro programado) ──
+    ['plan', 'TEXT'],                  // 'contado' | 'cuotas' (lo que eligió el cliente)
+    ['card_token', 'TEXT'],           // token reutilizable de la tarjeta (EfiPay, reuse:true)
+    ['installments_total', 'INTEGER'], // nº de cuotas del plan (3 en cuotas, 1/NULL en contado)
+    ['installments_paid', 'INTEGER'],  // cuántas cuotas se han cobrado ya (incluye la 1ª del checkout)
+    ['installment_next_at', 'INTEGER'],// epoch ms de cuándo toca cobrar la próxima cuota (NULL si no quedan)
+    ['installment_fails', 'INTEGER'],  // intentos fallidos consecutivos de la cuota pendiente
+    ['installments_state', 'TEXT'],   // NULL | 'al_dia' | 'en_mora' | 'completado' | 'suspendido'
+    // payment_id de EfiPay del pago en curso (PSE/Bre-B/efectivo): permite consultar el
+    // estado por API si el webhook no llega (red de seguridad anti-pagos-atascados).
+    ['efi_payment_id', 'TEXT'],
   ]);
   db.exec('CREATE INDEX IF NOT EXISTS idx_orders_plan ON orders(mp_plan_id)');
+  // Índice para que el job de cobro encuentre rápido las cuotas vencidas.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_orders_installment_due ON orders(installment_next_at)');
   ensureColumns('accounts', [
     ['last_history_id', 'TEXT'],
     ['watch_expires', 'INTEGER'],
@@ -459,6 +472,10 @@ export function updateOrder(id, patch) {
     'business_name', 'bank', 'address', 'city', 'phone', 'customer_email',
     'qr_path', 'qr_mime', 'email_method', 'mp_plan_id',
     'mp_customer_id', 'mp_card_id', 'mp_payer_email', 'next_charge_at',
+    // plan de cuotas
+    'plan', 'card_token', 'installments_total', 'installments_paid',
+    'installment_next_at', 'installment_fails', 'installments_state',
+    'efi_payment_id',
   ]);
   const keys = Object.keys(patch).filter(k => allowed.has(k));
   if (keys.length === 0) return false;

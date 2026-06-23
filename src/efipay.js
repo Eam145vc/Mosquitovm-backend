@@ -155,6 +155,89 @@ export async function chargeCard(orderId, amountCents, card, payer, browser = nu
   return { status, approved, transactionId: tx.transaction_id || null, redirect, raw: data };
 }
 
+// ───────────────── TOKENIZACIÓN (para cobrar cuotas 2-3 sin re-pedir tarjeta) ─────────────────
+
+/**
+ * Tokeniza una tarjeta en EfiPay y devuelve el TOKEN reutilizable (string).
+ * EfiPay guarda los datos cifrados (aes-128-cbc) y NO persiste el token: nosotros
+ * debemos guardarlo (en la orden) y usarlo en cada cobro posterior.
+ * Doc: POST https://sag.efipay.co/api/v1/tokenized/ con { holder, number, datetime, cvv }.
+ * `card` = { holder, number, datetime:'yyyy-mm', cvv }.
+ * ⚠️ PCI: NO loguear `card`. Devuelve null si EfiPay no devuelve token.
+ */
+export async function tokenizeCard(card) {
+  if (!config.hasEfipay) throw new Error('EfiPay no configurado (EFIPAY_TOKEN)');
+  const data = await efiPost('/tokenized/', {
+    holder: card.holder,
+    number: String(card.number).replace(/\s/g, ''),
+    datetime: card.datetime, // yyyy-mm
+    cvv: String(card.cvv),
+  });
+  // EfiPay devuelve el token; el nombre del campo puede venir como `token` o anidado.
+  const token = data.token || data.data?.token || data.payment_token || null;
+  if (!token) throw new Error(`EfiPay tokenized sin token: ${JSON.stringify(data).slice(0, 200)}`);
+  return token;
+}
+
+/**
+ * Cobra usando un TOKEN de tarjeta ya guardado (cuotas 2-3, renovaciones).
+ * Mismo flujo de 2 pasos que chargeCard, pero en payment_card va SOLO el token
+ * (la doc exige que el token NO vaya acompañado de number/name/expiration/cvv).
+ * `payer` = { name, email, country, state, city, address1, address2, zipCode }.
+ * `ident` = { idType, idNumber, phone } (EfiPay sigue pidiendo identificación + celular).
+ */
+export async function chargeWithToken(orderId, amountCents, cardToken, payer, ident = {}, description = 'Sonó · cuota') {
+  if (!config.hasEfipay) throw new Error('EfiPay no configurado (EFIPAY_TOKEN)');
+  const amount = Math.round(amountCents / 100);
+
+  const gen = await efiPost('/payment/generate-payment', {
+    payment: { description, amount, currency_type: 'COP', checkout_type: 'api' },
+    advanced_options: { references: [orderId] },
+    office: config.EFIPAY_OFFICE,
+  });
+  if (!gen.payment_id || !gen.token) {
+    throw new Error(`EfiPay generate-payment sin id/token: ${JSON.stringify(gen).slice(0, 200)}`);
+  }
+
+  const body = {
+    payment: { id: gen.payment_id, token: gen.token },
+    customer_payer: {
+      name: payer.name,
+      email: payer.email,
+      country: payer.country || 'COL',
+      state: payer.state || 'Bogota',
+      city: payer.city || 'Bogota',
+      address_1: payer.address1 || 'No informado',
+      address_2: payer.address2 || payer.address1 || 'No informado',
+      zip_code: payer.zipCode || '110111',
+    },
+    // payment_card SOLO con token (sin number/name/expiration/cvv, según la doc).
+    payment_card: {
+      token: cardToken,
+      identification_type: ident.idType || 'CC',
+      id_number: String(ident.idNumber || '0000000000'),
+      installments: '1',
+      dialling_code: '+57',
+      cellphone: String(ident.phone || '').replace(/\D/g, '') || '3000000000',
+    },
+  };
+
+  // NO reintentamos este POST (cobraría doble).
+  const resp = await fetch(`${EFI_API}/payment/transaction-checkout`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    throw new Error(`EfiPay checkout(token) HTTP ${resp.status}: ${JSON.stringify(data.errors || data.message || data).slice(0, 300)}`);
+  }
+  const tx = data.transaction || {};
+  const status = tx.status || data.status || null;
+  const approved = /aprob|approv/i.test(String(status || ''));
+  return { status, approved, transactionId: tx.transaction_id || null, raw: data };
+}
+
 /**
  * Genera el payment tipo "api" (paso 1 común a PSE/Bre-B/efectivo) → {payment_id, token}.
  * El customer_payer base lo arma el caller. Devuelve los ids para el paso 2.
@@ -184,8 +267,10 @@ async function checkoutPost(path, body) {
   return data;
 }
 
-/** Saca {status, approved, transactionId, redirect, qr} de una respuesta de checkout. */
-function readCheckoutResult(data) {
+/** Saca {status, approved, transactionId, redirect, qr, paymentId} de una respuesta de checkout.
+ *  `paymentId` = el payment_id de EfiPay (lo pasamos aparte porque la respuesta del
+ *  checkout no siempre lo trae; sirve para consultar el estado después por API). */
+function readCheckoutResult(data, paymentId = null) {
   const tx = data.transaction || {};
   const status = tx.status || data.status || null;
   const approved = /aprob|approv/i.test(String(status || ''));
@@ -206,7 +291,11 @@ function readCheckoutResult(data) {
   const qrImage = cleanB64(qrSrc.qr_code_image);
   const qrData = cleanB64(qrSrc.qr_code_data);
   const qr = (qrImage || qrData) ? { image: qrImage || null, data: qrData || null } : null;
-  return { status, approved, transactionId: tx.transaction_id || null, redirect, qr, raw: data };
+  return {
+    status, approved, transactionId: tx.transaction_id || null, redirect, qr,
+    paymentId: paymentId || data.payment_id || tx.payment_id || null,
+    raw: data,
+  };
 }
 
 /**
@@ -232,7 +321,7 @@ export async function chargePse(orderId, amountCents, payer, pse, description = 
       redirect: `${config.FRONTEND_BASE_URL}/activar-pro?order=${orderId}`,
     },
   });
-  return readCheckoutResult(data);
+  return readCheckoutResult(data, gen.payment_id);
 }
 
 /**
@@ -247,7 +336,7 @@ export async function chargeBreb(orderId, amountCents, payer, cellphone, descrip
     customer_payer: { name: payer.name, email: payer.email },
     breb: { cellphone_number: String(cellphone || '').replace(/\D/g, '') },
   });
-  return readCheckoutResult(data);
+  return readCheckoutResult(data, gen.payment_id);
 }
 
 /**
@@ -263,7 +352,7 @@ export async function chargeCash(orderId, amountCents, payer, cash, description 
     customer_payer: { name: payer.name, email: payer.email },
     cash: cash || {},
   });
-  return readCheckoutResult(data);
+  return readCheckoutResult(data, gen.payment_id);
 }
 
 /** Recursos para los formularios del front (lista bancos PSE, tipos de id PSE, efectivos). */
@@ -291,6 +380,28 @@ export async function fetchEfiTransaction(transactionId) {
     });
     if (!resp.ok) return null;
     return resp.json().catch(() => null);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Consulta el ESTADO de un pago por su payment_id (red de seguridad si el webhook
+ * no llega: PSE/Bre-B/efectivo). Endpoint: GET /payment/transaction-status/{payment_id}.
+ * Devuelve { approved, status, raw } o null si no se pudo consultar.
+ */
+export async function fetchEfiStatus(paymentId) {
+  if (!config.hasEfipay || !paymentId) return null;
+  try {
+    const resp = await fetch(`${EFI_API}/payment/transaction-status/${encodeURIComponent(paymentId)}`, {
+      headers: authHeaders(),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json().catch(() => ({}));
+    const tx = data.transaction || data.data || data;
+    const status = tx.status || data.status || null;
+    const approved = /aprob|approv|exito|success|paid|complet/i.test(String(status || ''));
+    return { approved, status, raw: data };
   } catch {
     return null;
   }

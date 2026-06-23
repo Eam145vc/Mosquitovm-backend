@@ -10,6 +10,7 @@ import { buildVoiceMessage } from './amount-to-wavs.js';
 import { markVoicePublished } from './latency.js';
 import { startHttp } from './http-server.js';
 import { startScheduler as startIgScheduler } from './ig-scheduler.js';
+import { startInstallmentsScheduler } from './installments-scheduler.js';
 import { config } from './config.js';
 import { logger } from './logger.js';
 import { openDb, listAccounts, getAccount } from './storage.js';
@@ -208,6 +209,10 @@ async function main() {
 
   // Scheduler de posts de Instagram programados (publica los que ya vencieron, cada 60s).
   startIgScheduler();
+
+  // Scheduler de cobro de cuotas 2-3 (plan "cuotas"): cobra con la tarjeta tokenizada
+  // las cuotas vencidas, cada hora. Al 3er fallo suspende el servicio.
+  startInstallmentsScheduler();
 
   // Renovar watches cada 12h (Google expira a 7 dias)
   if (usingPubSub) {

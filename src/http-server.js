@@ -56,7 +56,7 @@ import { isChangeConfirmation } from './change-confirm.js';
 import { isTrustedBankEmail, isKnownBankSender } from './sender-filter.js';
 import { forwardPayment, paymentRedirectUrl, fetchPayment, paymentIdFromWebhook, createPreference } from './mercadopago.js';
 import { createStripeCheckout, fetchStripeSession } from './stripe.js';
-import { generatePaymentLink, chargeCard, chargePse, chargeBreb, chargeCash, getResource, fetchEfiTransaction, isValidEfiWebhook, parseEfiWebhook } from './efipay.js';
+import { generatePaymentLink, chargeCard, chargePse, chargeBreb, chargeCash, getResource, fetchEfiTransaction, fetchEfiStatus, isValidEfiWebhook, parseEfiWebhook, tokenizeCard } from './efipay.js';
 import * as announceLog from './announce-log.js';
 import { publishVoice, publishCommand } from './mqtt-publisher.js';
 import { buildVoiceMessage } from './amount-to-wavs.js';
@@ -188,11 +188,16 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     if (!business_name || !address || !phone) {
       return reply.code(400).send({ error: 'faltan nombre, direccion o telefono' });
     }
+    const planNorm = plan === 'cuotas' ? 'cuotas' : 'contado';
     const amountCents = PLAN_PRICES_CENTS[plan] ?? PLAN_PRICES_CENTS.contado;
     const orderId = createOrder({ amountCents });            // external_reference = orderId
     updateOrder(orderId, {
       business_name, bank: bank || null, address, city: city || null, phone,
       customer_email: email || null,
+      plan: planNorm,
+      // En cuotas guardamos el total de cuotas desde ya (la 1ª se cobra en este checkout).
+      installments_total: planNorm === 'cuotas' ? 3 : 1,
+      installments_paid: 0,
     });
     // En 'cuotas' lo cobrado hoy es la 1ª de 3; el cobro de las cuotas 2-3 se hace
     // luego (tarjeta tokenizada o link WhatsApp). Lo dejamos en el log por ahora.
@@ -326,6 +331,33 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
           mp_payer_email: payer.email, next_charge_at: nextCharge,
         });
         logger.info({ orderId, txn: result.transactionId }, 'pago aprobado (efipay embebido)');
+
+        // ── Plan en cuotas: la 1ª cuota ya está cobrada. Tokenizamos la tarjeta para
+        //    cobrar las cuotas 2-3 (sin re-pedir la tarjeta) y programamos la 2ª a +30d.
+        //    Si la tokenización falla, NO rompemos el pago (ya cobró): queda en mora
+        //    'sin_token' para resolver manual (link). El cobro real lo hace el job.
+        if (order.plan === 'cuotas') {
+          const total = order.installments_total || 3;
+          const DAY = 24 * 3600 * 1000;
+          try {
+            const cardToken = await tokenizeCard(card); // card = { holder, number, datetime, cvv, ... }
+            updateOrder(orderId, {
+              card_token: cardToken,
+              installments_paid: 1,
+              installment_next_at: Date.now() + 30 * DAY, // 2ª cuota a 30 días
+              installment_fails: 0,
+              installments_state: 'al_dia',
+            });
+            logger.info({ orderId, total }, 'cuotas: tarjeta tokenizada, 2ª cuota programada (+30d)');
+          } catch (tokErr) {
+            updateOrder(orderId, {
+              installments_paid: 1,
+              installment_next_at: Date.now() + 30 * DAY,
+              installments_state: 'sin_token', // requiere cobro manual por link
+            });
+            logger.error({ orderId, err: tokErr.message }, 'cuotas: tokenización FALLÓ (1ª cuota igual quedó cobrada)');
+          }
+        }
       } else {
         logger.info({ orderId, status: result.status }, 'efipay embebido no aprobado');
       }
@@ -383,7 +415,11 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
       } else {
         return reply.code(400).send({ error: 'método inválido' });
       }
-      // No marcamos pagado acá: PSE/Bre-B/cash confirman por webhook. Solo si ya aprobó.
+      // Guardamos el payment_id de EfiPay SIEMPRE: PSE/Bre-B/cash confirman por webhook,
+      // pero si el webhook no llega podemos consultar el estado por API con este id
+      // (red de seguridad anti-pagos-atascados, ver GET /activar/:order).
+      if (result.paymentId) updateOrder(orderId, { efi_payment_id: String(result.paymentId), mp_payer_email: payer.email });
+      // No marcamos pagado acá salvo que ya haya aprobado al instante.
       if (result.approved) {
         const nextCharge = Date.now() + 365 * 24 * 3600 * 1000;
         updateOrder(orderId, {
@@ -391,7 +427,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
           mp_payer_email: payer.email, next_charge_at: nextCharge,
         });
       }
-      logger.info({ orderId, method, status: result.status, hasRedirect: Boolean(result.redirect), hasQr: Boolean(result.qr) }, 'efipay alt iniciado');
+      logger.info({ orderId, method, status: result.status, paymentId: result.paymentId, hasRedirect: Boolean(result.redirect), hasQr: Boolean(result.qr) }, 'efipay alt iniciado');
       // Bre-B con QR → el front lo muestra embebido (no redirige). PSE/cash → redirect.
       return { status: result.status, approved: result.approved, redirect: result.redirect, qr: result.qr || null };
     } catch (e) {
@@ -449,8 +485,25 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
 
   // Estado de la orden para el wizard
   app.get('/activar/:order', async (req, reply) => {
-    const o = getOrder(req.params.order);
+    let o = getOrder(req.params.order);
     if (!o) return reply.code(404).send({ error: 'orden no encontrada' });
+    // RED DE SEGURIDAD: si la orden NO está pagada pero tiene un pago EfiPay en curso
+    // (PSE/Bre-B/efectivo), consultamos el estado por API. Así, aunque el webhook de
+    // EfiPay no llegue, la pantalla "Confirmando tu pago" avanza sola cuando el banco
+    // confirma. Esto evita que un cliente que YA pagó quede atascado.
+    if (!isPaid(o) && o.efi_payment_id) {
+      try {
+        const st = await fetchEfiStatus(o.efi_payment_id);
+        if (st?.approved) {
+          const nextCharge = Date.now() + 365 * 24 * 3600 * 1000;
+          updateOrder(o.id, { status: 'pendiente_qr', wompi_txn_id: `efi-status-${o.efi_payment_id}`, next_charge_at: nextCharge });
+          logger.info({ orderId: o.id, paymentId: o.efi_payment_id }, 'pago confirmado por polling de estado (webhook no llegó)');
+          o = getOrder(o.id);
+        }
+      } catch (e) {
+        logger.warn({ orderId: o.id, err: e.message }, 'polling de estado EfiPay falló (se reintenta en el próximo poll)');
+      }
+    }
     return orderView(o);
   });
 
