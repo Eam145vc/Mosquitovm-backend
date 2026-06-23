@@ -26,12 +26,6 @@ export function parseEmail(email) {
   const subject = email.subject || '';
   const text = email.text || stripHtml(email.html || '');
 
-  // DIAGNÓSTICO temporal: ver el contexto del monto ($...) en el texto
-  try {
-    const around = (text.match(/.{0,25}\$[^a-zA-Z]{0,20}/g) || []).slice(0, 3);
-    if (around.length) console.log('[PARSER-DEBUG] contexto $:', JSON.stringify(around));
-  } catch { /* noop */ }
-
   for (const p of PARSERS) {
     if (p.matches(from, subject)) {
       const result = p.parse(text);
