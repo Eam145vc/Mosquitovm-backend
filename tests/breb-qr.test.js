@@ -30,17 +30,19 @@ describe('parseEmvco (TLV)', () => {
 });
 
 describe('extractBrebKey', () => {
-  test('QR con llave alfanumérica → @jhon437203', () => {
+  test('QR con llave alfanumérica → @jhon437203, ruteable', () => {
     const r = extractBrebKey(QR_LLAVE);
     assert.equal(r.key, '@jhon437203');
     assert.equal(r.keyType, 'alias');
+    assert.equal(r.routable, true);
     assert.equal(r.merchantName, '0'); // este QR trae "0" como nombre
   });
 
-  test('QR por cuenta → identificador numérico + nombre comercio', () => {
+  test('QR con llave numérica → 0029353497, ruteable (Bancolombia la rotula "Llave")', () => {
     const r = extractBrebKey(QR_CUENTA);
-    assert.equal(r.key, '0029353497');     // de la cuenta (tag 50.01)
-    assert.equal(r.keyType, 'cuenta');
+    assert.equal(r.key, '0029353497');
+    assert.equal(r.keyType, 'numerica');
+    assert.equal(r.routable, true);
     assert.equal(r.merchantName, 'Supermercado pa mi gen');
   });
 

@@ -54,9 +54,23 @@ export function normalizeKey(k) {
 
 /**
  * Extrae la llave Bre-B de un string EMVCo. Devuelve null si no hay tag 26.
- * @returns {{key: string, keyType: 'alias'|'cuenta', account: string|null, merchantName: string|null}|null}
- *   key: la llave NORMALIZADA usada para el ruteo.
- *   keyType: 'alias' si es @texto; 'cuenta' si se identificó por número de cuenta.
+ *
+ * El RUTEO multipunto es SOLO por llave `@` (alfanumérica): es lo único que distingue
+ * locales dentro de una misma cuenta bancaria. Si el QR no trae `@` (es por cuenta),
+ * `routable` es false → ese local NO se podrá rutear (cae en "no suena + aviso") hasta
+ * que el cliente registre una llave Bre-B.
+ *
+ * Las llaves Bre-B son de 4 tipos (alfanumérica @, celular, cédula, NÚMERO de llave). TODAS
+ * son únicas por local y TODAS rutean. Confirmado con QR reales de Bancolombia:
+ *   - "Llave: @jhon437203"  → tag 26.04 = "@jhon437203"  (alfanumérica)
+ *   - "Llave: 0029353497"   → tag 26.05 + cuenta 50.01 = "0029353497"  (llave numérica;
+ *                             Bancolombia la rotula "Llave", NO es la cuenta de ruteo)
+ *
+ * Por eso ambos casos son `routable: true`. La llave numérica se toma del valor del tag
+ * 26 (o de la cuenta 50.01, que es el mismo número que el banco muestra como "Llave").
+ *
+ * @returns {{key: string, keyType: 'alias'|'numerica', account, merchantName, routable: boolean}|null}
+ *   key: la llave normalizada para el ruteo. null solo si el QR no trae ningún identificador.
  */
 export function extractBrebKey(emvco) {
   const tlv = parseEmvco(emvco);
@@ -64,24 +78,22 @@ export function extractBrebKey(emvco) {
   if (!t26 || !t26.children) return null;
   const c = t26.children;
 
-  // Cuenta (tag 50.01) y nombre del comercio (tag 59) si vienen.
   const t50 = tlv['50'];
   const account = (t50 && t50.children && t50.children['01']) || null;
   const merchantName = (typeof tlv['59'] === 'string' ? tlv['59'] : null);
 
-  // Llave alfanumérica: subtag 04 del template 26 (ej "@jhon437203").
-  if (c['04'] && /^@/.test(c['04'])) {
-    return { key: normalizeKey(c['04']), keyType: 'alias', account, merchantName };
+  // 26.04 = llave alfanumérica/correo (tiene @ o letras), o celular/cédula.
+  if (c['04']) {
+    const v = c['04'];
+    const keyType = /@/.test(v) ? 'alias' : 'numerica';
+    return { key: normalizeKey(v), keyType, account, merchantName, routable: true };
   }
-  // Otros formatos (celular/cédula/cuenta): usamos la cuenta como identificador estable.
-  if (account) {
-    return { key: normalizeKey(account), keyType: 'cuenta', account, merchantName };
+  // 26.05 = llave NUMÉRICA (Bancolombia la muestra como "Llave: 0029353497"). El número
+  // de la llave es el valor de la cuenta (tag 50.01). Es una LLAVE, sí rutea.
+  if (c['05'] && account) {
+    return { key: normalizeKey(account), keyType: 'numerica', account, merchantName, routable: true };
   }
-  // Último recurso: cualquier subtag de 26 que tenga valor identificable.
-  const fallback = c['04'] || c['05'] || (c['05']?.children && c['05'].children['00']);
-  if (fallback) {
-    return { key: normalizeKey(fallback), keyType: 'cuenta', account, merchantName };
-  }
+  // Sin identificador reconocible.
   return null;
 }
 
