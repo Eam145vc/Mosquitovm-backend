@@ -230,7 +230,12 @@ export function openDb() {
     ['iccid', 'TEXT'],
     ['mqtt_pass', 'TEXT'],   // password MQTT del speaker (guardado al provisionar)
     ['ssid', 'TEXT'],        // WiFi al que está conectado (lo reporta el getinfo)
+    // Ruteo multipunto: cada device = un local = una llave Bre-B (del QR que sube el cliente).
+    ['breb_key', 'TEXT'],     // llave Bre-B normalizada del local (para rutear pagos)
+    ['breb_qr_json', 'TEXT'], // JSON del QR decodificado (incl. string EMVCo crudo, para regenerar)
+    ['local_name', 'TEXT'],   // nombre del comercio (tag 59 del QR)
   ]);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_devices_breb_key ON devices(breb_key)');
 
   return db;
 }
@@ -526,6 +531,48 @@ export function assignDevice(spkrId, orderId) {
   openDb();
   return db.prepare(`UPDATE devices SET status = 'asignado', order_id = ?, updated_at = ?
     WHERE spkr_id = ?`).run(orderId, Date.now(), spkrId).changes > 0;
+}
+
+/**
+ * Guarda la llave Bre-B (y datos del QR) de un device. Usado al subir el QR del local.
+ * `key` debe venir ya normalizada (minúsculas, trim). `qrJson` es el objeto decodificado.
+ */
+export function setDeviceBrebKey(spkrId, { key, qrJson = null, localName = null }) {
+  openDb();
+  return db.prepare(`UPDATE devices SET breb_key = ?, breb_qr_json = ?, local_name = ?, updated_at = ?
+    WHERE spkr_id = ?`)
+    .run(key || null, qrJson ? JSON.stringify(qrJson) : null, localName || null, Date.now(), spkrId)
+    .changes > 0;
+}
+
+/**
+ * Lista los devices de una cuenta (vía la orden vinculada). Una cuenta puede tener
+ * varios devices = varios locales. Devuelve filas de devices con su order_id/account.
+ */
+export function listDevicesByAccount(accountId) {
+  openDb();
+  if (!accountId) return [];
+  return db.prepare(`
+    SELECT d.* FROM devices d
+    JOIN orders o ON o.id = d.order_id
+    WHERE o.account_id = ?
+    ORDER BY d.spkr_id
+  `).all(accountId);
+}
+
+/**
+ * Busca el device de una cuenta cuya llave Bre-B coincide (para rutear un pago).
+ * `key` debe venir normalizada. Devuelve el device o null.
+ */
+export function findDeviceByKey(accountId, key) {
+  openDb();
+  if (!accountId || !key) return null;
+  return db.prepare(`
+    SELECT d.* FROM devices d
+    JOIN orders o ON o.id = d.order_id
+    WHERE o.account_id = ? AND d.breb_key = ?
+    LIMIT 1
+  `).get(accountId, key) || null;
 }
 
 /** Desasigna un device: limpia order_id y vuelve a 'provisionado'. */
