@@ -52,6 +52,34 @@ export async function sendActivationEmail(order) {
     'sono.lat',
   ].join('\n');
 
+  // Versión HTML con marca: puntúa mejor en los filtros que el texto plano + link crudo
+  // (estructura por tablas para compatibilidad con clientes de correo; botón con texto ancla).
+  const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#fafaf7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#0a0f1f;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fafaf7;padding:32px 16px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #0a0f1f12;">
+        <tr><td style="background:#000d28;padding:24px 28px;">
+          <span style="color:#fafaf7;font-size:20px;font-weight:700;letter-spacing:-0.02em;">Sonó</span>
+        </td></tr>
+        <tr><td style="padding:28px;">
+          <p style="margin:0 0 16px;font-size:16px;line-height:1.5;">${saludo}</p>
+          <p style="margin:0 0 16px;font-size:16px;line-height:1.6;">¡Gracias por tu compra! 🎉 Tu Sonó ya casi está listo para empezar a anunciar tus ventas.</p>
+          <p style="margin:0 0 24px;font-size:16px;line-height:1.6;">Solo falta un paso: <strong>conectar tu Sonó con tu banco</strong> para que escuche cada pago. Toma 2 minutos, todo desde tu celular y sin contraseñas.</p>
+          <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 24px;"><tr><td style="border-radius:12px;background:#18a848;">
+            <a href="${link}" style="display:inline-block;padding:14px 28px;font-size:16px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:12px;">Conectar mi Sonó &rarr;</a>
+          </td></tr></table>
+          <p style="margin:0 0 8px;font-size:13px;line-height:1.5;color:#4a5168;">Puedes abrirlo cuando quieras. Si ya lo completaste, ignora este correo.</p>
+          <p style="margin:0;font-size:13px;line-height:1.5;color:#4a5168;">¿Dudas? Respóndenos a este correo o escríbenos por el chat de <a href="https://sono.lat" style="color:#0d8a36;">sono.lat</a>.</p>
+        </td></tr>
+        <tr><td style="padding:20px 28px;border-top:1px solid #0a0f1f0f;">
+          <p style="margin:0;font-size:13px;color:#4a5168;">El equipo de Sonó<br><a href="https://sono.lat" style="color:#0d8a36;text-decoration:none;">sono.lat</a></p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
   try {
     const resp = await fetch(`${config.MX_SEND_API_URL.replace(/\/$/, '')}/send`, {
       method: 'POST',
@@ -62,6 +90,7 @@ export async function sendActivationEmail(order) {
         to,
         subject: 'Últimos pasos para conectar tu Sonó',
         text,
+        html,
       }),
     });
     const data = await resp.json().catch(() => ({}));
