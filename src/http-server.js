@@ -1737,6 +1737,18 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     return { code: otp ? otp.code : null, confirmed: Boolean(acc && acc.change_confirmed) };
   });
 
+  // Confirmación MANUAL: el cliente dice "ya cambié el correo en el banco" y avanza, por si
+  // el correo de confirmación del banco no llega o no lo detectamos (no debe quedar atascado).
+  // Marca change_confirmed igual que la vía automática → el wizard avanza al QR.
+  app.post('/activar/:order/email-confirmed', async (req, reply) => {
+    const order = getOrder(req.params.order);
+    if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
+    if (!order.account_id) return reply.code(409).send({ error: 'primero conecta tu correo' });
+    markChangeConfirmed(order.account_id);
+    logger.info({ orderId: order.id, accountId: order.account_id }, 'cambio de correo confirmado MANUALMENTE por el cliente');
+    return { ok: true, confirmed: true };
+  });
+
   // Webhook de ForwardEmail. Distinto a Cloudflare: ForwardEmail manda el correo (parseado
   // y/o raw) y el alias va en el destinatario (recipients/to), no en un campo "alias".
   // Mismo modelo stateless: pago → speaker; OTP → captura efímera. El reenvío al cliente
