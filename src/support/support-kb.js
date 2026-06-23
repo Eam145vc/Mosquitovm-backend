@@ -6,12 +6,13 @@
 //
 // Reglas de contenido (decisiones del usuario):
 //  - Precios (jun-2026, alineados con sono-web/lib/plans.ts, fuente única):
-//    UN SOLO PAGO de entrada de $199.000 (precio normal $400.000). Incluye el
-//    dispositivo Sonó + el PRIMER AÑO de servicio + envío. El cliente se LLEVA el
-//    aparato (es suyo).
-//      - La renovación del servicio cuesta $99.000/año, pero el primer año va incluido
-//        en los $199.000. NO mencionar la renovación de forma proactiva. SOLO darla si
-//        el cliente PREGUNTA DIRECTO "¿cuánto pago el año que viene / la renovación?".
+//    Precio $199.000 (normal $400.000), pagable de DOS formas: de una ($199.000) o
+//    en 3 cuotas de $69.000 (empieza con $69.000; total $207.000). Incluye el
+//    dispositivo Sonó + el PRIMER AÑO de servicio GRATIS + envío. El cliente se LLEVA
+//    el aparato (es suyo). NO decir "pago único" (ya hay cuotas).
+//      - La renovación del servicio cuesta $99.000/año, pero el primer año va incluido.
+//        NO mencionar la renovación de forma proactiva. SOLO darla si el cliente
+//        PREGUNTA DIRECTO "¿cuánto pago el año que viene / la renovación?".
 //    NO existe plan mensual, ni "dispositivo gratis", ni "$29.900/mes", ni "1er mes
 //    gratis", ni "$89.000": todo eso quedó DEPRECADO. No lo menciones nunca.
 //  - Conexión con el banco: decir SOLO "Sonó se conecta con tu banco para detectar
@@ -47,19 +48,24 @@ No necesitas abrir ninguna app para que funcione.
 - Próximamente se integran más bancos y billeteras, sin que tengas que cambiar nada en tu Sonó.
 
 # PLANES Y PRECIOS (lanzamiento)
-Sonó tiene un solo precio: un pago único de $199.000 (precio normal $400.000).
-Con ese pago te llevas:
+El precio de lanzamiento es $199.000 (precio normal $400.000), y lo puedes pagar de dos formas:
+  - De una: $199.000.
+  - En cuotas: 3 cuotas de $69.000 (empiezas con solo $69.000 hoy). En total son $207.000.
+Con cualquiera de las dos te llevas:
   - El dispositivo Sonó WiFi (es tuyo, te queda).
-  - El primer año de servicio incluido.
+  - El primer año de servicio GRATIS.
   - El envío a tu negocio incluido.
   - La Libreta (panel web donde tus ventas se apuntan solas).
   - Un sticker QR personalizado con tu negocio.
-Es un pago único: no hay mensualidades ni cobros sorpresa.
-Nunca hay comisión por venta. 0% siempre.
+No hay mensualidades. Nunca hay comisión por venta, 0% siempre.
+[INTERNO — sobre las cuotas, si preguntan cómo se pagan: la 1ª cuota se paga al comprar;
+las otras 2 se cobran en los meses siguientes. Si pagó con tarjeta se cobran solas; con
+otro medio (PSE, etc.) le llega un enlace de pago. Si no paga una cuota, el servicio se
+suspende hasta ponerse al día.]
 [INTERNO — usar SOLO si el cliente pregunta DIRECTO por la renovación o "¿cuánto pago
-el próximo año?": el primer año va incluido en los $199.000; a partir del segundo año
-la renovación del servicio es de $99.000 al año, y solo renuevas si quieres seguir. NO
-ofrecer este dato si no lo piden.]
+el próximo año?": el primer año va incluido; a partir del segundo año la renovación del
+servicio es de $99.000 al año, y solo renuevas si quieres seguir. NO ofrecer este dato
+si no lo piden.]
 
 # REQUISITOS PARA QUE FUNCIONE
 - WiFi de 2.4 GHz en el local (por ahora Sonó se conecta por WiFi).
@@ -69,7 +75,7 @@ ofrecer este dato si no lo piden.]
 # ENVÍO
 - Llega entre 24 y 48 horas hábiles dentro de Colombia.
 - Llega ya configurado y con tu QR impreso: solo lo enchufas y lo conectas al WiFi.
-- El envío va incluido en el pago único de $199.000, sin cargos aparte.
+- El envío va incluido en el precio, sin cargos aparte.
 
 # LA LIBRETA (incluida)
 - Es un panel web donde tus ventas quedan apuntadas solas, en vivo.
@@ -82,7 +88,7 @@ No. Sonó funciona solo: lo dejas configurado una vez y anuncia cada venta sin q
 nada. Para ver tus ventas usas La Libreta desde el navegador, sin instalar nada.
 
 # PERMANENCIA
-No hay cláusula de permanencia. Haces un solo pago, el dispositivo queda siendo tuyo y
+No hay cláusula de permanencia. El dispositivo queda siendo tuyo y
 no quedas atado a nada: al cumplirse el año renuevas el servicio solo si quieres seguir.
 Sin multas ni ataduras.
 
@@ -111,7 +117,7 @@ tenemos esa información acá: escala a una persona del equipo.
 - (La atención por WhatsApp llegará próximamente.)
 
 # CÓMO COMPRAR
-Completas la compra en sono.lat con el pago único de $199.000. Después recibes los pasos
+Completas la compra en sono.lat ($199.000 de una, o en 3 cuotas de $69.000). Después recibes los pasos
 para dejar tu Sonó listo y te llega a casa configurado en 24-48 horas.
 `.trim();
 

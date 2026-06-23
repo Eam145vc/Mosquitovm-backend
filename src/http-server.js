@@ -166,14 +166,17 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
   // -------------------------------------------------------------------------
 
   // Precios de lanzamiento en centavos COP (espejo de sono-web/lib/plans.ts):
-  // Un solo plan: pago único de $199.000 = dispositivo + 1er año de servicio + envío.
-  // El cliente se lleva el aparato. La renovación ($99.000/año) NO se cobra acá: va
-  // por recordatorio/cobro manual a partir del 2º año (no se muestra en el checkout).
-  // "test" = orden de diagnóstico de la página /test-mp ($5.000, va directo al
-  // Brick de MercadoPago sin Stripe ni Checkout Pro). El admin la ve como TEST.
-  // El plan "mensual" quedó DEPRECADO (jun-2026): cualquier plan distinto de "test"
-  // cae al precio único de $199.000 (PLAN_PRICES_CENTS.anual via el ?? de abajo).
-  const PLAN_PRICES_CENTS = { anual: 19_900_000, test: 500_000 };
+  // Mismo producto (dispositivo + 1er año de servicio + envío; el aparato queda del
+  // cliente), DOS formas de pagar lo que se cobra HOY:
+  //   - contado: $199.000 de una.
+  //   - cuotas:  $69.000 = 1ª de 3 cuotas ($207.000 total). Las cuotas 2 y 3 se cobran
+  //              después: tarjeta tokenizada (automático) o link por WhatsApp (PSE/otros).
+  //              Si no paga una cuota, se corta el servicio (enforcement MQTT).
+  // La renovación ($99.000/año) NO se cobra acá: va por recordatorio a partir del 2º año.
+  // "test" = orden de diagnóstico de /test-mp ($5.000, va directo al Brick de MP).
+  // Compat: el viejo "anual" sigue mapeando a $199.000. Cualquier plan desconocido
+  // (o ausente) cae a contado vía el ?? de abajo.
+  const PLAN_PRICES_CENTS = { contado: 19_900_000, cuotas: 6_900_000, anual: 19_900_000, test: 500_000 };
 
   // Paso 1: crea la orden con los datos de envío. Devuelve el monto (pesos) y la public key
   // para que el front renderice el formulario de tarjeta (Bricks) embebido.
@@ -185,13 +188,15 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     if (!business_name || !address || !phone) {
       return reply.code(400).send({ error: 'faltan nombre, direccion o telefono' });
     }
-    const amountCents = PLAN_PRICES_CENTS[plan] ?? PLAN_PRICES_CENTS.anual;
+    const amountCents = PLAN_PRICES_CENTS[plan] ?? PLAN_PRICES_CENTS.contado;
     const orderId = createOrder({ amountCents });            // external_reference = orderId
     updateOrder(orderId, {
       business_name, bank: bank || null, address, city: city || null, phone,
       customer_email: email || null,
     });
-    logger.info({ orderId, plan: plan || 'anual', amountCents, business_name }, 'orden creada');
+    // En 'cuotas' lo cobrado hoy es la 1ª de 3; el cobro de las cuotas 2-3 se hace
+    // luego (tarjeta tokenizada o link WhatsApp). Lo dejamos en el log por ahora.
+    logger.info({ orderId, plan: plan || 'contado', amountCents, business_name }, 'orden creada');
     // Proveedor de pago: 1º Stripe embebido (dentro de sono.lat; la cuenta MP no
     // procesa por API directa, error 412/9510) → 2º Checkout Pro de MercadoPago
     // (redirect) → 3º Brick in-web (por si MP habilita la API).
