@@ -393,12 +393,16 @@ export async function fetchEfiTransaction(transactionId) {
 export async function fetchEfiStatus(paymentId) {
   if (!config.hasEfipay || !paymentId) return null;
   try {
+    // ⚠️ Es POST (no GET) con el payment_id en la URL y body vacío. La respuesta trae
+    // el detalle en `data.data` (con status 'Aprobada' y reference_1 = nuestra orderId).
     const resp = await fetch(`${EFI_API}/payment/transaction-status/${encodeURIComponent(paymentId)}`, {
+      method: 'POST',
       headers: authHeaders(),
+      body: JSON.stringify({}),
     });
     if (!resp.ok) return null;
     const data = await resp.json().catch(() => ({}));
-    const tx = data.transaction || data.data || data;
+    const tx = data.data || data.transaction || data;
     const status = tx.status || data.status || null;
     const approved = /aprob|approv|exito|success|paid|complet/i.test(String(status || ''));
     return { approved, status, raw: data };
@@ -481,6 +485,7 @@ export function parseEfiWebhook(req) {
   const reference =
     (Array.isArray(tx?.references) ? tx.references[0] : null) ||
     tx?.reference ||
+    tx?.reference_1 ||   // EfiPay manda la referencia (nuestra orderId) en reference_1
     tx?.external_reference ||
     null;
   return {
