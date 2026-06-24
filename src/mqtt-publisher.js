@@ -89,6 +89,15 @@ function normalizeStatus(raw) {
  * @param {string} [opts.speakerId]  - default config.SPEAKER_DEVICE_ID
  */
 export async function publishVoice(playAudibleMsg, opts = {}) {
+  // SEGURIDAD: si el pago no trae un speakerId resuelto (cuenta sin speaker asignado, o
+  // multipunto sin match de llave), NO publicamos. Antes caía a config.SPEAKER_DEVICE_ID
+  // (spkr-001 por default) → ¡los pagos de una cuenta sonaban en el speaker de OTRO cliente!
+  const speakerId = opts.speakerId;
+  if (!speakerId) {
+    logger.warn({ amount: opts.amount }, 'publishVoice SIN speakerId → NO se publica (evita sonar en speaker ajeno)');
+    return { skipped: true, reason: 'no-speaker' };
+  }
+
   const c = connect();
   if (!c.connected) {
     await new Promise((res, rej) => {
@@ -101,7 +110,6 @@ export async function publishVoice(playAudibleMsg, opts = {}) {
   const payload = { cmd: 'voice', playAudibleMsg };
   if (opts.amount != null) payload.amount = String(opts.amount).slice(0, 8);
 
-  const speakerId = opts.speakerId || config.SPEAKER_DEVICE_ID;
   const topic = `speakers/${speakerId}/cmd`;
 
   logger.info({ topic, payload }, 'mqtt publish voice');
