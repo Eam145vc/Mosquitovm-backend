@@ -1,8 +1,9 @@
 name: Deploy backend al VM
 
-# Se dispara al hacer push a main. Conecta por SSH al VM, actualiza el código
-# desde GitHub y reinicia el backend con PM2. El .env del VM NO se toca (vive
-# solo en el VM, fuera de git).
+# Se dispara al hacer push a main. El runner de GitHub ya tiene el código clonado
+# (checkout autenticado); lo SUBE al VM por scp y reinicia el backend con PM2.
+# NO depende de credenciales git en el VM (el repo es privado y el VM no las tiene).
+# El .env, la DB y node_modules del VM NO se tocan (no se suben; viven solo en el VM).
 on:
   push:
     branches: [main]
@@ -16,26 +17,68 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy via SSH
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 1) Backup del código actual del VM (rollback si el deploy falla).
+      - name: Backup en el VM
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          # Secrets del VM NUEVO: VM_HOST=86.48.30.120, VM_USER=root,
+          # VM_SSH_KEY=contenido de la llave sono_mx. Puerto SSH del VM nuevo = 22.
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          port: 22
+          script: |
+            set -e
+            cd /home/sono/backend
+            BAK="/home/sono/.deploy-bak-$(date +%s)"
+            mkdir -p "$BAK" && cp -r src package.json package-lock.json "$BAK/" 2>/dev/null || true
+            echo "$BAK" > /home/sono/.last-deploy-bak
+            echo "backup en $BAK"
+            # limpiar backups viejos (deja los 5 más nuevos)
+            ls -dt /home/sono/.deploy-bak-* 2>/dev/null | tail -n +6 | xargs -r rm -rf
+
+      # 2) Subir el código (src + manifests). NO sube .env, data/, node_modules.
+      - name: Subir código por scp
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          port: 22
+          source: "src/,package.json,package-lock.json"
+          target: "/home/sono/backend"
+          overwrite: true
+
+      # 3) Instalar deps prod, reiniciar PM2, healthcheck con rollback automático.
+      - name: Instalar + reiniciar + healthcheck
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
-          port: 22022
+          port: 22
           script_stop: true
           script: |
             set -e
-            cd /home/deploy/sono/backend
-            echo "==> git fetch + reset a origin/main"
-            git fetch --depth 1 origin main
-            git reset --hard origin/main
+            cd /home/sono/backend
+            echo "==> sintaxis"
+            node --check src/http-server.js
             echo "==> npm install (solo prod)"
             npm ci --omit=dev --no-audit --no-fund || npm install --omit=dev --no-audit --no-fund
             echo "==> reiniciar PM2"
             pm2 restart sono-backend --update-env
             sleep 3
-            echo "==> healthcheck"
-            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:47821/healthz)
+            echo "==> healthcheck (rollback automático si no responde 200)"
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:47821/healthz || echo 000)
             echo "healthz: $code"
-            test "$code" = "200"
+            if [ "$code" != "200" ]; then
+              echo "==> HEALTHCHECK FALLÓ ($code): restaurando backup"
+              BAK=$(cat /home/sono/.last-deploy-bak)
+              cp -r "$BAK/src" . && cp "$BAK/package.json" . 2>/dev/null || true
+              pm2 restart sono-backend --update-env
+              exit 1
+            fi
+            echo "==> deploy OK"
