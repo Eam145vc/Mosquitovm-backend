@@ -82,18 +82,29 @@ export function extractBrebKey(emvco) {
   const account = (t50 && t50.children && t50.children['01']) || null;
   const merchantName = (typeof tlv['59'] === 'string' ? tlv['59'] : null);
 
-  // 26.04 = llave alfanumérica/correo (tiene @ o letras), o celular/cédula.
-  if (c['04']) {
-    const v = c['04'];
-    const keyType = /@/.test(v) ? 'alias' : 'numerica';
-    return { key: normalizeKey(v), keyType, account, merchantName, routable: true };
+  // El tipo de llave Bre-B va en el SUBTAG del tag 26 (verificado con QR reales):
+  //   26.01 = correo · 26.02 = celular · 26.03 = cédula · 26.04 = alfanumérica @ ·
+  //   26.05 = numérica (en este caso la llave es el nº de cuenta, tag 50.01).
+  // Las 4 son LLAVES únicas por local → todas rutean. Tomamos el primer subtag con valor
+  // (saltando 00, que es el namespace "CO.COM.RBM.LLA").
+  for (const sub of ['04', '02', '03', '01']) {
+    if (c[sub]) {
+      const v = c[sub];
+      const keyType = /@/.test(v) ? 'alias' : 'numerica';
+      return { key: normalizeKey(v), keyType, account, merchantName, routable: true };
+    }
   }
-  // 26.05 = llave NUMÉRICA (Bancolombia la muestra como "Llave: 0029353497"). El número
-  // de la llave es el valor de la cuenta (tag 50.01). Es una LLAVE, sí rutea.
+  // 26.05 = llave NUMÉRICA cuyo valor es el nº de cuenta (Bancolombia lo muestra como
+  // "Llave: 0029353497"). Es una LLAVE, sí rutea.
   if (c['05'] && account) {
     return { key: normalizeKey(account), keyType: 'numerica', account, merchantName, routable: true };
   }
-  // Sin identificador reconocible.
+  // Último recurso: cualquier otro subtag de 26 (distinto de 00) con valor.
+  for (const k of Object.keys(c)) {
+    if (k !== '00' && c[k] && typeof c[k] === 'string') {
+      return { key: normalizeKey(c[k]), keyType: /@/.test(c[k]) ? 'alias' : 'numerica', account, merchantName, routable: true };
+    }
+  }
   return null;
 }
 

@@ -46,6 +46,14 @@ describe('extractBrebKey', () => {
     assert.equal(r.merchantName, 'Supermercado pa mi gen');
   });
 
+  test('QR con llave de CELULAR (tag 26.02) → rutea', () => {
+    // string EMVCo real del 3er QR de Jhon: 26.02 = "3134029429" (celular)
+    const QR_CEL = '00020101021126320014CO.COM.RBM.LLA0210313402942949250014CO.COM.RBM.RED0103RBM50130013CO.COM.RBM.CU0108000000005204000053031705802CO59010600106101063040000';
+    const r = extractBrebKey(QR_CEL);
+    assert.equal(r.key, '3134029429');
+    assert.equal(r.routable, true);
+  });
+
   test('string sin tag 26 → null', () => {
     assert.equal(extractBrebKey('00020101'), null);
   });

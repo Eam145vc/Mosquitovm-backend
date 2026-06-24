@@ -1313,12 +1313,35 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     const acc = getAccount(req.params.id);
     if (!acc) return reply.code(404).send({ error: 'cliente no encontrado' });
     const summary = clientSummary(acc);
-    const orders = listOrders().filter(o => o.account_id === acc.id)
+    const accOrders = listOrders().filter(o => o.account_id === acc.id);
+    const orders = accOrders
       .map(o => ({ id: o.id, status: o.status, business_name: o.business_name, bank: o.bank,
-        next_charge_at: o.next_charge_at, hasQr: Boolean(o.qr_path), created_at: o.created_at }));
-    const speakersList = listDevices().filter(d => (d.order_id && orders.some(o => o.id === d.order_id)) || (acc.speaker_id && d.spkr_id === acc.speaker_id))
+        next_charge_at: o.next_charge_at, hasQr: Boolean(o.qr_path), created_at: o.created_at,
+        breb_key: o.breb_key || null, local_name: o.local_name || null }));
+    const allDevices = listDevices();
+    const speakersList = allDevices.filter(d => (d.order_id && orders.some(o => o.id === d.order_id)) || (acc.speaker_id && d.spkr_id === acc.speaker_id))
       .map(d => ({ spkr_id: d.spkr_id, mac: d.mac, model: d.model, status: d.status,
         last_seen: d.last_seen, battery: d.battery, ssid: d.ssid }));
+
+    // MULTIPUNTO: un "local" por cada pedido con su llave Bre-B + speaker asignado. Permite
+    // ver en el admin cómo se reparte el cliente por llave (qué pago suena en qué speaker).
+    const locales = accOrders.map(o => {
+      const dev = allDevices.find(d => d.order_id === o.id);
+      // la llave puede estar en el device (ya asignado) o en la orden (QR subido, sin device aún)
+      const key = (dev && dev.breb_key) || o.breb_key || null;
+      const localName = (dev && dev.local_name) || o.local_name || o.business_name || null;
+      return {
+        order_id: o.id,
+        local_name: localName,
+        breb_key: key,
+        has_key: Boolean(key),
+        spkr_id: dev ? dev.spkr_id : null,
+        status: o.status,
+        hasQr: Boolean(o.qr_path),
+      };
+    });
+    const isMultipunto = accOrders.length > 1;
+
     return {
       ...summary,
       email_method: acc.auth_type === 'imap' ? 'imap' : (acc.alias ? 'redirect' : (acc.oauth_provider || 'gmail')),
@@ -1327,6 +1350,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
       suspended_at: acc.suspended_at || null,
       orders,
       speakers_list: speakersList,
+      locales,             // multipunto: lista de locales con su llave + speaker
+      is_multipunto: isMultipunto,
       payments: paymentsFor(acc.id, 50),
     };
   });
