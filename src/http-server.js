@@ -831,6 +831,22 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
       };
     }
 
+    // IDEMPOTENCIA: si ESTA orden ya generó un alias antes (el cliente reentró al paso,
+    // recargó, o reintentó), REUSARLO. Sin esto, generateAlias() devolvía un sufijo
+    // aleatorio nuevo cada vez y upsertAccount pisaba el anterior → el alias que el
+    // cliente ya había puesto en su banco quedaba huérfano (bug: a21a→b559→014f).
+    const self = getAccount(accountId);
+    if (self && self.alias && self.forwardTo === forwardTo) {
+      linkOrderToAccount(order, accountId, 'redirect');
+      logger.info({ orderId: order.id, alias: self.alias }, 'email-redirect: alias ya existente reusado (idempotente)');
+      return {
+        ok: true,
+        alias: `${self.alias}@${config.MAIL_DOMAIN}`,
+        forwardTo,
+        needsVerification: false,
+      };
+    }
+
     // Flujo normal (correo nuevo, o el cliente eligió cuenta separada): alias nuevo.
     const alias = generateAlias(forwardTo);
 
@@ -1914,7 +1930,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     return { ok: true, playAudibleMsg };
   });
 
-  app.get('/accounts', async () => listAccounts());
+  app.get('/accounts', async (req, reply) => { if (!requireAdmin(req, reply)) return; return listAccounts(); });
 
   // Bot de soporte (chat público + admin + web push).
   registerSupportRoutes(app);
