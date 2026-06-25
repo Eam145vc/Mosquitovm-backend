@@ -70,10 +70,14 @@ jobs:
             npm ci --omit=dev --no-audit --no-fund || npm install --omit=dev --no-audit --no-fund
             echo "==> reiniciar PM2"
             pm2 restart sono-backend --update-env
-            sleep 3
-            echo "==> healthcheck (rollback automático si no responde 200)"
-            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:47821/healthz || echo 000)
-            echo "healthz: $code"
+            echo "==> healthcheck (reintentos; rollback automático si nunca responde 200)"
+            code=000
+            for i in 1 2 3 4 5 6 7 8; do
+              sleep 2
+              code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:47821/healthz || echo 000)
+              echo "intento $i healthz: $code"
+              [ "$code" = "200" ] && break
+            done
             if [ "$code" != "200" ]; then
               echo "==> HEALTHCHECK FALLÓ ($code): restaurando backup"
               BAK=$(cat /home/sono/.last-deploy-bak)
