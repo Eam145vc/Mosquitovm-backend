@@ -1123,6 +1123,23 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     return { ok: true };
   });
 
+  // Cambiar manualmente el estado de despacho de una orden (control del admin).
+  // Estados válidos: 'ready_to_ship' (Por despachar) | 'shipped' (Enviado).
+  // Sincroniza el device asociado para que el derivador del panel sea consistente.
+  app.post('/admin/orders/:order/status', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const o = getOrder(req.params.order);
+    if (!o) return reply.code(404).send({ error: 'orden no encontrada' });
+    const { status } = req.body || {};
+    const VALID = ['ready_to_ship', 'shipped'];
+    if (!VALID.includes(status)) return reply.code(400).send({ error: 'estado inválido' });
+    updateOrder(o.id, { status });
+    const dev = listDevices().find(d => d.order_id === o.id);
+    if (dev) setDeviceStatus(dev.spkr_id, status === 'shipped' ? 'enviado' : 'provisionado');
+    logger.info({ orderId: o.id, status }, 'estado de despacho cambiado (admin)');
+    return { ok: true, status };
+  });
+
   // Renovaciones que vencen pronto (o ya vencidas) para avisar por WhatsApp.
   app.get('/admin/renewals', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
