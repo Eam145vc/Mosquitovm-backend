@@ -58,13 +58,12 @@ export function recordLatency(line) {
     brebKey: line.brebKey || null,   // llave Bre-B del pago (para ruteo/identificación)
     alias: line.alias || null,       // alias @sono.lat al que llegó el correo
     account: line.account || null,   // últimos dígitos de la cuenta destino
-    bankToBackendMs: line.bankToBackendMs ?? null,
+    bankToBackendMs: line.bankToBackendMs ?? null,  // demora del pago hasta el MX (única confiable)
     feToBackendMs: line.feToBackendMs ?? null,
     backendToVoiceMs: line.backendToVoiceMs ?? null,
-    bankEmitDelayMs: line.bankEmitDelayMs ?? null,  // demora banco en emitir (header−cuerpo, minutos)
-    emailTravelMs: line.emailTravelMs ?? null,      // viaje correo emitido (header→MX, preciso)
-    paidAt: line.paidAt ?? null,                    // hora del pago (cuerpo)
-    headerDate: line.headerDate ?? null,            // header Date del banco
+    precise: line.precise ?? false,                 // true = medido con segundos; false = ±60s
+    paidAt: line.paidAt ?? null,                    // diagnóstico: hora del pago (cuerpo)
+    headerDate: line.headerDate ?? null,            // diagnóstico: header Date (con segundos)
   };
   samples.push(s);
   if (samples.length > MAX_SAMPLES) samples.shift();

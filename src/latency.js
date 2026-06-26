@@ -108,23 +108,33 @@ export function startLatency(body) {
   //     hora confiable: el header Date el banco lo rellena inconsistente (a veces
   //     atrasado, a veces "fresco" aunque el correo salió tarde). Precisión ±60s.
   const bodyText = body?.text || body?.html || '';
-  const paidAt = extractBodyPaidAt(bodyText);
-  // Header Date del banco — se conserva solo como referencia/diagnóstico, ya NO es la
-  // base de bankToBackendMs (mentía según el día). Fallback si el cuerpo no trae hora.
-  const headerDate = body?.date ? parseDate(body.date) : extractBankDate(body);
-  // bankDate = la base del cálculo: cuerpo si existe, si no el header (degradado).
-  const bankDate = paidAt || headerDate;
+  const paidAt = extractBodyPaidAt(bodyText);          // hora del pago, SIN segundos (resolución minuto)
+  const headerDate = body?.date ? parseDate(body.date) : extractBankDate(body); // CON segundos
   // [B] cuándo el MX (mx.sono.lat) recibió el correo del banco.
   const mxReceived = Number(body?.receivedAtMs) || null;
+
+  // BASE para medir la demora. Elegimos entre cuerpo (minutos) y header (segundos):
+  //  - Si header y cuerpo caen en el MISMO MINUTO → el banco emitió al instante (no hubo
+  //    cola antes del Date) → el header es fiable como hora del pago y trae SEGUNDOS →
+  //    lo usamos para tener precisión exacta cuando todo va rápido.
+  //  - Si DIFIEREN → hubo cola antes del Date (header adelantado, p.ej. cuerpo 16:34 /
+  //    header 16:40) → el header miente → usamos el cuerpo (minutos) que sí captura la cola.
+  //  - Si no hay cuerpo → caemos al header (degradado, comportamiento viejo).
+  const sameMinute = (paidAt != null && headerDate != null)
+    && Math.floor(paidAt / 60_000) === Math.floor(headerDate / 60_000);
+  const usedHeaderForPrecision = sameMinute;          // true = medimos con segundos (rápido)
+  const bankDate = paidAt != null
+    ? (sameMinute ? headerDate : paidAt)              // cuerpo salvo que header coincida en minuto
+    : headerDate;                                      // sin cuerpo → header
   return {
     receivedAt,
     bankDate,
-    paidAt,        // hora del cuerpo (pago real), null si no se pudo extraer
-    headerDate,    // header Date del banco (referencia, ya no es la base)
+    paidAt,        // hora del cuerpo (pago real, minutos), null si no se pudo extraer
+    headerDate,    // header Date del banco (con segundos)
     mxReceived,
-    // Banco→Sonó: de la HORA DEL PAGO (cuerpo) hasta que el MX lo recibió. Ahora
-    // refleja la latencia real punta-a-punta (incluye la demora del banco en emitir).
-    // Si no hay hora de cuerpo, cae al header (comportamiento viejo, degradado).
+    precise: usedHeaderForPrecision,  // true = medido con segundos (header≈cuerpo); false = ±60s
+    // Demora del pago hasta el MX. Base = header (segundos) si coincide en minuto con el
+    // cuerpo; si no, cuerpo (minutos). Captura cola antes del Date Y viaje lento después.
     bankToBackendMs: bankDate ? (mxReceived || receivedAt) - bankDate : null,
     // MX→backend: del recibo en el MX hasta el webhook (nuestra red interna).
     feToBackendMs: mxReceived ? receivedAt - mxReceived : null,
@@ -136,26 +146,19 @@ export function startLatency(body) {
 export function markVoicePublished(lat, ctx = {}) {
   if (!lat) return;
   lat.backendToVoiceMs = Date.now() - lat.receivedAt; // C→D
-  // Demora del banco en EMITIR el correo = header Date − hora del pago (cuerpo).
-  // El cuerpo no trae segundos, así que esto tiene resolución de MINUTOS: si header y
-  // cuerpo caen en el mismo minuto → 0 (sin demora, "al instante"). Si difieren, el
-  // valor en minutos es la demora real del banco. null si falta alguno de los dos.
-  const bankEmitDelayMs = (lat.paidAt != null && lat.headerDate != null)
-    ? Math.max(0, lat.headerDate - lat.paidAt)
-    : null;
-  // Viaje del correo ya emitido = del header Date hasta que el MX lo recibió (red, preciso).
-  const emailTravelMs = (lat.headerDate != null && lat.mxReceived != null)
-    ? Math.max(0, lat.mxReceived - lat.headerDate)
-    : null;
+  // La ÚNICA demora confiable es CUERPO → MX (bankToBackendMs): captura tanto la cola
+  // de SendClean ANTES del Date (header fresco engañoso) como un viaje lento DESPUÉS
+  // del Date (header=cuerpo pero llega tarde). Comparar header−cuerpo NO sirve: da
+  // falso "al instante" cuando la demora está después del Date. Resolución ±60s
+  // (el cuerpo no trae segundos). paidAt/headerDate quedan SOLO como diagnóstico.
   const line = {
     ...ctx,
-    bankToBackendMs: lat.bankToBackendMs,
+    bankToBackendMs: lat.bankToBackendMs,   // demora del pago hasta el MX (la única confiable)
     feToBackendMs: lat.feToBackendMs,
     backendToVoiceMs: lat.backendToVoiceMs,
-    bankEmitDelayMs,   // demora del banco en emitir (header−cuerpo), resolución minutos
-    emailTravelMs,     // viaje del correo emitido (header→MX), preciso
-    paidAt: lat.paidAt ?? null,
-    headerDate: lat.headerDate ?? null,
+    precise: lat.precise ?? false,          // true = medido con segundos; false = ±60s (resolución minuto)
+    paidAt: lat.paidAt ?? null,             // diagnóstico: hora del pago (cuerpo)
+    headerDate: lat.headerDate ?? null,     // diagnóstico: header Date (con segundos)
   };
   // Alerta si algún tramo se dispara (umbrales conservadores).
   const slowBank = lat.bankToBackendMs != null && lat.bankToBackendMs > 60_000;
