@@ -116,6 +116,7 @@ function orderView(o) {
     hasShipping: Boolean(o.business_name),
     payerEmail: o.mp_payer_email || null,  // para pre-rellenar el correo del método redirect
     customerEmail: o.customer_email || null, // correo del checkout, para prellenar el onboarding
+    delivery: o.delivery || 'online', // 'online' | 'contraentrega' → el front decide cuándo reportar el Purchase a los pixels
   };
 }
 
