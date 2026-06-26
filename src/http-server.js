@@ -1215,6 +1215,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
   });
 
   // Estadísticas de latencia del pipeline de pago (global + por comercio + detalle).
+  // Query opcional: ?from=<epochMs>&to=<epochMs> filtra el detalle por rango de fecha;
+  // ?all=1 devuelve TODAS las muestras del rango (no solo las últimas 50).
   app.get('/admin/latency', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
     // Resuelve accountId → nombre del comercio (business_name de su orden, o el email).
@@ -1224,7 +1226,10 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
       const acc = getAccount(accountId);
       return acc ? acc.email : null;
     };
-    return getLatencyStats(resolveName);
+    const from = req.query.from ? Number(req.query.from) : null;
+    const to = req.query.to ? Number(req.query.to) : null;
+    const all = req.query.all === '1' || req.query.all === 'true';
+    return getLatencyStats(resolveName, { from, to, all });
   });
 
   // ── Buzón (catch-all): correo que entra al MX a un alias DESCONOCIDO ──
@@ -1765,6 +1770,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
             ...result,
             accountId: account.id,
             speakerId: route.speakerId,
+            alias,
             from, subject,
             _lat: lat,
           });
@@ -1925,7 +1931,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
             // usuario los mostrará desde el historial cuando exista.
             logger.warn({ alias, accountId: account.id, amount: result.amount, key: route.key }, 'multipunto: pago NO ruteado (llave sin local), no se anuncia');
           } else {
-            onPaymentDetected({ ...result, accountId: account.id, speakerId: route.speakerId, from, subject, _lat: lat });
+            onPaymentDetected({ ...result, accountId: account.id, speakerId: route.speakerId, alias, from, subject, _lat: lat });
           }
         }
       } else {

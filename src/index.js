@@ -70,6 +70,7 @@ async function announcePayment(payment) {
     if (payment._lat) {
       markVoicePublished(payment._lat, {
         accountId: payment.accountId, amount: payment.amount, bank: payment.bank, source: 'fe-webhook',
+        brebKey: payment.brebKey || null, alias: payment.alias || null, account: payment.account || null,
       });
     }
   } catch (e) {

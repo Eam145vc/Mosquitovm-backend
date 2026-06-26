@@ -15,7 +15,7 @@ import { config } from './config.js';
 import { logger } from './logger.js';
 
 const FILE = path.join(path.dirname(config.DB_PATH), 'latency.json');
-const MAX_SAMPLES = 500; // detalle reciente
+const MAX_SAMPLES = 5000; // detalle histórico (para filtrar por fecha y ver "todo el registro")
 
 // samples: [{ at, accountId, amount, bank, bankToBackendMs, feToBackendMs, backendToVoiceMs }]
 let samples = [];
@@ -55,9 +55,16 @@ export function recordLatency(line) {
     accountId: line.accountId || null,
     amount: line.amount ?? null,
     bank: line.bank || 'unknown',
+    brebKey: line.brebKey || null,   // llave Bre-B del pago (para ruteo/identificación)
+    alias: line.alias || null,       // alias @sono.lat al que llegó el correo
+    account: line.account || null,   // últimos dígitos de la cuenta destino
     bankToBackendMs: line.bankToBackendMs ?? null,
     feToBackendMs: line.feToBackendMs ?? null,
     backendToVoiceMs: line.backendToVoiceMs ?? null,
+    bankEmitDelayMs: line.bankEmitDelayMs ?? null,  // demora banco en emitir (header−cuerpo, minutos)
+    emailTravelMs: line.emailTravelMs ?? null,      // viaje correo emitido (header→MX, preciso)
+    paidAt: line.paidAt ?? null,                    // hora del pago (cuerpo)
+    headerDate: line.headerDate ?? null,            // header Date del banco
   };
   samples.push(s);
   if (samples.length > MAX_SAMPLES) samples.shift();
@@ -85,8 +92,10 @@ function p95(arr) {
 /**
  * Estadísticas para el panel admin.
  * resolveName(accountId) → string opcional para mostrar el nombre del comercio.
+ * opts: { from, to, all } — rango de fecha (epoch ms) y si devolver TODO el detalle.
  */
-export function getStats(resolveName) {
+export function getStats(resolveName, opts = {}) {
+  const { from = null, to = null, all = false } = opts;
   // Global: promedios y p95 sobre las muestras recientes.
   const global = {
     n: samples.length,
@@ -130,11 +139,17 @@ export function getStats(resolveName) {
     avgUsMs: avg(e.sumUs, e.nUs),
   })).sort((x, y) => y.n - x.n);
 
-  // Detalle reciente (últimas 50, más nuevas primero).
-  const recent = samples.slice(-50).reverse().map((s) => ({
+  // Detalle: por defecto las últimas 50; con rango de fecha (from/to) o all=1 se filtra
+  // y se devuelve todo lo que caiga en el rango (más nuevas primero).
+  const inRange = (s) => (from == null || s.at >= from) && (to == null || s.at <= to);
+  const hasFilter = from != null || to != null || all;
+  let picked = hasFilter ? samples.filter(inRange) : samples.slice(-50);
+  // Tope de seguridad para no devolver un payload gigante al panel.
+  const RECENT_CAP = 1000;
+  const recent = picked.slice(-RECENT_CAP).reverse().map((s) => ({
     ...s,
     name: (resolveName && s.accountId && resolveName(s.accountId)) || null,
   }));
 
-  return { global, perBank, perClient, recent };
+  return { global, perBank, perClient, recent, recentTotal: picked.length };
 }

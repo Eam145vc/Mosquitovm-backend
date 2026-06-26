@@ -30,6 +30,27 @@ function parseDate(value) {
 }
 
 /**
+ * Extrae la HORA REAL DEL PAGO del CUERPO del correo del banco (no del header Date,
+ * que el banco rellena de forma inconsistente: a veces atrasado, a veces "fresco"
+ * aunque el correo salió tarde). El cuerpo siempre trae la hora del pago real.
+ *
+ * Bancolombia: "...el 26/06/2026 a las 16:34. Con codigo QR es facil..."
+ * Resolución: MINUTOS (sin segundos) → precisión ±60s. Asume hora Colombia (GMT-5).
+ * Devuelve epoch ms UTC, o null si no se encuentra el patrón.
+ */
+function extractBodyPaidAt(text) {
+  if (!text || typeof text !== 'string') return null;
+  // "el DD/MM/YYYY a las HH:MM" (24h). Tolera espacios variables.
+  const m = text.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\s+a\s+las\s+(\d{1,2}):(\d{2})\b/i);
+  if (!m) return null;
+  const [, dd, mm, yyyy, hh, min] = m.map(Number);
+  // El cuerpo está en hora local Colombia (GMT-5, sin DST). Construimos el epoch UTC
+  // sumando 5h al wall-clock colombiano. Date.UTC evita que el TZ del server interfiera.
+  const utcMs = Date.UTC(yyyy, mm - 1, dd, hh + 5, min, 0);
+  return Number.isFinite(utcMs) ? utcMs : null;
+}
+
+/**
  * Extrae el timestamp del header `Date:` del correo.
  * body puede traer: body.date (mailparser ya lo da como Date/string) o estar en headers.
  */
@@ -83,17 +104,27 @@ function extractLastReceived(body) {
  */
 export function startLatency(body) {
   const receivedAt = Date.now();           // [C] llegada al backend
-  // [A] fecha del banco: el MX la manda en body.date (ISO); fallback a headers.
-  const bankDate = body?.date ? parseDate(body.date) : extractBankDate(body);
-  // [B] cuándo el MX (mx.sono.lat) recibió el correo del banco. Reloj del MX,
-  //     mucho más preciso que el header Date (que es resolución de segundos del banco).
+  // [A] HORA REAL DEL PAGO: la del CUERPO del correo ("a las HH:MM"). Es la única
+  //     hora confiable: el header Date el banco lo rellena inconsistente (a veces
+  //     atrasado, a veces "fresco" aunque el correo salió tarde). Precisión ±60s.
+  const bodyText = body?.text || body?.html || '';
+  const paidAt = extractBodyPaidAt(bodyText);
+  // Header Date del banco — se conserva solo como referencia/diagnóstico, ya NO es la
+  // base de bankToBackendMs (mentía según el día). Fallback si el cuerpo no trae hora.
+  const headerDate = body?.date ? parseDate(body.date) : extractBankDate(body);
+  // bankDate = la base del cálculo: cuerpo si existe, si no el header (degradado).
+  const bankDate = paidAt || headerDate;
+  // [B] cuándo el MX (mx.sono.lat) recibió el correo del banco.
   const mxReceived = Number(body?.receivedAtMs) || null;
   return {
     receivedAt,
     bankDate,
+    paidAt,        // hora del cuerpo (pago real), null si no se pudo extraer
+    headerDate,    // header Date del banco (referencia, ya no es la base)
     mxReceived,
-    // Banco→Sonó: del Date del banco hasta que el MX lo recibió (lo más cercano al
-    // "viaje real" banco→nosotros). Si no hay mxReceived, usamos receivedAt.
+    // Banco→Sonó: de la HORA DEL PAGO (cuerpo) hasta que el MX lo recibió. Ahora
+    // refleja la latencia real punta-a-punta (incluye la demora del banco en emitir).
+    // Si no hay hora de cuerpo, cae al header (comportamiento viejo, degradado).
     bankToBackendMs: bankDate ? (mxReceived || receivedAt) - bankDate : null,
     // MX→backend: del recibo en el MX hasta el webhook (nuestra red interna).
     feToBackendMs: mxReceived ? receivedAt - mxReceived : null,
@@ -105,11 +136,26 @@ export function startLatency(body) {
 export function markVoicePublished(lat, ctx = {}) {
   if (!lat) return;
   lat.backendToVoiceMs = Date.now() - lat.receivedAt; // C→D
+  // Demora del banco en EMITIR el correo = header Date − hora del pago (cuerpo).
+  // El cuerpo no trae segundos, así que esto tiene resolución de MINUTOS: si header y
+  // cuerpo caen en el mismo minuto → 0 (sin demora, "al instante"). Si difieren, el
+  // valor en minutos es la demora real del banco. null si falta alguno de los dos.
+  const bankEmitDelayMs = (lat.paidAt != null && lat.headerDate != null)
+    ? Math.max(0, lat.headerDate - lat.paidAt)
+    : null;
+  // Viaje del correo ya emitido = del header Date hasta que el MX lo recibió (red, preciso).
+  const emailTravelMs = (lat.headerDate != null && lat.mxReceived != null)
+    ? Math.max(0, lat.mxReceived - lat.headerDate)
+    : null;
   const line = {
     ...ctx,
     bankToBackendMs: lat.bankToBackendMs,
     feToBackendMs: lat.feToBackendMs,
     backendToVoiceMs: lat.backendToVoiceMs,
+    bankEmitDelayMs,   // demora del banco en emitir (header−cuerpo), resolución minutos
+    emailTravelMs,     // viaje del correo emitido (header→MX), preciso
+    paidAt: lat.paidAt ?? null,
+    headerDate: lat.headerDate ?? null,
   };
   // Alerta si algún tramo se dispara (umbrales conservadores).
   const slowBank = lat.bankToBackendMs != null && lat.bankToBackendMs > 60_000;
