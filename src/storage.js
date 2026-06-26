@@ -181,6 +181,8 @@ export function openDb() {
     ['breb_key', 'TEXT'],
     ['breb_qr_json', 'TEXT'],
     ['local_name', 'TEXT'],
+    // Entrega: 'online' (paga ya por la pasarela) | 'contraentrega' (paga al recibir).
+    ['delivery', 'TEXT'],
   ]);
   db.exec('CREATE INDEX IF NOT EXISTS idx_orders_plan ON orders(mp_plan_id)');
   // Índice para que el job de cobro encuentre rápido las cuotas vencidas.
@@ -508,6 +510,8 @@ export function updateOrder(id, patch) {
     'efi_payment_id',
     // llave Bre-B del QR (multipunto)
     'breb_key', 'breb_qr_json', 'local_name',
+    // entrega: 'online' (default) | 'contraentrega' (paga al recibir)
+    'delivery',
   ]);
   const keys = Object.keys(patch).filter(k => allowed.has(k));
   if (keys.length === 0) return false;

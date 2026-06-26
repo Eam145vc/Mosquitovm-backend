@@ -87,6 +87,16 @@ export function registerSupportRoutes(app) {
 
     // Modo bot: consultar Gemini con guardarraíl.
     const history = historyForModel(conv.id);
+
+    // El PRIMER mensaje del cliente se responde despacio (como una persona que está
+    // leyendo y escribiendo): mínimo ~20s. Así se siente atención humana, no un bot.
+    const userTurns = history.filter((m) => m.role === "user").length;
+    if (userTurns <= 1) {
+      const wait = 20000 + Math.floor(Math.random() * 5000);
+      logger.info({ convId: conv.id, wait }, "soporte: delay humano del 1er mensaje");
+      await new Promise((r) => setTimeout(r, wait));
+    }
+
     const { answer, escalate, reason } = await askGemini(history, text);
 
     if (escalate || !answer) {

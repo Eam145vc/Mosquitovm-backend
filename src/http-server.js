@@ -209,7 +209,11 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
   // "test" = orden de diagnóstico de /test-mp ($5.000, va directo al Brick de MP).
   // Compat: el viejo "anual" sigue mapeando a $199.000. Cualquier plan desconocido
   // (o ausente) cae a contado vía el ?? de abajo.
-  const PLAN_PRICES_CENTS = { contado: 19_900_000, cuotas: 6_900_000, anual: 19_900_000, test: 500_000 };
+  // contado: $199.000 (envío incluido). cuotas: 1ª cuota $69.000 + envío $12.000 = $81.000
+  // (el plan en cuotas NO incluye envío gratis). anual = compat viejo → contado.
+  const PLAN_PRICES_CENTS = { contado: 19_900_000, cuotas: 8_100_000, anual: 19_900_000, test: 500_000 };
+  // Recargo de pago contraentrega (se suma al monto en AMBOS planes).
+  const RECARGO_CONTRAENTREGA_CENTS = 500_000;
 
   // Paso 1: crea la orden con los datos de envío. Devuelve el monto (pesos) y la public key
   // para que el front renderice el formulario de tarjeta (Bricks) embebido.
@@ -217,21 +221,34 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     if (!config.hasEfipay && !config.hasStripe && !config.hasMp) {
       return reply.code(503).send({ error: 'checkout no configurado' });
     }
-    const { business_name, bank, address, city, phone, email, plan } = req.body || {};
+    const { business_name, bank, address, city, phone, email, plan, delivery } = req.body || {};
     if (!business_name || !address || !phone) {
       return reply.code(400).send({ error: 'faltan nombre, direccion o telefono' });
     }
     const planNorm = plan === 'cuotas' ? 'cuotas' : 'contado';
-    const amountCents = PLAN_PRICES_CENTS[plan] ?? PLAN_PRICES_CENTS.contado;
+    const esContraentrega = delivery === 'contraentrega';
+    const deliveryNorm = esContraentrega ? 'contraentrega' : 'online';
+    // El recargo de contraentrega ($5.000) se suma en ambos planes.
+    const amountCents = (PLAN_PRICES_CENTS[plan] ?? PLAN_PRICES_CENTS.contado)
+      + (esContraentrega ? RECARGO_CONTRAENTREGA_CENTS : 0);
     const orderId = createOrder({ amountCents });            // external_reference = orderId
     updateOrder(orderId, {
       business_name, bank: bank || null, address, city: city || null, phone,
       customer_email: email || null,
       plan: planNorm,
+      delivery: deliveryNorm,
       // En cuotas guardamos el total de cuotas desde ya (la 1ª se cobra en este checkout).
       installments_total: planNorm === 'cuotas' ? 3 : 1,
       installments_paid: 0,
     });
+    // CONTRAENTREGA: no se cobra online. La orden queda pendiente de confirmación
+    // manual (el dueño valida por WhatsApp antes de despachar). Devolvemos la bandera
+    // para que el front muestre 'te confirmamos' y NO renderice el formulario de pago.
+    if (esContraentrega) {
+      updateOrder(orderId, { status: 'cod_pending' });
+      logger.info({ orderId, plan: planNorm, amountCents, business_name }, 'orden contraentrega (pendiente de confirmación)');
+      return { orderId, amount: Math.round(amountCents / 100), contraentrega: true };
+    }
     // En 'cuotas' lo cobrado hoy es la 1ª de 3; el cobro de las cuotas 2-3 se hace
     // luego (tarjeta tokenizada o link WhatsApp). Lo dejamos en el log por ahora.
     logger.info({ orderId, plan: plan || 'contado', amountCents, business_name }, 'orden creada');
@@ -1739,15 +1756,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
         logger.info({ alias, accountId: account.id, ...result, routedTo: route.speakerId, unrouted: route.unrouted || false }, 'payment detected (email webhook)');
         if (route.unrouted) {
           // Multipunto: no se pudo determinar el local (llave desconocida) → NO suena.
-          // Queda un aviso en el buzón del admin (el panel del usuario aún no existe).
-          try {
-            saveInboxMail({
-              alias, accountId: account.id, from,
-              subject: `⚠ Pago sin local asignado ($${result.amount}) — llave: ${result.brebKey || 'sin llave'}`,
-              text: `Llegó un pago de $${result.amount} pero su llave Bre-B (${result.brebKey || 'no detectada'}) no coincide con ningún local de esta cuenta. No se anunció para no confundir. Asocia la llave al QR del local correspondiente.`,
-              html: '', isPayment: false, messageId: null, references: null,
-            });
-          } catch (e) { logger.error({ err: e.message }, 'multipunto: no se pudo guardar aviso de pago sin rutear'); }
+          // NO se guarda en el buzón (ensuciaba el inbox con un aviso por pago); queda solo
+          // en el log. Cuando exista el panel del usuario, se mostrarán desde el historial.
           logger.warn({ alias, accountId: account.id, amount: result.amount, key: route.key }, 'multipunto: pago NO ruteado (llave sin local), no se anuncia');
         } else {
           onPaymentDetected({
@@ -1910,14 +1920,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
           const route = pickSpeaker(account, result);
           logger.info({ alias, accountId: account.id, ...result, routedTo: route.speakerId, unrouted: route.unrouted || false }, 'payment detected (fe webhook)');
           if (route.unrouted) {
-            try {
-              saveInboxMail({
-                alias, accountId: account.id, from,
-                subject: `⚠ Pago sin local asignado ($${result.amount}) — llave: ${result.brebKey || 'sin llave'}`,
-                text: `Llegó un pago de $${result.amount} pero su llave Bre-B (${result.brebKey || 'no detectada'}) no coincide con ningún local de esta cuenta. No se anunció para no confundir. Asocia la llave al QR del local correspondiente.`,
-                html: '', isPayment: false, messageId: null, references: null,
-              });
-            } catch (e) { logger.error({ err: e.message }, 'multipunto: no se pudo guardar aviso de pago sin rutear'); }
+            // NO se guarda en el buzón (ensuciaba el inbox); solo log. El panel del
+            // usuario los mostrará desde el historial cuando exista.
             logger.warn({ alias, accountId: account.id, amount: result.amount, key: route.key }, 'multipunto: pago NO ruteado (llave sin local), no se anuncia');
           } else {
             onPaymentDetected({ ...result, accountId: account.id, speakerId: route.speakerId, from, subject, _lat: lat });
