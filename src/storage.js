@@ -154,6 +154,31 @@ export function openDb() {
       at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_inbox_at ON inbox(at DESC);
+
+    -- Envíos creados con Skydropx para despachar el Cloud Speaker de una orden.
+    -- Un envío se asocia a una orden (order_id). Guardamos lo necesario para mostrar
+    -- la guía y rastrear: id de Skydropx, transportadora, nº de guía, URL del PDF y
+    -- el precio cobrado. La dirección destino ya vive en orders; acá solo el resumen.
+    CREATE TABLE IF NOT EXISTS shipments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id TEXT NOT NULL,
+      skydropx_id TEXT,
+      quotation_id TEXT,
+      rate_id TEXT,
+      carrier TEXT,
+      service TEXT,
+      tracking TEXT,
+      label_url TEXT,
+      price_cents INTEGER,
+      currency TEXT NOT NULL DEFAULT 'COP',
+      to_dane TEXT,
+      to_city TEXT,
+      status TEXT NOT NULL DEFAULT 'created',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_shipments_order ON shipments(order_id);
+    CREATE INDEX IF NOT EXISTS idx_shipments_at ON shipments(created_at DESC);
   `);
 
   // Migraciones: agregar columnas si las tablas ya existian de una version vieja.
@@ -766,4 +791,66 @@ export function deleteInboxMail(id) {
 export function unseenInboxCount() {
   openDb();
   return db.prepare('SELECT COUNT(*) AS n FROM inbox WHERE seen = 0').get().n;
+}
+
+// ---------------------------------------------------------------------------
+// Shipments (envíos Skydropx para despachar el speaker de una orden)
+// ---------------------------------------------------------------------------
+
+/** Crea la fila de un envío recién generado. Devuelve la fila completa. */
+export function createShipmentRow({
+  orderId, skydropxId = null, quotationId = null, rateId = null,
+  carrier = null, service = null, tracking = null, labelUrl = null,
+  priceCents = null, currency = 'COP', toDane = null, toCity = null, status = 'created',
+}) {
+  openDb();
+  const now = Date.now();
+  const info = db.prepare(`
+    INSERT INTO shipments
+      (order_id, skydropx_id, quotation_id, rate_id, carrier, service, tracking,
+       label_url, price_cents, currency, to_dane, to_city, status, created_at, updated_at)
+    VALUES
+      (@orderId, @skydropxId, @quotationId, @rateId, @carrier, @service, @tracking,
+       @labelUrl, @priceCents, @currency, @toDane, @toCity, @status, @now, @now)
+  `).run({
+    orderId, skydropxId, quotationId, rateId, carrier, service, tracking,
+    labelUrl, priceCents, currency, toDane, toCity, status, now,
+  });
+  return getShipmentRow(info.lastInsertRowid);
+}
+
+/** Una fila de envío por su id interno. */
+export function getShipmentRow(id) {
+  openDb();
+  return db.prepare('SELECT * FROM shipments WHERE id = ?').get(id) || null;
+}
+
+/** Último envío de una orden (más reciente), o null si no tiene. */
+export function getShipmentByOrder(orderId) {
+  openDb();
+  return db.prepare(
+    'SELECT * FROM shipments WHERE order_id = ? ORDER BY created_at DESC LIMIT 1'
+  ).get(orderId) || null;
+}
+
+/** Actualiza campos de un envío. `patch` es { campo: valor } (whitelist). */
+export function updateShipmentRow(id, patch) {
+  openDb();
+  const allowed = new Set([
+    'skydropx_id', 'quotation_id', 'rate_id', 'carrier', 'service', 'tracking',
+    'label_url', 'price_cents', 'currency', 'to_dane', 'to_city', 'status',
+  ]);
+  const keys = Object.keys(patch).filter((k) => allowed.has(k));
+  if (keys.length === 0) return false;
+  const setSql = keys.map((k) => `${k} = @${k}`).join(', ');
+  const params = { id, updated_at: Date.now() };
+  for (const k of keys) params[k] = patch[k];
+  return db.prepare(`UPDATE shipments SET ${setSql}, updated_at = @updated_at WHERE id = @id`)
+    .run(params).changes > 0;
+}
+
+/** Todos los envíos (más recientes primero), para el tab Envíos del admin. */
+export function listShipments() {
+  openDb();
+  return db.prepare('SELECT * FROM shipments ORDER BY created_at DESC').all();
 }

@@ -1,0 +1,175 @@
+// Rutas /admin para envíos con Skydropx (despachar el Cloud Speaker de una orden).
+// Flujo: buscar ciudad (DANE) → cotizar → elegir tarifa → crear envío (guía PDF).
+// Todas exigen el Bearer admin (mismo token que el resto de /admin/*).
+
+import { config } from './config.js';
+import { searchCities, cityByDane } from './co-dane.js';
+import { quoteAndWait, createShipment, extractLabel } from './skydropx.js';
+import {
+  getOrder, updateOrder,
+  createShipmentRow, getShipmentByOrder, updateShipmentRow, listShipments,
+} from './storage.js';
+
+// Paquete por defecto del Cloud Speaker en su caja (editable por envío desde el admin).
+const DEFAULT_PARCEL = { length: 17, width: 10, height: 4, weight: 1 };
+
+export function registerSkydropxRoutes(app) {
+  const requireAdmin = (req, reply) => {
+    if (!config.ADMIN_TOKEN) { reply.code(503).send({ error: 'admin disabled' }); return false; }
+    if ((req.headers.authorization || '') !== `Bearer ${config.ADMIN_TOKEN}`) {
+      reply.code(401).send({ error: 'unauthorized' }); return false;
+    }
+    return true;
+  };
+
+  const guardConfigured = (reply) => {
+    if (!config.hasSkydropx) {
+      reply.code(503).send({ error: 'Skydropx no configurado (SKYDROPX_CLIENT_ID/SECRET)' });
+      return false;
+    }
+    return true;
+  };
+
+  // Convierte un error del cliente Skydropx en una respuesta HTTP entendible.
+  const sendSkyError = (reply, e) => {
+    const status = e?.status === 422 ? 422 : 502;
+    const msg =
+      e?.status === 422
+        ? 'Datos del envío inválidos (revisa ciudad destino y medidas)'
+        : 'Error comunicándose con Skydropx';
+    reply.code(status).send({ error: msg, detail: String(e?.message || e).slice(0, 300) });
+  };
+
+  // ──────────────────────── Buscador de ciudad (DANE) ────────────────────────
+
+  app.get('/admin/cities', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const q = String(req.query?.q || '').trim();
+    return { cities: q.length >= 2 ? searchCities(q, 10) : [] };
+  });
+
+  // ──────────────────────── Cotizar el envío de una orden ────────────────────────
+  // Body: { toDane, toCity?, toDepto?, parcel?:{length,width,height,weight} }
+  // Si no mandan toDane se intenta resolver desde order.city con el catálogo.
+
+  app.post('/admin/orders/:id/quote', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    if (!guardConfigured(reply)) return;
+    const order = getOrder(req.params.id);
+    if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
+
+    const body = req.body || {};
+    // Resolver destino: prioridad al DANE explícito; si no, buscar por la ciudad de la orden.
+    let dest = null;
+    if (body.toDane) {
+      dest = cityByDane(body.toDane) ||
+        { dane: body.toDane, depto: body.toDepto || '', city: body.toCity || '' };
+    } else if (order.city) {
+      dest = searchCities(order.city, 1)[0] || null;
+    }
+    if (!dest || !dest.dane) {
+      return reply.code(400).send({ error: 'No se pudo resolver la ciudad destino. Busca y elige una ciudad.' });
+    }
+
+    const parcel = { ...DEFAULT_PARCEL, ...(body.parcel || {}) };
+    const declaredAmount = order.amount_cents ? Math.round(order.amount_cents / 100) : 50000;
+
+    try {
+      const result = await quoteAndWait({
+        fromDane: config.SKYDROPX_ORIGIN_DANE,
+        fromDepto: config.SKYDROPX_ORIGIN_DEPTO,
+        fromCity: config.SKYDROPX_ORIGIN_CITY,
+        toDane: dest.dane,
+        toDepto: dest.depto,
+        toCity: dest.city,
+        parcel,
+        declaredAmount,
+      });
+      return {
+        quotationId: result.quotationId,
+        rates: result.rates,
+        unavailable: result.unavailable,
+        dest,
+        parcel,
+      };
+    } catch (e) {
+      return sendSkyError(reply, e);
+    }
+  });
+
+  // ──────────────────────── Crear el envío (genera la guía) ────────────────────────
+  // Body: { rateId, quotationId?, toDane, toCity, toDepto, to:{name?,street?,phone?,email?,reference?} }
+
+  app.post('/admin/orders/:id/shipment', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    if (!guardConfigured(reply)) return;
+    const order = getOrder(req.params.id);
+    if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
+
+    const body = req.body || {};
+    if (!body.rateId) return reply.code(400).send({ error: 'falta rateId (elige una tarifa)' });
+
+    const dest = body.toDane
+      ? (cityByDane(body.toDane) || { dane: body.toDane, depto: body.toDepto || '', city: body.toCity || '' })
+      : null;
+    if (!dest || !dest.dane) return reply.code(400).send({ error: 'falta ciudad destino (DANE)' });
+
+    const to = body.to || {};
+    const recipient = {
+      name: to.name || order.business_name || 'Cliente',
+      street: to.street || order.address || 'Sin dirección',
+      dane: dest.dane,
+      depto: dest.depto,
+      city: dest.city,
+      phone: to.phone || order.phone || config.SKYDROPX_ORIGIN_PHONE,
+      email: to.email || order.customer_email || config.SKYDROPX_ORIGIN_EMAIL,
+      reference: to.reference || `Orden ${order.id}`,
+    };
+    const from = {
+      name: config.SKYDROPX_ORIGIN_NAME,
+      company: config.SKYDROPX_ORIGIN_NAME,
+      street: config.SKYDROPX_ORIGIN_STREET || 'Bodega',
+      dane: config.SKYDROPX_ORIGIN_DANE,
+      depto: config.SKYDROPX_ORIGIN_DEPTO,
+      city: config.SKYDROPX_ORIGIN_CITY,
+      phone: config.SKYDROPX_ORIGIN_PHONE,
+      email: config.SKYDROPX_ORIGIN_EMAIL,
+    };
+
+    try {
+      const resp = await createShipment({ rateId: body.rateId, from, to: recipient });
+      const label = extractLabel(resp);
+      const row = createShipmentRow({
+        orderId: order.id,
+        skydropxId: label.id,
+        quotationId: body.quotationId || null,
+        rateId: body.rateId,
+        carrier: label.carrier || body.carrier || null,
+        service: body.service || null,
+        tracking: label.tracking,
+        labelUrl: label.labelUrl,
+        priceCents: body.priceCents ?? null,
+        toDane: dest.dane,
+        toCity: dest.city,
+        status: label.labelUrl ? 'label_ready' : 'created',
+      });
+      // Marcar la orden como enviada (mismo estado que usa el flujo de despacho del admin).
+      updateOrder(order.id, { status: 'shipped' });
+      return { shipment: row, labelUrl: label.labelUrl, tracking: label.tracking };
+    } catch (e) {
+      return sendSkyError(reply, e);
+    }
+  });
+
+  // ──────────────────────── Consultas ────────────────────────
+
+  app.get('/admin/orders/:id/shipment', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    return { shipment: getShipmentByOrder(req.params.id) };
+  });
+
+  app.get('/admin/shipments', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    return { shipments: listShipments() };
+  });
+}

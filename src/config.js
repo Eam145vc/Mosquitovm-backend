@@ -101,6 +101,20 @@ const ConfigSchema = z.object({
   IG_USER_ID: z.string().default(''),
   IG_GRAPH_VERSION: z.string().default('v25.0'),
 
+  // ---- Skydropx (envíos / guías de paquetería, host api-pro) ----
+  // OAuth2 client_credentials. Credenciales del panel pro.skydropx.com.
+  SKYDROPX_CLIENT_ID: z.string().default(''),
+  SKYDROPX_CLIENT_SECRET: z.string().default(''),
+  // Origen del despacho (bodega). Colombia: postal_code = código DANE de 5 dígitos.
+  SKYDROPX_ORIGIN_DANE: z.string().default('05001'),     // Medellín
+  SKYDROPX_ORIGIN_DEPTO: z.string().default('Antioquia'),
+  SKYDROPX_ORIGIN_CITY: z.string().default('Medellin'),
+  SKYDROPX_ORIGIN_NAME: z.string().default('Sono'),      // remitente
+  SKYDROPX_ORIGIN_STREET: z.string().default(''),        // dirección bodega
+  SKYDROPX_ORIGIN_POSTAL: z.string().default('050001'),  // CP postal real (street meta)
+  SKYDROPX_ORIGIN_PHONE: z.string().default(''),
+  SKYDROPX_ORIGIN_EMAIL: z.string().default('hola@sono.lat'),
+
   // ---- Bot de soporte (Gemini) ----
   GEMINI_API_KEY: z.string().default(''),
   GEMINI_MODEL: z.string().default('gemini-flash-latest'),
@@ -144,5 +158,6 @@ parsed.hasStripe = Boolean(parsed.STRIPE_SECRET_KEY);
 parsed.hasEfipay = Boolean(parsed.EFIPAY_TOKEN);
 parsed.hasAdminLogin = Boolean(parsed.ADMIN_USER && parsed.ADMIN_PASS && parsed.ADMIN_TOKEN);
 parsed.hasInstagram = Boolean(parsed.IG_ACCESS_TOKEN && parsed.IG_USER_ID);
+parsed.hasSkydropx = Boolean(parsed.SKYDROPX_CLIENT_ID && parsed.SKYDROPX_CLIENT_SECRET);
 
 export const config = parsed;

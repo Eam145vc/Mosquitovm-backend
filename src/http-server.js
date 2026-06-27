@@ -68,6 +68,7 @@ import { getStats as getLatencyStats } from './latency-store.js';
 import { handlePubSubPush } from './pubsub-handler.js';
 import { watchInbox } from './gmail-api.js';
 import { registerSupportRoutes } from './support/support-routes.js';
+import { registerSkydropxRoutes } from './skydropx-routes.js';
 import { publishToInstagram, getInstagramAccount, getInstagramMedia } from './instagram.js';
 import { generateCaption } from './ig-caption.js';
 import * as igScheduler from './ig-scheduler.js';
@@ -2056,6 +2057,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
 
   // Bot de soporte (chat público + admin + web push).
   registerSupportRoutes(app);
+
+  // Envíos Skydropx (despachar el speaker de una orden + guía PDF).
+  registerSkydropxRoutes(app);
 
   app.listen({ port: config.HTTP_PORT, host: config.HTTP_HOST })
     .then(() => logger.info({ port: config.HTTP_PORT }, 'http server listening'))
