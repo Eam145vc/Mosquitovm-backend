@@ -202,21 +202,22 @@ export async function quoteAndWait(p, { tries = 6, delayMs = 1500 } = {}) {
  * Devuelve la respuesta cruda de Skydropx (incluye label_url, tracking_number, etc.).
  */
 export async function createShipment(p) {
-  // El address_template_id NO se hereda de la cotización al envío (doc Skydropx):
-  // hay que re-enviarlo en address_from. Sino, campos sueltos del remitente.
-  const addressFrom = config.SKYDROPX_ORIGIN_TEMPLATE_ID
-    ? { address_template_id: config.SKYDROPX_ORIGIN_TEMPLATE_ID }
-    : {
-        name: p.from.name,
-        company: p.from.company || p.from.name,
-        street1: p.from.street,
-        postal_code: p.from.dane,
-        area_level1: p.from.depto,
-        area_level2: p.from.city,
-        country_code: 'CO',
-        phone: p.from.phone,
-        email: p.from.email,
-      };
+  // ⚠️ En el ENVÍO usamos campos sueltos del remitente, NO el address_template_id.
+  // Con address_template_id Skydropx IGNORA el declared_amount suelto → rechaza con
+  // "Valor declarado es obligatorio". El template solo se usa al COTIZAR (habilita las
+  // transportadoras). address_from.reference es obligatorio (igual que el destino).
+  const addressFrom = {
+    name: p.from.name,
+    company: p.from.company || p.from.name,
+    street1: p.from.street,
+    postal_code: p.from.dane,
+    area_level1: p.from.depto,
+    area_level2: p.from.city,
+    country_code: 'CO',
+    phone: p.from.phone,
+    email: p.from.email,
+    reference: p.from.reference || 'Bodega',
+  };
   const payload = {
     shipment: {
       rate_id: p.rateId,
