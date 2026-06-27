@@ -15,6 +15,20 @@ const DEFAULT_PARCEL = { length: 17, width: 10, height: 4, weight: 1 };
 // Contenido declarado del paquete (obligatorio al crear el envío).
 const PACKAGE_CONTENT = 'Altavoz IoT (dispositivo electronico)';
 
+// Origen del despacho (bodega). El CP postal de 6 dígitos se resuelve del catálogo por DANE
+// (Skydropx necesita el CP, no el DANE). Fallback a la env var si el DANE no está en el catálogo.
+function originAddress() {
+  const c = cityByDane(config.SKYDROPX_ORIGIN_DANE);
+  return {
+    postal: c?.postal || config.SKYDROPX_ORIGIN_POSTAL,
+    postalAlt: c?.postalAlt || null,
+    // area_level1/2 para la API: sin tildes, mayúsculas (la API rompe con tildes).
+    depto: c?.deptoApi || config.SKYDROPX_ORIGIN_DEPTO,
+    city: c?.cityApi || config.SKYDROPX_ORIGIN_CITY,
+    dane: config.SKYDROPX_ORIGIN_DANE,
+  };
+}
+
 export function registerSkydropxRoutes(app) {
   const requireAdmin = (req, reply) => {
     if (!config.ADMIN_TOKEN) { reply.code(503).send({ error: 'admin disabled' }); return false; }
@@ -82,14 +96,19 @@ export function registerSkydropxRoutes(app) {
         ? body.cashOnDelivery
         : order.delivery === 'contraentrega';
 
+    const origin = originAddress();
     try {
       const result = await quoteAndWait({
-        fromDane: config.SKYDROPX_ORIGIN_DANE,
-        fromDepto: config.SKYDROPX_ORIGIN_DEPTO,
-        fromCity: config.SKYDROPX_ORIGIN_CITY,
+        fromPostal: origin.postal,
+        fromPostalAlt: origin.postalAlt,
+        fromDane: origin.dane,
+        fromDepto: origin.depto,
+        fromCity: origin.city,
+        toPostal: dest.postal,
+        toPostalAlt: dest.postalAlt,
         toDane: dest.dane,
-        toDepto: dest.depto,
-        toCity: dest.city,
+        toDepto: dest.deptoApi || dest.depto,
+        toCity: dest.cityApi || dest.city,
         parcel,
         declaredAmount,
         cashOnDelivery,
@@ -126,13 +145,15 @@ export function registerSkydropxRoutes(app) {
       : null;
     if (!dest || !dest.dane) return reply.code(400).send({ error: 'falta ciudad destino (DANE)' });
 
+    const origin = originAddress();
     const to = body.to || {};
     const recipient = {
       name: to.name || order.business_name || 'Cliente',
       street: to.street || order.address || 'Sin dirección',
-      dane: dest.dane,
-      depto: dest.depto,
-      city: dest.city,
+      postal: dest.postal,
+      postalAlt: dest.postalAlt,
+      depto: dest.deptoApi || dest.depto,
+      city: dest.cityApi || dest.city,
       phone: to.phone || order.phone || config.SKYDROPX_ORIGIN_PHONE,
       email: to.email || order.customer_email || config.SKYDROPX_ORIGIN_EMAIL,
       reference: to.reference || `Orden ${order.id}`,
@@ -141,9 +162,10 @@ export function registerSkydropxRoutes(app) {
       name: config.SKYDROPX_ORIGIN_NAME,
       company: config.SKYDROPX_ORIGIN_NAME,
       street: config.SKYDROPX_ORIGIN_STREET || 'Bodega',
-      dane: config.SKYDROPX_ORIGIN_DANE,
-      depto: config.SKYDROPX_ORIGIN_DEPTO,
-      city: config.SKYDROPX_ORIGIN_CITY,
+      postal: origin.postal,
+      postalAlt: origin.postalAlt,
+      depto: origin.depto,
+      city: origin.city,
       phone: config.SKYDROPX_ORIGIN_PHONE,
       email: config.SKYDROPX_ORIGIN_EMAIL,
     };
@@ -155,12 +177,14 @@ export function registerSkydropxRoutes(app) {
         : order.delivery === 'contraentrega';
     // Valor declarado (obligatorio al crear el envío). En contraentrega es lo que se recauda.
     const declaredAmount = order.amount_cents ? Math.round(order.amount_cents / 100) : 50000;
+    const parcel = { ...DEFAULT_PARCEL, ...(body.parcel || {}) };
 
     try {
       const resp = await createShipment({
         rateId: body.rateId,
         from,
         to: recipient,
+        parcel,
         cashOnDelivery,
         declaredAmount,
         packageContent: PACKAGE_CONTENT,
