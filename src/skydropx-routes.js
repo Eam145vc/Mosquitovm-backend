@@ -244,6 +244,27 @@ export function registerSkydropxRoutes(app) {
     return { shipment: row };
   });
 
+  // URL FRESCA de la guía para imprimir. La label_url de Skydropx es FIRMADA y CADUCA
+  // (token con exp ~días); la que guardamos en la DB se muere y baja 404. Este endpoint
+  // SIEMPRE re-consulta Skydropx por su id para obtener un label_url vivo, lo persiste y
+  // lo devuelve. Lo usa el botón "Imprimir guía" justo antes de mandar al agente local.
+  app.get('/admin/orders/:id/label-fresh', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const row = getShipmentByOrder(req.params.id);
+    if (!row || !row.skydropx_id) return reply.code(404).send({ error: 'sin envío' });
+    if (!config.hasSkydropx) return reply.code(503).send({ error: 'skydropx no configurado' });
+    try {
+      const label = extractLabel(await getShipment(row.skydropx_id));
+      if (!label.labelUrl) return reply.code(409).send({ error: 'la guía aún no está lista' });
+      // Persistir la URL fresca (la vieja ya caducó) para que el resto del panel también la use.
+      if (label.labelUrl !== row.label_url) updateShipmentRow(row.id, { label_url: label.labelUrl });
+      return { labelUrl: label.labelUrl };
+    } catch (e) {
+      req.log?.error?.({ err: e }, 'label-fresh falló');
+      return reply.code(502).send({ error: 'no se pudo obtener la guía de Skydropx' });
+    }
+  });
+
   app.get('/admin/shipments', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
     // Refresca las que aún no tengan guía (en paralelo, máx las primeras incompletas).
