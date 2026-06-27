@@ -104,7 +104,9 @@ function buildOrigin(p) {
 /**
  * Crea una cotización. La API es ASÍNCRONA: devuelve el id y rates sin precio;
  * hay que re-leer con getQuote() unos segundos después para traer total/days.
- * @param {object} p { fromDane, fromDepto, fromCity, toDane, toDepto, toCity, parcel:{length,width,height,weight}, declaredAmount }
+ * @param {object} p { fromDane, fromDepto, fromCity, toDane, toDepto, toCity, parcel:{length,width,height,weight}, declaredAmount, cashOnDelivery }
+ * cashOnDelivery=true → contraentrega: la transportadora recauda el declared_amount al
+ * entregar. Cambia las tarifas (servicios "con contraentrega", comisión de recaudo).
  */
 export async function createQuotation(p) {
   const payload = {
@@ -122,9 +124,12 @@ export async function createQuotation(p) {
           width: Number(p.parcel.width),
           height: Number(p.parcel.height),
           weight: Number(p.parcel.weight),
+          package_type: p.packageType || '4G',
+          package_content: p.packageContent || 'Dispositivo electronico',
         },
       ],
       declared_amount: Number(p.declaredAmount) || 50000,
+      ...(p.cashOnDelivery ? { cash_on_delivery: true } : {}),
     },
   };
   return skyRequest('POST', '/quotations', payload);
@@ -158,14 +163,24 @@ export async function quoteAndWait(p, { tries = 6, delayMs = 1500 } = {}) {
   }
   const available = rates
     .filter((r) => r.total != null)
-    .map((r) => ({
-      rateId: r.id,
-      carrier: r.provider_name,
-      service: r.provider_service_name,
-      days: r.days ?? null,
-      total: Number(r.total),
-      currency: r.currency || 'COP',
-    }))
+    .map((r) => {
+      const total = Number(r.total);
+      // En contraentrega Skydropx cobra el flete (amount) + comisión de recaudo.
+      // amount = flete base; total = lo que pagas. La diferencia es el costo del recaudo.
+      const base = r.amount != null ? Number(r.amount) : total;
+      const codFee = p.cashOnDelivery ? Math.max(0, Math.round((total - base) * 100) / 100) : 0;
+      return {
+        rateId: r.id,
+        carrier: r.provider_name,
+        service: r.provider_service_name,
+        days: r.days ?? null,
+        total,
+        base,                 // flete sin recaudo
+        codFee,               // comisión por recaudar (0 si no es contraentrega)
+        cashOnDelivery: Boolean(p.cashOnDelivery),
+        currency: r.currency || r.currency_code || 'COP',
+      };
+    })
     .sort((a, b) => a.total - b.total);
   const unavailable = rates
     .filter((r) => r.total == null)
@@ -205,6 +220,10 @@ export async function createShipment(p) {
   const payload = {
     shipment: {
       rate_id: p.rateId,
+      // OBLIGATORIOS a nivel shipment (la cotización no los pide, el envío sí):
+      // package_type = código de empaque (4G = caja de cartón), package_content = qué va dentro.
+      package_type: p.packageType || '4G',
+      package_content: p.packageContent || 'Dispositivo electronico',
       address_from: addressFrom,
       address_to: {
         name: p.to.name,
@@ -216,8 +235,12 @@ export async function createShipment(p) {
         country_code: 'CO',
         phone: p.to.phone,
         email: p.to.email,
-        reference: p.to.reference || undefined,
+        // reference es OBLIGATORIO (no puede ir vacío). Indicación de entrega.
+        reference: p.to.reference || 'Sin referencia',
       },
+      // El rate_id ya viene de una cotización con/sin COD; re-afirmamos el flag por
+      // si la transportadora lo exige también a nivel envío para recaudar.
+      ...(p.cashOnDelivery ? { cash_on_delivery: true } : {}),
     },
   };
   return skyRequest('POST', '/shipments', payload);

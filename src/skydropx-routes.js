@@ -12,6 +12,8 @@ import {
 
 // Paquete por defecto del Cloud Speaker en su caja (editable por envío desde el admin).
 const DEFAULT_PARCEL = { length: 17, width: 10, height: 4, weight: 1 };
+// Contenido declarado del paquete (obligatorio al crear el envío).
+const PACKAGE_CONTENT = 'Altavoz IoT (dispositivo electronico)';
 
 export function registerSkydropxRoutes(app) {
   const requireAdmin = (req, reply) => {
@@ -73,6 +75,12 @@ export function registerSkydropxRoutes(app) {
 
     const parcel = { ...DEFAULT_PARCEL, ...(body.parcel || {}) };
     const declaredAmount = order.amount_cents ? Math.round(order.amount_cents / 100) : 50000;
+    // Contraentrega: por defecto se decide según el pedido (order.delivery), pero el body
+    // puede forzarlo (toggle del panel). En COD la transportadora recauda el declaredAmount.
+    const cashOnDelivery =
+      typeof body.cashOnDelivery === 'boolean'
+        ? body.cashOnDelivery
+        : order.delivery === 'contraentrega';
 
     try {
       const result = await quoteAndWait({
@@ -84,6 +92,8 @@ export function registerSkydropxRoutes(app) {
         toCity: dest.city,
         parcel,
         declaredAmount,
+        cashOnDelivery,
+        packageContent: PACKAGE_CONTENT,
       });
       return {
         quotationId: result.quotationId,
@@ -91,6 +101,8 @@ export function registerSkydropxRoutes(app) {
         unavailable: result.unavailable,
         dest,
         parcel,
+        cashOnDelivery,
+        declaredAmount,
       };
     } catch (e) {
       return sendSkyError(reply, e);
@@ -136,8 +148,20 @@ export function registerSkydropxRoutes(app) {
       email: config.SKYDROPX_ORIGIN_EMAIL,
     };
 
+    // Contraentrega: del body (toggle) o derivado del pedido.
+    const cashOnDelivery =
+      typeof body.cashOnDelivery === 'boolean'
+        ? body.cashOnDelivery
+        : order.delivery === 'contraentrega';
+
     try {
-      const resp = await createShipment({ rateId: body.rateId, from, to: recipient });
+      const resp = await createShipment({
+        rateId: body.rateId,
+        from,
+        to: recipient,
+        cashOnDelivery,
+        packageContent: PACKAGE_CONTENT,
+      });
       const label = extractLabel(resp);
       const row = createShipmentRow({
         orderId: order.id,

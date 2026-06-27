@@ -1155,6 +1155,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
       // speaker
       speaker_id: dev ? dev.spkr_id : null,
       device: dev ? { spkr_id: dev.spkr_id, mac: dev.mac, model: dev.model, status: dev.status } : null,
+      // entrega: 'online' (prepago) | 'contraentrega' (paga al recibir → COD en el envío)
+      delivery: o.delivery || 'online',
       // QR
       hasQr: Boolean(o.qr_path),
       qr_mime: o.qr_mime || null,
