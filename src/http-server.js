@@ -125,7 +125,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
 
   app.register(fastifyCors, {
     origin: [config.FRONTEND_BASE_URL],
-    methods: ['GET', 'POST', 'PATCH'],
+    methods: ['GET', 'POST', 'PATCH', 'DELETE'],
     credentials: true,
   });
   // 100MB: el QR son KBs, pero un reel de Instagram puede pesar decenas de MB.
