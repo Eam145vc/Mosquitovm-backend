@@ -900,6 +900,55 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
   // Subir QR + datos de envio
   // -------------------------------------------------------------------------
 
+  // Guarda el archivo del QR, marca ready_to_ship y decodifica la llave Bre-B para el
+  // ruteo multipunto. Lo usan el cliente (/activar/:order/qr) y el admin (subida manual).
+  // Devuelve { hasQr, brebKey, brebKeyType } — brebKey=null si no se pudo decodificar.
+  async function processQrUpload(order, buf, mimetype, ext) {
+    const filename = `${order.id}.${ext}`;
+    fs.writeFileSync(path.join(QR_DIR, filename), buf);
+
+    const patch = { qr_path: filename, qr_mime: mimetype };
+    if (order.business_name) patch.status = 'ready_to_ship';
+    updateOrder(order.id, patch);
+
+    let brebKey = null, brebKeyType = null;
+    // Multipunto: decodificar el QR Bre-B para extraer la LLAVE del local y guardarla en
+    // el device de esta orden (sirve para rutear los pagos al speaker correcto). Solo
+    // imágenes (los PDF no se decodifican acá). Si falla, NO rompemos la subida del QR.
+    if (mimetype.startsWith('image/')) {
+      try {
+        const decoded = await decodeBrebImage(buf);
+        if (decoded && decoded.routable && decoded.key) {
+          brebKey = normalizeKey(decoded.key);
+          brebKeyType = decoded.keyType;
+          const dev = listDevices().find((d) => d.order_id === order.id);
+          if (dev) {
+            setDeviceBrebKey(dev.spkr_id, {
+              key: brebKey,
+              qrJson: { raw: decoded.raw, key: decoded.key, keyType: decoded.keyType },
+              localName: decoded.merchantName || order.business_name || null,
+            });
+            logger.info({ orderId: order.id, spkr: dev.spkr_id, key: decoded.key, keyType: decoded.keyType }, 'multipunto: llave Bre-B asociada al device');
+          } else {
+            // El device aún no está asignado: guardamos la llave en la orden para
+            // transferirla al device cuando se asigne el speaker (al despachar).
+            updateOrder(order.id, {
+              breb_key: brebKey,
+              breb_qr_json: JSON.stringify({ raw: decoded.raw, key: decoded.key, keyType: decoded.keyType }),
+              local_name: decoded.merchantName || order.business_name || null,
+            });
+            logger.info({ orderId: order.id, key: decoded.key }, 'multipunto: llave detectada, device aún sin asignar (se asociará al asignar el speaker)');
+          }
+        } else {
+          logger.warn({ orderId: order.id }, 'multipunto: QR sin llave ruteable (no se pudo asociar)');
+        }
+      } catch (e) {
+        logger.warn({ orderId: order.id, err: e.message }, 'multipunto: fallo al decodificar el QR (la subida sigue OK)');
+      }
+    }
+    return { hasQr: true, brebKey, brebKeyType };
+  }
+
   app.post('/activar/:order/qr', async (req, reply) => {
     const order = getOrder(req.params.order);
     if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
@@ -913,46 +962,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     const buf = await file.toBuffer();
     if (buf.length > 5 * 1024 * 1024) return reply.code(413).send({ error: 'archivo muy grande' });
 
-    const filename = `${order.id}.${ext}`;
-    fs.writeFileSync(path.join(QR_DIR, filename), buf);
-
-    const patch = { qr_path: filename, qr_mime: file.mimetype };
-    if (order.business_name) patch.status = 'ready_to_ship';
-    updateOrder(order.id, patch);
+    await processQrUpload(order, buf, file.mimetype, ext);
     logger.info({ orderId: order.id, bytes: buf.length }, 'qr subido');
-
-    // Multipunto: decodificar el QR Bre-B para extraer la LLAVE del local y guardarla en
-    // el device de esta orden (sirve para rutear los pagos al speaker correcto). Solo
-    // imágenes (los PDF no se decodifican acá). Si falla, NO rompemos la subida del QR.
-    if (file.mimetype.startsWith('image/')) {
-      try {
-        const decoded = await decodeBrebImage(buf);
-        if (decoded && decoded.routable && decoded.key) {
-          const dev = listDevices().find((d) => d.order_id === order.id);
-          if (dev) {
-            setDeviceBrebKey(dev.spkr_id, {
-              key: normalizeKey(decoded.key),
-              qrJson: { raw: decoded.raw, key: decoded.key, keyType: decoded.keyType },
-              localName: decoded.merchantName || order.business_name || null,
-            });
-            logger.info({ orderId: order.id, spkr: dev.spkr_id, key: decoded.key, keyType: decoded.keyType }, 'multipunto: llave Bre-B asociada al device');
-          } else {
-            // El device aún no está asignado: guardamos la llave en la orden para
-            // transferirla al device cuando se asigne el speaker (al despachar).
-            updateOrder(order.id, {
-              breb_key: normalizeKey(decoded.key),
-              breb_qr_json: JSON.stringify({ raw: decoded.raw, key: decoded.key, keyType: decoded.keyType }),
-              local_name: decoded.merchantName || order.business_name || null,
-            });
-            logger.info({ orderId: order.id, key: decoded.key }, 'multipunto: llave detectada, device aún sin asignar (se asociará al asignar el speaker)');
-          }
-        } else {
-          logger.warn({ orderId: order.id }, 'multipunto: QR sin llave ruteable (no se pudo asociar)');
-        }
-      } catch (e) {
-        logger.warn({ orderId: order.id, err: e.message }, 'multipunto: fallo al decodificar el QR (la subida sigue OK)');
-      }
-    }
     return { ok: true };
   });
 
@@ -1052,6 +1063,27 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     reply.header('Content-Type', o.qr_mime || 'application/octet-stream');
     reply.header('Content-Disposition', `inline; filename="${o.qr_path}"`);
     return reply.send(fs.readFileSync(fp));
+  });
+
+  // El admin sube el QR del cliente MANUALMENTE (cuando el cliente lo manda por WhatsApp
+  // en vez de subirlo él mismo en /activar). Mismo flujo que el del cliente: guarda el
+  // archivo, marca ready_to_ship y decodifica la llave Bre-B para el ruteo multipunto.
+  app.post('/admin/orders/:order/qr', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const order = getOrder(req.params.order);
+    if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
+
+    const file = await req.file();
+    if (!file) return reply.code(400).send({ error: 'no file' });
+    const ext = MIME_EXT[file.mimetype];
+    if (!ext) return reply.code(415).send({ error: 'formato no soportado (usa png/jpg/webp/pdf)' });
+
+    const buf = await file.toBuffer();
+    if (buf.length > 5 * 1024 * 1024) return reply.code(413).send({ error: 'archivo muy grande' });
+
+    const result = await processQrUpload(order, buf, file.mimetype, ext);
+    logger.info({ orderId: order.id, bytes: buf.length, admin: true, brebKey: result.brebKey }, 'qr subido por admin');
+    return { ok: true, ...result };
   });
 
   // Detalle completo de un pedido para el drawer del admin: datos del pedido +

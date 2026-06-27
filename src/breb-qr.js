@@ -89,7 +89,11 @@ export function extractBrebKey(emvco) {
   // (saltando 00, que es el namespace "CO.COM.RBM.LLA").
   for (const sub of ['04', '02', '03', '01']) {
     if (c[sub]) {
-      const v = c[sub];
+      // El subtag puede venir como string ("3203043887") o, si el firmware lo emite como
+      // template anidado, como objeto { val, children }. Tomamos el valor crudo en ambos casos
+      // (sin esto, normalizeKey de un objeto producía "[object object]" y el ruteo fallaba).
+      const v = typeof c[sub] === 'string' ? c[sub] : c[sub].val;
+      if (!v) continue;
       const keyType = /@/.test(v) ? 'alias' : 'numerica';
       return { key: normalizeKey(v), keyType, account, merchantName, routable: true };
     }
