@@ -221,9 +221,11 @@ export async function createShipment(p) {
     shipment: {
       rate_id: p.rateId,
       // OBLIGATORIOS a nivel shipment (la cotización no los pide, el envío sí):
-      // package_type = código de empaque (4G = caja de cartón), package_content = qué va dentro.
+      // package_type = código de empaque (4G = caja de cartón), package_content = qué va dentro,
+      // declared_amount = valor declarado (también obligatorio al crear, no solo al cotizar).
       package_type: p.packageType || '4G',
       package_content: p.packageContent || 'Dispositivo electronico',
+      declared_amount: Number(p.declaredAmount) || 50000,
       address_from: addressFrom,
       address_to: {
         name: p.to.name,

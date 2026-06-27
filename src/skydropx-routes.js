@@ -153,6 +153,8 @@ export function registerSkydropxRoutes(app) {
       typeof body.cashOnDelivery === 'boolean'
         ? body.cashOnDelivery
         : order.delivery === 'contraentrega';
+    // Valor declarado (obligatorio al crear el envío). En contraentrega es lo que se recauda.
+    const declaredAmount = order.amount_cents ? Math.round(order.amount_cents / 100) : 50000;
 
     try {
       const resp = await createShipment({
@@ -160,6 +162,7 @@ export function registerSkydropxRoutes(app) {
         from,
         to: recipient,
         cashOnDelivery,
+        declaredAmount,
         packageContent: PACKAGE_CONTENT,
       });
       const label = extractLabel(resp);
