@@ -1065,6 +1065,38 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     return reply.send(fs.readFileSync(fp));
   });
 
+  // Quitar el QR de una orden (p.ej. el admin lo subió a la orden equivocada). Borra el
+  // archivo, limpia la llave Bre-B (orden + device si la tenía) y revierte el estado a
+  // pendiente_qr para que se pueda volver a subir el correcto.
+  app.delete('/admin/orders/:order/qr', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const o = getOrder(req.params.order);
+    if (!o) return reply.code(404).send({ error: 'orden no encontrada' });
+    if (!o.qr_path) return reply.code(404).send({ error: 'la orden no tiene QR' });
+
+    // borrar el archivo físico (si existe)
+    try {
+      const fp = path.join(QR_DIR, o.qr_path);
+      if (fs.existsSync(fp)) fs.unlinkSync(fp);
+    } catch (e) {
+      logger.warn({ orderId: o.id, err: e.message }, 'no se pudo borrar el archivo del QR (sigo limpiando la DB)');
+    }
+
+    // limpiar la llave del device asignado (si la subida la había guardado ahí)
+    const dev = listDevices().find((d) => d.order_id === o.id);
+    if (dev && dev.breb_key) {
+      setDeviceBrebKey(dev.spkr_id, { key: null, qrJson: null, localName: null });
+    }
+
+    // limpiar la orden y revertir estado. Si estaba ready_to_ship por tener QR, vuelve a
+    // pendiente_qr; si ya iba más adelante (shipped) no lo tocamos.
+    const patch = { qr_path: null, qr_mime: null, breb_key: null, breb_qr_json: null, local_name: null };
+    if (o.status === 'ready_to_ship') patch.status = 'pendiente_qr';
+    updateOrder(o.id, patch);
+    logger.info({ orderId: o.id }, 'qr eliminado por admin');
+    return { ok: true };
+  });
+
   // El admin sube el QR del cliente MANUALMENTE (cuando el cliente lo manda por WhatsApp
   // en vez de subirlo él mismo en /activar). Mismo flujo que el del cliente: guarda el
   // archivo, marca ready_to_ship y decodifica la llave Bre-B para el ruteo multipunto.
