@@ -16,7 +16,9 @@ import { logger } from './logger.js';
 import { openDb, listAccounts, getAccount } from './storage.js';
 import { watchInbox } from './gmail-api.js';
 import { updateAccountHistory, updateAccountWatch, recordPayment, upsertDeviceFromStatus,
-  setSubStatus, accountsToAutoSuspend, markNewlyExpired, listOrders } from './storage.js';
+  setSubStatus, accountsToAutoSuspend, markNewlyExpired, listOrders, updateOrder, getOrder } from './storage.js';
+import { fetchEfiStatus } from './efipay.js';
+import { sendActivationEmail } from './activation-email.js';
 import * as announceLog from './announce-log.js';
 
 const watchers = new Map();   // id -> ImapWatcher (modo IMAP)
@@ -207,6 +209,49 @@ async function main() {
   };
   autoSuspendJob();
   setInterval(autoSuspendJob, 6 * 3600 * 1000);
+
+  // ── Conciliación de pagos EfiPay (red de seguridad PROACTIVA) ──────────────────
+  // Problema que resuelve: si un cliente paga por PSE/Nequi/Bre-B (redirect) y CIERRA
+  // la pestaña sin volver a la pantalla "Confirmando tu pago", el webhook de EfiPay
+  // puede no llegar y la orden queda en 'created' ("Sin pagar") AUNQUE EfiPay ya cobró.
+  // (La red de seguridad de /activar solo dispara si el cliente reabre la pantalla.)
+  // Este job recorre cada 5 min las órdenes 'created' con efi_payment_id, consulta el
+  // estado REAL en EfiPay y, si está aprobado, las pasa a 'pendiente_qr' Y dispara el
+  // correo de activación (mismo efecto que un pago normal). Idempotente: solo toca las
+  // que siguen en 'created' y que EfiPay confirma como aprobadas.
+  const reconcileEfipayJob = async () => {
+    try {
+      const pend = listOrders().filter((o) => o.status === 'created' && o.efi_payment_id);
+      if (!pend.length) return;
+      let fixed = 0;
+      for (const o of pend) {
+        try {
+          const st = await fetchEfiStatus(o.efi_payment_id);
+          if (!st?.approved) continue; // Rechazada/Pendiente → no se toca
+          const nextCharge = Date.now() + 365 * 24 * 3600 * 1000;
+          updateOrder(o.id, {
+            status: 'pendiente_qr',
+            wompi_txn_id: `efi-reconcile-${o.efi_payment_id}`,
+            next_charge_at: nextCharge,
+          });
+          const fresh = getOrder(o.id);
+          // Dispara el correo de activación (el cliente recibe el link para el onboarding).
+          sendActivationEmail(fresh).catch((e) =>
+            logger.error({ orderId: o.id, err: e.message }, 'conciliación EfiPay: correo de activación falló'));
+          fixed += 1;
+          logger.warn({ orderId: o.id, paymentId: o.efi_payment_id, business: o.business_name },
+            'conciliación EfiPay: pago APROBADO no reflejado → marcado pendiente_qr + correo enviado');
+        } catch (e) {
+          logger.warn({ orderId: o.id, err: e.message }, 'conciliación EfiPay: fallo al consultar estado (reintenta)');
+        }
+      }
+      if (fixed) logger.info({ fixed }, 'conciliación EfiPay: órdenes recuperadas');
+    } catch (e) {
+      logger.error({ err: e.message }, 'conciliación EfiPay job error');
+    }
+  };
+  reconcileEfipayJob();                              // corre una vez al arrancar (recupera lo pendiente)
+  setInterval(reconcileEfipayJob, 5 * 60 * 1000);   // y cada 5 minutos
 
   // Scheduler de posts de Instagram programados (publica los que ya vencieron, cada 60s).
   startIgScheduler();
