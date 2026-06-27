@@ -105,7 +105,12 @@ const ConfigSchema = z.object({
   // OAuth2 client_credentials. Credenciales del panel pro.skydropx.com.
   SKYDROPX_CLIENT_ID: z.string().default(''),
   SKYDROPX_CLIENT_SECRET: z.string().default(''),
-  // Origen del despacho (bodega). Colombia: postal_code = código DANE de 5 dígitos.
+  // Punto de origen REGISTRADO en la cuenta Skydropx (address_template id, tipo "from").
+  // CRÍTICO: las transportadoras con recolección agendada (Envía/Coordinadora/Servientrega)
+  // SOLO cotizan si el origen es un punto válido de la cuenta. Con origen suelto (ciudad+DANE)
+  // solo cotiza Interrapidísimo. Sacar el id de GET /api/v1/address_templates (el "Dispensario").
+  SKYDROPX_ORIGIN_TEMPLATE_ID: z.string().default(''),
+  // Origen del despacho (bodega) — fallback si NO hay template id. Colombia: postal_code = DANE 5 díg.
   SKYDROPX_ORIGIN_DANE: z.string().default('05001'),     // Medellín
   SKYDROPX_ORIGIN_DEPTO: z.string().default('Antioquia'),
   SKYDROPX_ORIGIN_CITY: z.string().default('Medellin'),

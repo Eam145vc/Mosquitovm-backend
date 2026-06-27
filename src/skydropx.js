@@ -86,6 +86,21 @@ async function skyRequest(method, path, body, attempt = 1) {
 
 // ───────────────────────── Cotización ─────────────────────────
 
+// Construye el address_from de la cotización/envío. Prioriza el address_template_id de la
+// cuenta (config.SKYDROPX_ORIGIN_TEMPLATE_ID) — sin él, Envía/Coordinadora/Servientrega NO
+// cotizan (solo Interrapidísimo). Fallback a campos sueltos si no hay template configurado.
+function buildOrigin(p) {
+  if (config.SKYDROPX_ORIGIN_TEMPLATE_ID) {
+    return { address_template_id: config.SKYDROPX_ORIGIN_TEMPLATE_ID };
+  }
+  return {
+    country_code: 'CO',
+    postal_code: p.fromDane,
+    area_level1: p.fromDepto,
+    area_level2: p.fromCity,
+  };
+}
+
 /**
  * Crea una cotización. La API es ASÍNCRONA: devuelve el id y rates sin precio;
  * hay que re-leer con getQuote() unos segundos después para traer total/days.
@@ -94,12 +109,7 @@ async function skyRequest(method, path, body, attempt = 1) {
 export async function createQuotation(p) {
   const payload = {
     quotation: {
-      address_from: {
-        country_code: 'CO',
-        postal_code: p.fromDane,
-        area_level1: p.fromDepto,
-        area_level2: p.fromCity,
-      },
+      address_from: buildOrigin(p),
       address_to: {
         country_code: 'CO',
         postal_code: p.toDane,
@@ -177,10 +187,11 @@ export async function quoteAndWait(p, { tries = 6, delayMs = 1500 } = {}) {
  * Devuelve la respuesta cruda de Skydropx (incluye label_url, tracking_number, etc.).
  */
 export async function createShipment(p) {
-  const payload = {
-    shipment: {
-      rate_id: p.rateId,
-      address_from: {
+  // El address_template_id NO se hereda de la cotización al envío (doc Skydropx):
+  // hay que re-enviarlo en address_from. Sino, campos sueltos del remitente.
+  const addressFrom = config.SKYDROPX_ORIGIN_TEMPLATE_ID
+    ? { address_template_id: config.SKYDROPX_ORIGIN_TEMPLATE_ID }
+    : {
         name: p.from.name,
         company: p.from.company || p.from.name,
         street1: p.from.street,
@@ -190,7 +201,11 @@ export async function createShipment(p) {
         country_code: 'CO',
         phone: p.from.phone,
         email: p.from.email,
-      },
+      };
+  const payload = {
+    shipment: {
+      rate_id: p.rateId,
+      address_from: addressFrom,
       address_to: {
         name: p.to.name,
         company: p.to.company || undefined,
