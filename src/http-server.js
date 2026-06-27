@@ -977,16 +977,46 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
   // Admin (fulfillment / inventario)
   // -------------------------------------------------------------------------
 
+  // Por defecto NO devuelve las archivadas (soft-delete). Con ?archived=1 devuelve
+  // SOLO las archivadas (para la vista "Archivados" del panel).
   app.get('/admin/orders', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
+    const onlyArchived = req.query.archived === '1' || req.query.archived === 'true';
     const byOrder = new Map(listDevices().filter(d => d.order_id).map(d => [d.order_id, d.spkr_id]));
-    return listOrders().map(o => ({
-      id: o.id, status: o.status, business_name: o.business_name, bank: o.bank,
-      address: o.address, city: o.city, phone: o.phone, email_method: o.email_method,
-      account_id: o.account_id, hasQr: Boolean(o.qr_path), created_at: o.created_at,
-      next_charge_at: o.next_charge_at, mp_payer_email: o.mp_payer_email,
-      speaker_id: byOrder.get(o.id) || null,
-    }));
+    return listOrders()
+      .filter(o => onlyArchived ? Boolean(o.archived_at) : !o.archived_at)
+      .map(o => ({
+        id: o.id, status: o.status, business_name: o.business_name, bank: o.bank,
+        address: o.address, city: o.city, phone: o.phone, email_method: o.email_method,
+        account_id: o.account_id, hasQr: Boolean(o.qr_path), created_at: o.created_at,
+        next_charge_at: o.next_charge_at, mp_payer_email: o.mp_payer_email,
+        amount_cents: o.amount_cents, breb_key: o.breb_key, customer_email: o.customer_email,
+        archived_at: o.archived_at || null,
+        speaker_id: byOrder.get(o.id) || null,
+      }));
+  });
+
+  // Archivar (soft-delete): la orden sale del panel pero queda en la DB. Guarda el
+  // estado previo para poder restaurarla. Idempotente (si ya está archivada, no hace nada).
+  app.post('/admin/orders/:order/archive', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const o = getOrder(req.params.order);
+    if (!o) return reply.code(404).send({ error: 'orden no encontrada' });
+    if (o.archived_at) return { ok: true, archived: true }; // ya archivada
+    updateOrder(o.id, { prev_status: o.status, status: 'archivada', archived_at: Date.now() });
+    logger.info({ orderId: o.id, business: o.business_name, prevStatus: o.status }, 'orden archivada (soft-delete)');
+    return { ok: true, archived: true };
+  });
+
+  // Restaurar una orden archivada a su estado previo.
+  app.post('/admin/orders/:order/unarchive', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const o = getOrder(req.params.order);
+    if (!o) return reply.code(404).send({ error: 'orden no encontrada' });
+    if (!o.archived_at) return { ok: true, archived: false }; // no estaba archivada
+    updateOrder(o.id, { status: o.prev_status || 'created', archived_at: null, prev_status: null });
+    logger.info({ orderId: o.id, business: o.business_name, restoredTo: o.prev_status || 'created' }, 'orden restaurada');
+    return { ok: true, archived: false };
   });
 
   // Crear una orden MANUAL (venta offline): se crea ya PAGADA (cobrás aparte en

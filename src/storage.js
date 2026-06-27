@@ -183,6 +183,11 @@ export function openDb() {
     ['local_name', 'TEXT'],
     // Entrega: 'online' (paga ya por la pasarela) | 'contraentrega' (paga al recibir).
     ['delivery', 'TEXT'],
+    // Soft-delete (archivar): la orden sale del panel pero NO se borra de la DB.
+    // archived_at = epoch ms cuando se archivó (NULL = activa). prev_status = estado
+    // que tenía antes de archivar, para poder restaurarla a su estado original.
+    ['archived_at', 'INTEGER'],
+    ['prev_status', 'TEXT'],
   ]);
   db.exec('CREATE INDEX IF NOT EXISTS idx_orders_plan ON orders(mp_plan_id)');
   // Índice para que el job de cobro encuentre rápido las cuotas vencidas.
@@ -512,6 +517,8 @@ export function updateOrder(id, patch) {
     'breb_key', 'breb_qr_json', 'local_name',
     // entrega: 'online' (default) | 'contraentrega' (paga al recibir)
     'delivery',
+    // soft-delete (archivar)
+    'archived_at', 'prev_status',
   ]);
   const keys = Object.keys(patch).filter(k => allowed.has(k));
   if (keys.length === 0) return false;
