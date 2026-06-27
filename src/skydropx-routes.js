@@ -4,10 +4,10 @@
 
 import { config } from './config.js';
 import { searchCities, cityByDane } from './co-dane.js';
-import { quoteAndWait, createShipment, extractLabel } from './skydropx.js';
+import { quoteAndWait, createShipment, getShipment, extractLabel } from './skydropx.js';
 import {
   getOrder, updateOrder,
-  createShipmentRow, getShipmentByOrder, updateShipmentRow, listShipments,
+  createShipmentRow, getShipmentByOrder, getShipmentRow, updateShipmentRow, listShipments,
 } from './storage.js';
 
 // Paquete por defecto del Cloud Speaker en su caja (editable por envío desde el admin).
@@ -214,13 +214,42 @@ export function registerSkydropxRoutes(app) {
 
   // ──────────────────────── Consultas ────────────────────────
 
+  // Si el envío aún no tiene la guía (label asíncrono de Skydropx), la consulta en vivo
+  // por su skydropx_id y actualiza la fila. Devuelve la fila (ya actualizada o como estaba).
+  async function refreshShipment(row) {
+    if (!row || !row.skydropx_id) return row;
+    if (row.label_url && row.tracking) return row; // ya completa, nada que hacer
+    if (!config.hasSkydropx) return row;
+    try {
+      const resp = await getShipment(row.skydropx_id);
+      const label = extractLabel(resp);
+      const patch = {};
+      if (label.labelUrl && label.labelUrl !== row.label_url) patch.label_url = label.labelUrl;
+      if (label.tracking && label.tracking !== row.tracking) patch.tracking = label.tracking;
+      if (label.carrier && !row.carrier) patch.carrier = label.carrier;
+      if (label.labelUrl && row.status !== 'label_ready') patch.status = 'label_ready';
+      if (Object.keys(patch).length) {
+        updateShipmentRow(row.id, patch);
+        return getShipmentRow(row.id);
+      }
+    } catch {
+      /* si Skydropx falla, devolvemos la fila como está (el panel reintenta luego) */
+    }
+    return row;
+  }
+
   app.get('/admin/orders/:id/shipment', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
-    return { shipment: getShipmentByOrder(req.params.id) };
+    const row = await refreshShipment(getShipmentByOrder(req.params.id));
+    return { shipment: row };
   });
 
   app.get('/admin/shipments', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
+    // Refresca las que aún no tengan guía (en paralelo, máx las primeras incompletas).
+    const all = listShipments();
+    const pending = all.filter((r) => !r.label_url && r.skydropx_id).slice(0, 10);
+    await Promise.all(pending.map((r) => refreshShipment(r)));
     return { shipments: listShipments() };
   });
 }

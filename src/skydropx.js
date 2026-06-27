@@ -274,18 +274,36 @@ export async function trackShipment(trackingNumber, carrierName) {
   return skyRequest('GET', `/shipments/tracking?${qs.toString()}`, null);
 }
 
-// Normaliza la respuesta de createShipment a los campos que guardamos/mostramos.
+// Normaliza la respuesta de Skydropx (create o GET shipment) a los campos que guardamos.
+// La respuesta es JSON:API: { data: { id, attributes: {...} }, included: [{ type, attributes }] }.
+// El label_url y tracking_number del paquete viven en included[type=package].attributes.
+// El master_tracking_number y carrier en data.attributes. El label es asíncrono: puede no
+// estar al crear y aparecer segundos después (por eso hay refreshShipment).
 export function extractLabel(shipmentResponse) {
   const s = shipmentResponse || {};
-  // Skydropx puede anidar la guía en distintas formas según versión; cubrimos las comunes.
-  const label =
-    s.label_url ||
-    s.included?.label_url ||
-    s.data?.label_url ||
-    (Array.isArray(s.labels) ? s.labels[0]?.url : null) ||
-    null;
+  const data = s.data || s;
+  const attrs = data.attributes || {};
+  const included = Array.isArray(s.included) ? s.included : [];
+  const pkg = included.find((x) => x.type === 'package')?.attributes || {};
+
+  const labelUrl =
+    attrs.label_url || pkg.label_url || s.label_url || null;
   const tracking =
-    s.tracking_number || s.master_tracking_number || s.data?.tracking_number || null;
-  const carrier = s.provider_name || s.carrier_name || s.data?.provider_name || null;
-  return { id: s.id || s.data?.id || null, labelUrl: label, tracking, carrier, raw: s };
+    attrs.master_tracking_number || pkg.tracking_number || attrs.tracking_number ||
+    s.master_tracking_number || s.tracking_number || null;
+  const trackingUrl =
+    pkg.tracking_url_provider || attrs.tracking_url_provider || null;
+  const carrier =
+    attrs.carrier_name || s.carrier_name || s.provider_name || null;
+  const workflow = attrs.workflow_status || null; // 'success' cuando ya hay guía
+
+  return {
+    id: data.id || s.id || null,
+    labelUrl,
+    tracking,
+    trackingUrl,
+    carrier,
+    workflow,
+    raw: s,
+  };
 }
