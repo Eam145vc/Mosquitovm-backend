@@ -33,7 +33,7 @@ import {
 
 // Mensaje de re-enganche: si el cliente deja de responder ~30s y el último mensaje
 // fue del bot, Valeria escribe UNA vez invitando a comprar, con el link al checkout.
-const REENGAGE_IDLE_MS = 30_000;
+const REENGAGE_IDLE_MS = 45_000;
 const REENGAGE_MESSAGE =
   '¿Sigues por ahí? 👀 Si te animas, puedes pedir tu Sonó en un par de minutos acá: ' +
   'https://sono.lat/checkout — cualquier duda, me dices y te ayudo. 🙂';
