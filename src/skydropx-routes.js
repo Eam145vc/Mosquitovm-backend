@@ -4,7 +4,7 @@
 
 import { config } from './config.js';
 import { searchCities, cityByDane } from './co-dane.js';
-import { quoteAndWait, createShipment, getShipment, extractLabel } from './skydropx.js';
+import { quoteAndWait, createShipment, getShipment, extractLabel, fetchLabelPdf } from './skydropx.js';
 import {
   getOrder, updateOrder,
   createShipmentRow, getShipmentByOrder, getShipmentRow, updateShipmentRow, listShipments,
@@ -262,6 +262,31 @@ export function registerSkydropxRoutes(app) {
     } catch (e) {
       req.log?.error?.({ err: e }, 'label-fresh falló');
       return reply.code(502).send({ error: 'no se pudo obtener la guía de Skydropx' });
+    }
+  });
+
+  // EL PDF de la guía, bajado SERVER-SIDE (con el token de API). El navegador NO puede
+  // bajarlo directo de Skydropx: la URL exige sesión/cookie y Skydropx no manda CORS para
+  // sono.lat (bloqueado por CORS policy). Acá lo proxeamos: re-consultamos la URL fresca,
+  // bajamos el PDF con el Bearer y lo devolvemos como binario al mismo origen (sin CORS).
+  // Lo usa el botón "Imprimir guía" → manda el PDF al agente local que lo imprime.
+  app.get('/admin/orders/:id/label-pdf', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const row = getShipmentByOrder(req.params.id);
+    if (!row || !row.skydropx_id) return reply.code(404).send({ error: 'sin envío' });
+    if (!config.hasSkydropx) return reply.code(503).send({ error: 'skydropx no configurado' });
+    try {
+      const label = extractLabel(await getShipment(row.skydropx_id));
+      if (!label.labelUrl) return reply.code(409).send({ error: 'la guía aún no está lista' });
+      if (label.labelUrl !== row.label_url) updateShipmentRow(row.id, { label_url: label.labelUrl });
+      const pdf = await fetchLabelPdf(label.labelUrl);
+      return reply
+        .header('Content-Type', 'application/pdf')
+        .header('Content-Disposition', `inline; filename="guia-${row.tracking || row.id}.pdf"`)
+        .send(pdf);
+    } catch (e) {
+      req.log?.error?.({ err: e }, 'label-pdf falló');
+      return reply.code(502).send({ error: 'no se pudo bajar la guía de Skydropx' });
     }
   });
 

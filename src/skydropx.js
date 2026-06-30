@@ -268,6 +268,24 @@ export async function getShipment(id) {
   return skyRequest('GET', `/shipments/${id}`, null);
 }
 
+/** Baja el PDF de la guía (label_url) SERVER-SIDE con el token de API.
+ * El navegador NO puede: la URL exige sesión/cookie y además Skydropx no manda CORS
+ * para sono.lat. Acá lo bajamos con el Bearer (mismo dominio api-pro.skydropx.com) y
+ * devolvemos los bytes crudos del PDF. */
+export async function fetchLabelPdf(labelUrl) {
+  ensureConfigured();
+  const token = await getToken();
+  const resp = await fetch(labelUrl, {
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/pdf' },
+  });
+  if (!resp.ok) {
+    const err = new Error(`Skydropx label PDF HTTP ${resp.status}`);
+    err.status = resp.status;
+    throw err;
+  }
+  return Buffer.from(await resp.arrayBuffer());
+}
+
 /** Rastrea un envío por número de guía + transportadora. */
 export async function trackShipment(trackingNumber, carrierName) {
   const qs = new URLSearchParams({ tracking_number: trackingNumber, carrier_name: carrierName });
