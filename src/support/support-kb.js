@@ -13,7 +13,7 @@
 //    el aparato (es suyo). NO decir "pago único" (ya hay cuotas).
 //    PAGO CONTRAENTREGA: opcional en ambas formas, +$5.000 que paga AL RECIBIR. Se
 //    confirma por WhatsApp antes de despachar. Online: tarjeta, PSE, Bre-B o efectivo.
-//      - La renovación del servicio cuesta $199.000/año, pero el primer año va incluido.
+//      - La renovación del servicio: $17.000 mensuales O $199.000 al año (dos opciones reales),
 //        NO mencionar la renovación de forma proactiva. SOLO darla si el cliente
 //        PREGUNTA DIRECTO "¿cuánto pago el año que viene / la renovación?".
 //    NO existe plan mensual, ni "dispositivo gratis", ni "$29.900/mes", ni "1er mes
@@ -73,7 +73,8 @@ otro medio (PSE, etc.) le llega un enlace de pago. Si no paga una cuota, el serv
 suspende hasta ponerse al día.]
 [INTERNO — usar SOLO si el cliente pregunta DIRECTO por la renovación o "¿cuánto pago
 el próximo año?": el primer año va incluido; a partir del segundo año la renovación del
-servicio es de $199.000 al año, y solo renuevas si quieres seguir. NO ofrecer este dato
+servicio puedes pagarla $17.000 mensuales o $199.000 al año (lo que prefieras), y solo
+renuevas si quieres seguir. NO ofrecer este dato
 si no lo piden.]
 
 # REQUISITOS PARA QUE FUNCIONE
@@ -128,6 +129,14 @@ tenemos esa información acá: escala a una persona del equipo.
 # CÓMO COMPRAR
 Completas la compra en sono.lat ($199.000 de una, o en 3 cuotas de $69.000). Después recibes los pasos
 para dejar tu Sonó listo y te llega a casa configurado en 24-48 horas.
+
+# LINK DE COMPRA (darlo cuando el cliente quiere comprar)
+Cuando el cliente diga que SÍ quiere pedir el suyo, que quiere comprar, o que le pases el link/dónde lo paga,
+pásale SIEMPRE el enlace directo al checkout y dile que ahí completa sus datos y paga:
+- Pago de una (recomendado): https://sono.lat/checkout?plan=contado
+- En cuotas: https://sono.lat/checkout?plan=cuotas
+Si no sabes cuál quiere, manda el de "de una" o pregúntale rápido cuál prefiere. NO inventes otros links;
+solo estos dos. Mándalo escrito completo (el chat lo vuelve clicable).
 `.trim();
 
 // Temas que el bot NUNCA debe inventar ni detallar (si preguntan, escala u ofrece el dato

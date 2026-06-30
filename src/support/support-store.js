@@ -56,6 +56,9 @@ function db() {
         created_at INTEGER NOT NULL
       );
     `);
+    // Migración idempotente: bandera de re-enganche (el bot escribió 1 vez para
+    // recuperar al cliente que dejó de responder; 0 = aún no, 1 = ya lo hizo).
+    try { d.exec('ALTER TABLE support_conversations ADD COLUMN reengaged INTEGER NOT NULL DEFAULT 0'); } catch (e) { /* ya existe */ }
     inited = true;
   }
   return d;
@@ -151,6 +154,25 @@ export function historyForModel(convId) {
   return db().prepare(
     "SELECT role, text FROM support_messages WHERE conv_id = ? AND role IN ('user','bot','human') ORDER BY id ASC"
   ).all(convId).map(m => ({ role: m.role === 'user' ? 'user' : 'bot', text: m.text }));
+}
+
+// ---------- Re-enganche (recuperar al cliente que dejó de responder) ----------
+// Devuelve las conversaciones donde: el bot está al mando (no humano, no cerrada),
+// el ÚLTIMO mensaje es del bot (la pelota está en el cliente), pasaron >= idleMs
+// desde ese mensaje, y aún NO se reenganchó (reengaged = 0). Solo se hace 1 vez.
+export function findConvsToReengage(idleMs) {
+  const cutoff = now() - idleMs;
+  return db().prepare(
+    `SELECT c.id FROM support_conversations c
+       WHERE c.mode = 'bot' AND c.status != 'closed' AND c.reengaged = 0
+         AND c.last_msg_at <= ?
+         AND (SELECT role FROM support_messages m WHERE m.conv_id = c.id ORDER BY m.id DESC LIMIT 1) = 'bot'`
+  ).all(cutoff).map(r => r.id);
+}
+
+export function markReengaged(id) {
+  db().prepare('UPDATE support_conversations SET reengaged = 1, updated_at = ? WHERE id = ?')
+    .run(now(), id);
 }
 
 // ---------- Push subs ----------

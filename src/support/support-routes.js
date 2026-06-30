@@ -28,7 +28,15 @@ import { pushEnabled, notifyAdmins } from './webpush.js';
 import {
   createConversation, getConversation, touchConversation, clearUnreadAdmin, incUnreadAdmin,
   addMessage, listMessages, historyForModel, listConversations, countPending, savePushSub,
+  findConvsToReengage, markReengaged,
 } from './support-store.js';
+
+// Mensaje de re-enganche: si el cliente deja de responder ~30s y el último mensaje
+// fue del bot, Valeria escribe UNA vez invitando a comprar, con el link al checkout.
+const REENGAGE_IDLE_MS = 30_000;
+const REENGAGE_MESSAGE =
+  '¿Sigues por ahí? 👀 Si te animas, puedes pedir tu Sonó en un par de minutos acá: ' +
+  'https://sono.lat/checkout — cualquier duda, me dices y te ayudo. 🙂';
 import { recordPing, getOverview, getActiveVisitors, pruneOld } from './analytics-store.js';
 
 // Límite simple anti-spam por conversación (mensajes por minuto).
@@ -254,6 +262,24 @@ export function registerSupportRoutes(app) {
   setInterval(() => {
     try { pruneOld(30); } catch (e) { logger.warn({ err: e.message }, 'pruneOld falló'); }
   }, 12 * 3600_000).unref?.();
+
+  // Job de re-enganche: cada 10s busca conversaciones donde el cliente dejó de
+  // responder (>= 30s, último mensaje del bot, modo bot) y aún no se reengancharon.
+  // Escribe UN mensaje invitando a comprar con el link al checkout. Solo 1 vez por
+  // conversación (markReengaged). El widget lo recibe por su polling (también cuando
+  // está minimizado, donde dispara sonido + badge).
+  setInterval(() => {
+    try {
+      const ids = findConvsToReengage(REENGAGE_IDLE_MS);
+      for (const id of ids) {
+        const conv = getConversation(id);
+        if (!conv || conv.mode === 'human' || conv.status === 'closed') { markReengaged(id); continue; }
+        addMessage(id, 'bot', REENGAGE_MESSAGE);
+        markReengaged(id);
+        logger.info({ convId: id }, 'soporte: re-enganche enviado');
+      }
+    } catch (e) { logger.warn({ err: e.message }, 're-enganche falló'); }
+  }, 10_000).unref?.();
 
   logger.info({ push: pushEnabled(), gemini: Boolean(config.GEMINI_API_KEY) }, 'rutas de soporte registradas');
 }
