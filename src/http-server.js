@@ -1654,6 +1654,35 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     }
   });
 
+  // BROADCAST: reproducir un audio (por ID de WAV) en varios speakers a la vez.
+  // Hoy va a TODOS los registrados; el `filtro` queda para segmentar después
+  // (por banco/grupo) sin reescribir el endpoint.
+  // body: { audioId: "120", filtro?: {} }
+  function resolverSpeakers(_filtro) {
+    // Futuro: interpretar _filtro.banco / _filtro.grupo. Hoy: todos los registrados.
+    return listDevices().map((d) => d.spkr_id);
+  }
+  app.post('/admin/broadcast', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const audioId = String((req.body && req.body.audioId) || '').trim();
+    if (!/^[0-9]{1,3}(-[0-9]{1,3})*$/.test(audioId)) {
+      return reply.code(400).send({ error: 'audioId inválido (IDs de WAV, ej "120")' });
+    }
+    const filtro = (req.body && req.body.filtro) || null;
+    const speakers = resolverSpeakers(filtro);
+    if (speakers.length === 0) {
+      return reply.code(400).send({ error: 'no hay speakers a los que enviar' });
+    }
+    const cmd = { cmd: 'voice', playAudibleMsg: audioId };
+    const results = await Promise.allSettled(
+      speakers.map((spkr) => publishCommand(spkr, cmd)),
+    );
+    const enviados = results.filter((r) => r.status === 'fulfilled').length;
+    const fallidos = speakers.length - enviados;
+    logger.info({ audioId, enviados, fallidos }, 'admin broadcast');
+    return { ok: true, audioId, enviados, fallidos, speakers };
+  });
+
   // -------------------------------------------------------------------------
   // Instagram (publicar desde el panel admin con la Graph API)
   // -------------------------------------------------------------------------
