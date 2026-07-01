@@ -80,6 +80,8 @@ const ConfigSchema = z.object({
 
   // ---- Correo redirigido (Cloudflare Email Worker → webhook) ----
   // Secreto compartido con el Worker para autenticar el POST a /webhook/email.
+  // También autentica los endpoints /wa/pending y /wa/sent que consume el agente
+  // de WhatsApp de la PC del dueño (header x-sono-secret). NO requiere secret nuevo.
   EMAIL_WEBHOOK_SECRET: z.string().default(''),
   // Dominio de los alias (ej. 'sono.lat' → alias juan-abc@sono.lat).
   MAIL_DOMAIN: z.string().default('sono.lat'),
