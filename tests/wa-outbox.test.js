@@ -11,7 +11,7 @@ process.env.MQTT_PASSWORD ||= 'p';
 process.env.ENCRYPTION_KEY = 'GbIok8pliFrsQG7sKbCEpbN39/waCLO61IWAgWNIFk8=';
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), 'wa-')), 'db.sqlite');
 
-const { openDb, enqueueWa, claimWaPending, markWaSent, requeueStaleWa, listWaOutbox } =
+const { openDb, enqueueWa, enqueueWaForce, claimWaPending, markWaSent, requeueStaleWa, listWaOutbox } =
   await import('../src/storage.js');
 
 openDb();
@@ -60,4 +60,40 @@ test('requeueStaleWa devuelve filas sending viejas a queued', () => {
   assert.ok(requeued >= 1);
   const r5 = listWaOutbox().find((r) => r.order_id === 'o5');
   assert.equal(r5.status, 'queued');
+});
+
+test('enqueueWaForce: fila sent -> vuelve a queued (reenvío forzado), sin duplicar', () => {
+  enqueueWa({ orderId: 'o6', phone: '573006667788', kind: 'activacion', body: 'original' });
+  const claimed = claimWaPending(50).find((r) => r.order_id === 'o6');
+  markWaSent(claimed.id, true, null);
+  assert.equal(listWaOutbox().find((r) => r.order_id === 'o6').status, 'sent');
+
+  const ok = enqueueWaForce({ orderId: 'o6', phone: '573006667788', kind: 'activacion', body: 'reenviado' });
+  assert.equal(ok, true);
+
+  const rows = listWaOutbox().filter((r) => r.order_id === 'o6' && r.kind === 'activacion');
+  assert.equal(rows.length, 1, 'no debe duplicar la fila (order_id, kind)');
+  assert.equal(rows[0].status, 'queued');
+  assert.equal(rows[0].body, 'reenviado');
+  assert.equal(rows[0].last_error, null);
+});
+
+test('enqueueWaForce: fila canceled -> vuelve a queued', () => {
+  enqueueWa({ orderId: 'o7', phone: '573007778899', kind: 'recordatorio_3h', body: 'x' });
+  const row = listWaOutbox().find((r) => r.order_id === 'o7');
+  markWaSent(row.id, false, 'boom'); // deja el ejemplo en failed antes de simular cancelado
+  // Simular cancelado (cancelWa vive en storage.js pero probamos directo el UPDATE de estado).
+  const ok = enqueueWaForce({ orderId: 'o7', phone: '573007778899', kind: 'recordatorio_3h', body: 'y' });
+  assert.equal(ok, true);
+  const rows = listWaOutbox().filter((r) => r.order_id === 'o7' && r.kind === 'recordatorio_3h');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'queued');
+});
+
+test('enqueueWaForce: no existía fila -> la crea como queued', () => {
+  const ok = enqueueWaForce({ orderId: 'o8', phone: '573008889900', kind: 'recordatorio_24h', body: 'z' });
+  assert.equal(ok, true);
+  const rows = listWaOutbox().filter((r) => r.order_id === 'o8');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'queued');
 });

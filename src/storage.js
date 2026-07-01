@@ -892,6 +892,23 @@ export function enqueueWa({ orderId, phone, kind, body }) {
   return info.changes > 0; // 0 = ya existía ese (order_id, kind)
 }
 
+/** Igual que enqueueWa pero FUERZA el reenvío: si ya existe una fila para ese
+ *  (order_id, kind) —sent/failed/canceled/queued— la resetea a 'queued' con el
+ *  body/phone nuevos en vez de ignorarla. Para el botón de envío manual del admin. */
+export function enqueueWaForce({ orderId, phone, kind, body }) {
+  openDb();
+  const now = Date.now();
+  const id = randomBytes(16).toString('hex');
+  db.prepare(
+    `INSERT INTO wa_outbox (id, order_id, phone, kind, body, status, attempts, created_at)
+     VALUES (?, ?, ?, ?, ?, 'queued', 0, ?)
+     ON CONFLICT(order_id, kind) DO UPDATE SET
+       status = 'queued', body = excluded.body, phone = excluded.phone,
+       last_error = NULL, created_at = excluded.created_at`
+  ).run(id, orderId, phone, kind, body, now);
+  return true;
+}
+
 export function claimWaPending(limit = 5) {
   openDb();
   const rows = db

@@ -4,7 +4,7 @@
 
 import { config } from './config.js';
 import { logger } from './logger.js';
-import { enqueueWa } from './storage.js';
+import { enqueueWa, enqueueWaForce } from './storage.js';
 
 /** Normaliza a formato WhatsApp COL (57 + celular). Política: siempre intentar. */
 export function normalizePhoneCO(raw) {
@@ -64,4 +64,19 @@ export function enqueueWhatsApp(order, kind) {
   const inserted = enqueueWa({ orderId: order.id, phone, kind, body });
   if (inserted) logger.info({ orderId: order.id, kind, phone }, 'wa: mensaje encolado');
   return inserted;
+}
+
+/** Envío MANUAL desde el admin: igual que enqueueWhatsApp pero FUERZA el reenvío
+ *  aunque ya exista una fila sent/failed/canceled/queued para ese (order, kind). */
+export function enqueueWhatsAppForce(order, kind) {
+  if (!order) return false;
+  const phone = normalizePhoneCO(order.phone);
+  if (!phone) {
+    logger.warn({ orderId: order.id }, 'wa: orden sin teléfono válido, no se encola WhatsApp (force)');
+    return false;
+  }
+  const body = buildWaBody(order, kind);
+  const ok = enqueueWaForce({ orderId: order.id, phone, kind, body });
+  if (ok) logger.info({ orderId: order.id, kind, phone }, 'wa: mensaje reencolado (force, manual admin)');
+  return ok;
 }

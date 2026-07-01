@@ -64,7 +64,7 @@ import { createStripeCheckout, fetchStripeSession } from './stripe.js';
 import { generatePaymentLink, chargeCard, chargePse, chargeBreb, chargeCash, getResource, fetchEfiTransaction, fetchEfiStatus, isValidEfiWebhook, parseEfiWebhook, tokenizeCard } from './efipay.js';
 import * as announceLog from './announce-log.js';
 import { sendActivationEmail } from './activation-email.js';
-import { enqueueWhatsApp } from './wa-enqueue.js';
+import { enqueueWhatsApp, enqueueWhatsAppForce } from './wa-enqueue.js';
 import { publishVoice, publishCommand } from './mqtt-publisher.js';
 import { buildVoiceMessage } from './amount-to-wavs.js';
 import { startLatency, markVoicePublished } from './latency.js';
@@ -2004,9 +2004,11 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
 
   app.post('/admin/wa/enqueue', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
-    const order = getOrder((req.body || {}).order);
+    const { order: orderId, kind: rawKind } = req.body || {};
+    const order = getOrder(orderId);
     if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
-    return { ok: enqueueWhatsApp(order, 'activacion') };
+    const kind = ['activacion', 'recordatorio_3h', 'recordatorio_24h'].includes(rawKind) ? rawKind : 'activacion';
+    return { ok: enqueueWhatsAppForce(order, kind) };
   });
 
   // Onboarding Fase 3: el frontend hace polling acá para (a) mostrar el OTP del banco y
