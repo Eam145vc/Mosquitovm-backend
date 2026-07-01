@@ -61,6 +61,7 @@ import { createStripeCheckout, fetchStripeSession } from './stripe.js';
 import { generatePaymentLink, chargeCard, chargePse, chargeBreb, chargeCash, getResource, fetchEfiTransaction, fetchEfiStatus, isValidEfiWebhook, parseEfiWebhook, tokenizeCard } from './efipay.js';
 import * as announceLog from './announce-log.js';
 import { sendActivationEmail } from './activation-email.js';
+import { enqueueWhatsApp } from './wa-enqueue.js';
 import { publishVoice, publishCommand } from './mqtt-publisher.js';
 import { buildVoiceMessage } from './amount-to-wavs.js';
 import { startLatency, markVoicePublished } from './latency.js';
@@ -274,6 +275,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     if (esContraentrega) {
       updateOrder(orderId, { status: 'cod_pending' });
       logger.info({ orderId, plan: planNorm, amountCents, business_name }, 'orden contraentrega (pendiente de confirmación)');
+      try { enqueueWhatsApp(getOrder(orderId), 'activacion'); } catch (e) {
+        logger.error({ orderId, err: e.message }, 'wa: no se pudo encolar activación (COD)');
+      }
       return { orderId, amount: Math.round(amountCents / 100), contraentrega: true };
     }
     // En 'cuotas' lo cobrado hoy es la 1ª de 3; el cobro de las cuotas 2-3 se hace
@@ -340,6 +344,10 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
           mp_payer_email: formData.payer.email, next_charge_at: nextCharge,
         });
         logger.info({ orderId, payment: payment.id }, 'pago aprobado (in-web)');
+        // WhatsApp de activación (además del correo). No bloquea si falla.
+        try { enqueueWhatsApp(getOrder(orderId), 'activacion'); } catch (e) {
+          logger.error({ orderId, err: e.message }, 'wa: no se pudo encolar activación (in-web)');
+        }
       } else {
         logger.info({ orderId, payment: payment.id, st: payment.status_detail }, 'pago en proceso/no aprobado');
       }
@@ -532,6 +540,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
             mp_payer_email: payment.payer?.email || null,
           });
           logger.info({ orderId: order.id, payment: payment.id }, 'pago aprobado (webhook)');
+          try { enqueueWhatsApp(getOrder(order.id), 'activacion'); } catch (e) {
+            logger.error({ orderId: order.id, err: e.message }, 'wa: no se pudo encolar activación (webhook)');
+          }
         }
       } catch (e) {
         logger.error({ err: e.message }, 'mp webhook error');
@@ -555,6 +566,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
           updateOrder(order.id, { status: 'pendiente_qr', wompi_txn_id: String(transactionId || '') });
           logger.info({ orderId: order.id, txn: transactionId }, 'pago aprobado (efipay webhook)');
           sendActivationEmail(getOrder(order.id)).catch(() => {});
+          try { enqueueWhatsApp(getOrder(order.id), 'activacion'); } catch (e) {
+            logger.error({ orderId: order.id, err: e.message }, 'wa: no se pudo encolar activación (webhook)');
+          }
         } else {
           logger.info({ orderId: order.id, status }, 'efipay webhook (no aprobado)');
         }

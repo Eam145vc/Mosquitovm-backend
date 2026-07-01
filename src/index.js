@@ -19,6 +19,7 @@ import { updateAccountHistory, updateAccountWatch, recordPayment, upsertDeviceFr
   setSubStatus, accountsToAutoSuspend, markNewlyExpired, listOrders, updateOrder, getOrder } from './storage.js';
 import { fetchEfiStatus } from './efipay.js';
 import { sendActivationEmail } from './activation-email.js';
+import { enqueueWhatsApp } from './wa-enqueue.js';
 import * as announceLog from './announce-log.js';
 
 const watchers = new Map();   // id -> ImapWatcher (modo IMAP)
@@ -238,6 +239,9 @@ async function main() {
           // Dispara el correo de activación (el cliente recibe el link para el onboarding).
           sendActivationEmail(fresh).catch((e) =>
             logger.error({ orderId: o.id, err: e.message }, 'conciliación EfiPay: correo de activación falló'));
+          try { enqueueWhatsApp(fresh, 'activacion'); } catch (e) {
+            logger.error({ orderId: o.id, err: e.message }, 'wa: no se pudo encolar activación (conciliación)');
+          }
           fixed += 1;
           logger.warn({ orderId: o.id, paymentId: o.efi_payment_id, business: o.business_name },
             'conciliación EfiPay: pago APROBADO no reflejado → marcado pendiente_qr + correo enviado');
