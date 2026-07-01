@@ -277,6 +277,11 @@ export function openDb() {
     ['to_addr', 'TEXT'],   // a quién va (para los 'out')
   ]);
 
+  // Envíos: agregar tracking_url después de que Skydropx retorna trackingUrl en extractLabel.
+  ensureColumns('shipments', [
+    ['tracking_url', 'TEXT'],
+  ]);
+
   // Telemetría del speaker (auto-provisioning): el backend escucha speakers/+/status
   // y guarda lo último que reportó el aparato. last_seen = visto online por última vez.
   ensureColumns('devices', [
@@ -820,7 +825,7 @@ export function unseenInboxCount() {
 /** Crea la fila de un envío recién generado. Devuelve la fila completa. */
 export function createShipmentRow({
   orderId, skydropxId = null, quotationId = null, rateId = null,
-  carrier = null, service = null, tracking = null, labelUrl = null,
+  carrier = null, service = null, tracking = null, labelUrl = null, trackingUrl = null,
   priceCents = null, currency = 'COP', toDane = null, toCity = null, status = 'created',
 }) {
   openDb();
@@ -828,13 +833,13 @@ export function createShipmentRow({
   const info = db.prepare(`
     INSERT INTO shipments
       (order_id, skydropx_id, quotation_id, rate_id, carrier, service, tracking,
-       label_url, price_cents, currency, to_dane, to_city, status, created_at, updated_at)
+       label_url, tracking_url, price_cents, currency, to_dane, to_city, status, created_at, updated_at)
     VALUES
       (@orderId, @skydropxId, @quotationId, @rateId, @carrier, @service, @tracking,
-       @labelUrl, @priceCents, @currency, @toDane, @toCity, @status, @now, @now)
+       @labelUrl, @trackingUrl, @priceCents, @currency, @toDane, @toCity, @status, @now, @now)
   `).run({
     orderId, skydropxId, quotationId, rateId, carrier, service, tracking,
-    labelUrl, priceCents, currency, toDane, toCity, status, now,
+    labelUrl, trackingUrl, priceCents, currency, toDane, toCity, status, now,
   });
   return getShipmentRow(info.lastInsertRowid);
 }
@@ -858,7 +863,7 @@ export function updateShipmentRow(id, patch) {
   openDb();
   const allowed = new Set([
     'skydropx_id', 'quotation_id', 'rate_id', 'carrier', 'service', 'tracking',
-    'label_url', 'price_cents', 'currency', 'to_dane', 'to_city', 'status',
+    'label_url', 'price_cents', 'currency', 'to_dane', 'to_city', 'status', 'tracking_url',
   ]);
   const keys = Object.keys(patch).filter((k) => allowed.has(k));
   if (keys.length === 0) return false;

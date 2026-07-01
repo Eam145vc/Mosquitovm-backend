@@ -199,6 +199,7 @@ export function registerSkydropxRoutes(app) {
         service: body.service || null,
         tracking: label.tracking,
         labelUrl: label.labelUrl,
+        trackingUrl: label.trackingUrl,
         priceCents: body.priceCents ?? null,
         toDane: dest.dane,
         toCity: dest.city,
