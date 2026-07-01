@@ -880,6 +880,12 @@ export function listShipments() {
   return db.prepare('SELECT * FROM shipments ORDER BY created_at DESC').all();
 }
 
+/** Borra la fila de un envío (tras cancelar en Skydropx o si quedó huérfana). */
+export function deleteShipment(id) {
+  openDb();
+  return db.prepare('DELETE FROM shipments WHERE id = ?').run(id).changes > 0;
+}
+
 /** Envíos sin tracking aún (label asíncrono de Skydropx), creados desde `sinceMs`.
  *  Usado por el job que completa el WhatsApp de guía cuando el tracking llega tarde. */
 export function shipmentsAwaitingTracking(sinceMs) {

@@ -5,10 +5,10 @@
 import { config } from './config.js';
 import { logger } from './logger.js';
 import { searchCities, cityByDane } from './co-dane.js';
-import { quoteAndWait, createShipment, getShipment, extractLabel, fetchLabelPdf } from './skydropx.js';
+import { quoteAndWait, createShipment, getShipment, cancelShipment, extractLabel, fetchLabelPdf } from './skydropx.js';
 import {
   getOrder, updateOrder,
-  createShipmentRow, getShipmentByOrder, getShipmentRow, updateShipmentRow, listShipments,
+  createShipmentRow, getShipmentByOrder, getShipmentRow, updateShipmentRow, listShipments, deleteShipment,
 } from './storage.js';
 import { enqueueEnvioIfReady } from './wa-enqueue.js';
 
@@ -297,5 +297,33 @@ export function registerSkydropxRoutes(app) {
     const pending = all.filter((r) => !r.label_url && r.skydropx_id).slice(0, 10);
     await Promise.all(pending.map((r) => refreshShipment(r)));
     return { shipments: listShipments() };
+  });
+
+  // Borra un envío: intenta cancelarlo en Skydropx y elimina la fila local.
+  // Si Skydropx ya no lo tiene (borrado a mano) o la cancelación falla, igual se borra
+  // localmente (con ?force=1, o por defecto) para no dejar envíos fantasma en el panel.
+  app.delete('/admin/shipments/:id', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const row = getShipmentRow(Number(req.params.id));
+    if (!row) return reply.code(404).send({ error: 'envío no encontrado' });
+
+    let skydropx = { canceled: false, detail: null };
+    if (row.skydropx_id && config.hasSkydropx) {
+      try {
+        const resp = await cancelShipment(row.skydropx_id);
+        skydropx = { canceled: true, detail: resp?.data?.attributes?.status || resp?.status || 'canceled' };
+      } catch (e) {
+        // 404/422 = ya no existe en Skydropx (borrado a mano) → seguimos y borramos local.
+        skydropx = { canceled: false, detail: String(e?.message || e).slice(0, 200) };
+        logger?.warn?.({ shipment: row.id, err: skydropx.detail }, 'no se pudo cancelar en Skydropx (se borra local igual)');
+      }
+    }
+    deleteShipment(row.id);
+    // Si la orden estaba marcada 'shipped' por este envío y no queda otro, la volvemos a paid.
+    if (row.order_id && !getShipmentByOrder(row.order_id)) {
+      const order = getOrder(row.order_id);
+      if (order && order.status === 'shipped') updateOrder(row.order_id, { status: 'paid' });
+    }
+    return { ok: true, deleted: true, skydropx };
   });
 }

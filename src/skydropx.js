@@ -268,6 +268,19 @@ export async function getShipment(id) {
   return skyRequest('GET', `/shipments/${id}`, null);
 }
 
+/**
+ * Cancela un envío en Skydropx (POST /shipments/{id}/cancellations).
+ * La transportadora puede responder canceled / destroyed / retained. Devuelve la respuesta.
+ * Si el envío ya no existe en Skydropx (ej. borrado a mano), Skydropx puede dar 404/422;
+ * el llamador decide si igual borra la fila local.
+ */
+export async function cancelShipment(shipmentId, reason = 'Cancelado desde el panel Sono') {
+  return skyRequest('POST', `/shipments/${shipmentId}/cancellations`, {
+    reason,
+    shipment_id: shipmentId,
+  });
+}
+
 /** Baja el PDF de la guía (label_url) SERVER-SIDE con el token de API.
  * El navegador NO puede: la URL exige sesión/cookie y además Skydropx no manda CORS
  * para sono.lat. Acá lo bajamos con el Bearer (mismo dominio api-pro.skydropx.com) y
