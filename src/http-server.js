@@ -50,7 +50,9 @@ import {
   claimWaPending, markWaSent,
   touchWaAgent, getWaSettings, setWaSettings, getWaAgentLastSeen, countWaByStatus,
   listWaOutbox, requeueWa, cancelWa,
+  getShipmentByOrder, updateShipmentRow,
 } from './storage.js';
+import { getShipment, extractLabel, fetchLabelPdf } from './skydropx.js';
 import { decodeBrebImage, normalizeKey } from './breb-qr.js';
 import { parseEmail } from './parsers/index.js';
 import { simpleParser } from 'mailparser';
@@ -1959,7 +1961,35 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     if (!settings.enabled) return { messages: [], settings }; // OFF global
     const limit = Math.min(Number(req.query.limit) || 5, 50);
     const rows = claimWaPending(limit);
-    return { messages: rows.map((r) => ({ id: r.id, phone: r.phone, body: r.body })), settings };
+    return {
+      messages: rows.map((r) => ({
+        id: r.id, phone: r.phone, body: r.body, order_id: r.order_id, kind: r.kind,
+      })),
+      settings,
+    };
+  });
+
+  // PDF de la guía para el agente (adjuntarlo al WhatsApp kind='envio'). Mismo proxy que
+  // /admin/orders/:id/label-pdf pero con auth de AGENTE (x-sono-secret), no requireAdmin:
+  // el agente de la PC no tiene sesión admin. Baja el PDF fresco de Skydropx al vuelo.
+  app.get('/wa/label/:orderId', async (req, reply) => {
+    if (!waAuth(req, reply)) return;
+    const row = getShipmentByOrder(req.params.orderId);
+    if (!row || !row.skydropx_id) return reply.code(404).send({ error: 'sin envío' });
+    if (!config.hasSkydropx) return reply.code(503).send({ error: 'skydropx no configurado' });
+    try {
+      const label = extractLabel(await getShipment(row.skydropx_id));
+      if (!label.labelUrl) return reply.code(409).send({ error: 'la guía aún no está lista' });
+      if (label.labelUrl !== row.label_url) updateShipmentRow(row.id, { label_url: label.labelUrl });
+      const pdf = await fetchLabelPdf(label.labelUrl);
+      return reply
+        .header('Content-Type', 'application/pdf')
+        .header('Content-Disposition', `inline; filename="guia-${row.tracking || row.id}.pdf"`)
+        .send(pdf);
+    } catch (e) {
+      req.log?.error?.({ err: e }, 'wa/label falló');
+      return reply.code(502).send({ error: 'no se pudo bajar la guía' });
+    }
   });
 
   app.post('/wa/sent', async (req, reply) => {
