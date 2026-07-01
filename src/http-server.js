@@ -1115,6 +1115,41 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     return reply.send(fs.readFileSync(fp));
   });
 
+  // Devuelve el EMVCo (string crudo) del QR de la orden, para imprimirlo en la térmica
+  // con el diseño Sonó (el agente local arma la etiqueta). Lo saca del breb_qr_json
+  // guardado (device u orden); si no está (órdenes viejas), decodifica el archivo del QR.
+  app.get('/admin/orders/:order/breb', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const o = getOrder(req.params.order);
+    if (!o) return reply.code(404).send({ error: 'orden no encontrada' });
+
+    // 1. de lo ya decodificado y guardado (device tiene prioridad, luego la orden)
+    const dev = listDevices().find((d) => d.order_id === o.id);
+    const stored = (dev && dev.breb_qr_json) || o.breb_qr_json || null;
+    if (stored) {
+      try {
+        const j = typeof stored === 'string' ? JSON.parse(stored) : stored;
+        if (j && j.raw) return { raw: j.raw, key: j.key || o.breb_key || null, keyType: j.keyType || null };
+      } catch { /* sigue al fallback */ }
+    }
+
+    // 2. fallback: decodificar el archivo del QR (para órdenes subidas antes del fix)
+    if (o.qr_path && (o.qr_mime || '').startsWith('image/')) {
+      const fp = path.join(QR_DIR, o.qr_path);
+      if (fs.existsSync(fp)) {
+        try {
+          const decoded = await decodeBrebImage(fs.readFileSync(fp));
+          if (decoded && decoded.raw) {
+            return { raw: decoded.raw, key: normalizeKey(decoded.key), keyType: decoded.keyType };
+          }
+        } catch (e) {
+          logger.warn({ orderId: o.id, err: e.message }, 'breb: no se pudo decodificar el archivo del QR');
+        }
+      }
+    }
+    return reply.code(404).send({ error: 'no hay QR decodificable en esta orden' });
+  });
+
   // Quitar el QR de una orden (p.ej. el admin lo subió a la orden equivocada). Borra el
   // archivo, limpia la llave Bre-B (orden + device si la tenía) y revierte el estado a
   // pendiente_qr para que se pueda volver a subir el correcto.
@@ -1206,6 +1241,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
       device: dev ? { spkr_id: dev.spkr_id, mac: dev.mac, model: dev.model, status: dev.status } : null,
       // entrega: 'online' (prepago) | 'contraentrega' (paga al recibir → COD en el envío)
       delivery: o.delivery || 'online',
+      // plan elegido: 'contado' | 'cuotas' (para mostrarlo en el admin)
+      plan: o.plan || null,
       // QR
       hasQr: Boolean(o.qr_path),
       qr_mime: o.qr_mime || null,
@@ -1519,7 +1556,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     const orders = accOrders
       .map(o => ({ id: o.id, status: o.status, business_name: o.business_name, bank: o.bank,
         next_charge_at: o.next_charge_at, hasQr: Boolean(o.qr_path), created_at: o.created_at,
-        breb_key: o.breb_key || null, local_name: o.local_name || null }));
+        breb_key: o.breb_key || null, local_name: o.local_name || null,
+        // datos del pedido para mostrarlos en el admin (nº orden, plan, entrega, monto)
+        plan: o.plan || null, delivery: o.delivery || 'online', amount_cents: o.amount_cents }));
     const allDevices = listDevices();
     const speakersList = allDevices.filter(d => (d.order_id && orders.some(o => o.id === d.order_id)) || (acc.speaker_id && d.spkr_id === acc.speaker_id))
       .map(d => ({ spkr_id: d.spkr_id, mac: d.mac, model: d.model, status: d.status,
