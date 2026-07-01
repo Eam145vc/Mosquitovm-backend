@@ -880,6 +880,15 @@ export function listShipments() {
   return db.prepare('SELECT * FROM shipments ORDER BY created_at DESC').all();
 }
 
+/** Envíos sin tracking aún (label asíncrono de Skydropx), creados desde `sinceMs`.
+ *  Usado por el job que completa el WhatsApp de guía cuando el tracking llega tarde. */
+export function shipmentsAwaitingTracking(sinceMs) {
+  openDb();
+  return db.prepare(
+    `SELECT * FROM shipments WHERE (tracking IS NULL OR tracking = '') AND created_at >= ? ORDER BY created_at ASC`
+  ).all(sinceMs);
+}
+
 // ── Cola de WhatsApp saliente (wa_outbox) ────────────────────────────────────
 // El VM encola; el agente de la PC del dueño consume por polling. Idempotente por
 // (order_id, kind): encolar dos veces el mismo mensaje para la misma orden no duplica.

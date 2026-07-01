@@ -3,12 +3,14 @@
 // Todas exigen el Bearer admin (mismo token que el resto de /admin/*).
 
 import { config } from './config.js';
+import { logger } from './logger.js';
 import { searchCities, cityByDane } from './co-dane.js';
 import { quoteAndWait, createShipment, getShipment, extractLabel, fetchLabelPdf } from './skydropx.js';
 import {
   getOrder, updateOrder,
   createShipmentRow, getShipmentByOrder, getShipmentRow, updateShipmentRow, listShipments,
 } from './storage.js';
+import { enqueueEnvioIfReady } from './wa-enqueue.js';
 
 // Paquete por defecto del Cloud Speaker en su caja (editable por envío desde el admin).
 const DEFAULT_PARCEL = { length: 17, width: 10, height: 4, weight: 1 };
@@ -207,6 +209,8 @@ export function registerSkydropxRoutes(app) {
       });
       // Marcar la orden como enviada (mismo estado que usa el flujo de despacho del admin).
       updateOrder(order.id, { status: 'shipped' });
+      try { enqueueEnvioIfReady(order); }
+      catch (e) { logger.error({ orderId: order.id, err: e.message }, 'wa: envío no encolado en creación'); }
       return { shipment: row, labelUrl: label.labelUrl, tracking: label.tracking };
     } catch (e) {
       return sendSkyError(reply, e);
