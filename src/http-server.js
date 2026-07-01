@@ -84,6 +84,12 @@ fs.mkdirSync(IG_DIR, { recursive: true });
 
 const PAID_STATES = ['paid', 'pendiente_qr', 'ready_to_ship', 'shipped'];
 const isPaid = (o) => o && PAID_STATES.includes(o.status);
+// Contraentrega (COD): la orden NO está pagada aún (paga al recibir), pero el
+// cliente SÍ puede hacer el onboarding de una vez (conectar correo + subir QR).
+// El Purchase al pixel se dispara solo al completar (step>=3), lo controla el front.
+const isCod = (o) => o && o.status === 'cod_pending';
+// Puede hacer onboarding = ya pagó (online) o es COD (paga al recibir).
+const canOnboard = (o) => isPaid(o) || isCod(o);
 
 const MIME_EXT = {
   'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg',
@@ -107,7 +113,13 @@ function orderView(o) {
   if (emailReady && o.qr_path) step = 3;
   return {
     order: o.id,
-    paid: isPaid(o),
+    // COD reporta paid:true para que el front deje entrar al wizard (el candado real
+    // de "conversión" lo pone el front: en COD solo dispara Purchase con step>=3).
+    paid: canOnboard(o),
+    // realmente cobrado (online). El front NO lo usa para el Purchase de COD, pero
+    // sirve para distinguir "pagado de verdad" de "COD en onboarding".
+    reallyPaid: isPaid(o),
+    cod: isCod(o),
     status: o.status,
     step,
     emailMethod: o.email_method || null,
@@ -778,7 +790,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
   app.post('/activar/:order/email-imap', async (req, reply) => {
     const order = getOrder(req.params.order);
     if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
-    if (!isPaid(order)) return reply.code(402).send({ error: 'orden no pagada' });
+    if (!canOnboard(order)) return reply.code(402).send({ error: 'orden no pagada' });
 
     const { host, port, user, pass } = req.body || {};
     if (!host || !user || !pass) return reply.code(400).send({ error: 'faltan host/user/pass' });
@@ -822,7 +834,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
   app.post('/activar/:order/email-redirect', async (req, reply) => {
     const order = getOrder(req.params.order);
     if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
-    if (!isPaid(order)) return reply.code(402).send({ error: 'orden no pagada' });
+    if (!canOnboard(order)) return reply.code(402).send({ error: 'orden no pagada' });
 
     const body = req.body || {};
     const forwardTo = String(body.email || '').trim().toLowerCase();
@@ -966,7 +978,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
   app.post('/activar/:order/qr', async (req, reply) => {
     const order = getOrder(req.params.order);
     if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
-    if (!isPaid(order)) return reply.code(402).send({ error: 'orden no pagada' });
+    if (!canOnboard(order)) return reply.code(402).send({ error: 'orden no pagada' });
 
     const file = await req.file();
     if (!file) return reply.code(400).send({ error: 'no file' });
@@ -984,7 +996,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
   app.post('/activar/:order/shipping', async (req, reply) => {
     const order = getOrder(req.params.order);
     if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
-    if (!isPaid(order)) return reply.code(402).send({ error: 'orden no pagada' });
+    if (!canOnboard(order)) return reply.code(402).send({ error: 'orden no pagada' });
 
     const { business_name, bank, address, city, phone } = req.body || {};
     if (!business_name || !address || !phone) {
