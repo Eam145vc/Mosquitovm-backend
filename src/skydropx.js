@@ -95,16 +95,27 @@ async function skyRequest(method, path, body, attempt = 1) {
  * declared_amount va DENTRO del parcel (como lo manda la web de Skydropx).
  * cashOnDelivery=true → contraentrega: la transportadora recauda el declared_amount al entregar.
  */
+// Origen de la cotización/envío. Si hay un address_template_id configurado (un punto de
+// recolección de la cuenta, ej. "Dispensario"), lo usamos: da MEJOR cobertura de
+// transportadoras y destinos que un origen suelto. El declared_amount va en el parcel,
+// así que el template ya NO rompe el valor declarado (ese bug era por mandarlo suelto).
+function buildOrigin(p) {
+  if (config.SKYDROPX_ORIGIN_TEMPLATE_ID) {
+    return { address_template_id: config.SKYDROPX_ORIGIN_TEMPLATE_ID };
+  }
+  return {
+    country_code: 'CO',
+    postal_code: p.fromPostal,
+    area_level1: p.fromDepto,
+    area_level2: p.fromCity,
+  };
+}
+
 export async function createQuotation(p) {
   const declared = Number(p.declaredAmount) || 50000;
   const payload = {
     quotation: {
-      address_from: {
-        country_code: 'CO',
-        postal_code: p.fromPostal,
-        area_level1: p.fromDepto,
-        area_level2: p.fromCity,
-      },
+      address_from: buildOrigin(p),
       address_to: {
         country_code: 'CO',
         postal_code: p.toPostal,
@@ -195,12 +206,27 @@ export async function quoteAndWait(p, { tries = 6, delayMs = 1500 } = {}) {
 /**
  * Crea el envío con una tarifa elegida → reserva la guía con la transportadora.
  * @param {object} p { rateId, from:{name,company,street,postal,depto,city,phone,email}, to:{name,street,postal,depto,city,phone,email}, declaredAmount }
- * ⚠️ postal = CP de 6 dígitos (NO el DANE). declared_amount va en el parcel. reference
- * obligatorio en origen y destino. Sin address_template_id (rompe el valor declarado).
- * Devuelve la respuesta cruda de Skydropx (incluye label_url, tracking_number, etc.).
+ * ⚠️ postal = CP de 6 dígitos (NO el DANE). declared_amount va en el parcel (por eso el
+ * template origen ya NO rompe el valor declarado). El origen usa el address_template si está
+ * configurado (mejor cobertura). Devuelve la respuesta cruda (label_url, tracking_number, etc.).
  */
 export async function createShipment(p) {
   const declared = Number(p.declaredAmount) || 50000;
+  // Origen: template (Dispensario) si está configurado, sino campos sueltos del remitente.
+  const addressFrom = config.SKYDROPX_ORIGIN_TEMPLATE_ID
+    ? { address_template_id: config.SKYDROPX_ORIGIN_TEMPLATE_ID }
+    : {
+        name: p.from.name,
+        company: p.from.company || p.from.name,
+        street1: p.from.street,
+        postal_code: p.from.postal,
+        area_level1: p.from.depto,
+        area_level2: p.from.city,
+        country_code: 'CO',
+        phone: p.from.phone,
+        email: p.from.email,
+        reference: p.from.reference || 'Bodega',
+      };
   const payload = {
     shipment: {
       rate_id: p.rateId,
@@ -218,18 +244,7 @@ export async function createShipment(p) {
         },
       ],
       declared_amount: declared,
-      address_from: {
-        name: p.from.name,
-        company: p.from.company || p.from.name,
-        street1: p.from.street,
-        postal_code: p.from.postal,
-        area_level1: p.from.depto,
-        area_level2: p.from.city,
-        country_code: 'CO',
-        phone: p.from.phone,
-        email: p.from.email,
-        reference: p.from.reference || 'Bodega',
-      },
+      address_from: addressFrom,
       address_to: {
         name: p.to.name,
         company: p.to.company || undefined,
