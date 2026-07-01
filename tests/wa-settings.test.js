@@ -47,3 +47,10 @@ test('countWaByStatus cuenta por estado', () => {
   assert.ok(c.queued >= 1);
   assert.equal(typeof c.failed, 'number');
 });
+
+test('setWaSettings sanea rangos inválidos', () => {
+  const s = setWaSettings({ daily_cap: -5, min_delay_ms: 30000, max_delay_ms: 1000, active_hour_end: 3, active_hour_start: 10 });
+  assert.ok(s.daily_cap >= 1);
+  assert.ok(s.max_delay_ms >= s.min_delay_ms);
+  assert.ok(s.active_hour_end > s.active_hour_start);
+});

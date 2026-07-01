@@ -963,8 +963,28 @@ export function getWaSettings() {
   catch { return { ...WA_SETTINGS_DEFAULTS }; }
 }
 
+// Sanea/clampea los settings antes de persistir: coacciona a número y aplica límites
+// sensatos. Evita que un PATCH mal formado (min>max, daily_cap negativo, valores no
+// numéricos) rompa el agente de WhatsApp (randDelay daría NaN).
+function sanitizeWaSettings(s) {
+  const num = (v, def) => (Number.isFinite(Number(v)) ? Number(v) : def);
+  const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+  const out = {
+    enabled: Boolean(s.enabled),
+    active_hour_start: clamp(Math.trunc(num(s.active_hour_start, 8)), 0, 23),
+    active_hour_end: clamp(Math.trunc(num(s.active_hour_end, 21)), 1, 24),
+    daily_cap: clamp(Math.trunc(num(s.daily_cap, 200)), 1, 100000),
+    min_delay_ms: clamp(Math.trunc(num(s.min_delay_ms, 8000)), 0, 3600000),
+    max_delay_ms: clamp(Math.trunc(num(s.max_delay_ms, 20000)), 0, 3600000),
+  };
+  // Garantiza min <= max y start < end
+  if (out.max_delay_ms < out.min_delay_ms) out.max_delay_ms = out.min_delay_ms;
+  if (out.active_hour_end <= out.active_hour_start) out.active_hour_end = Math.min(out.active_hour_start + 1, 24);
+  return out;
+}
+
 export function setWaSettings(partial) {
-  const merged = { ...getWaSettings(), ...partial };
+  const merged = sanitizeWaSettings({ ...getWaSettings(), ...partial });
   db.prepare(`INSERT INTO wa_meta (key, value) VALUES ('settings', ?)
               ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
     .run(JSON.stringify(merged));

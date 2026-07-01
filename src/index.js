@@ -260,9 +260,11 @@ async function main() {
   setInterval(reconcileEfipayJob, 5 * 60 * 1000);   // y cada 5 minutos
 
   // ── Recordatorios de onboarding por WhatsApp (3h / 24h) ────────────────────────
-  // stepOf: replica orderView().step. confirmedAt: pago (updated_at al pasar a
-  // pendiente_qr) para online, created_at para COD. Aproximamos con updated_at, que
-  // se setea al confirmar el pago / crear la orden.
+  // stepOf: replica orderView().step. confirmedAt: momento del pago, ESTABLE (no usar
+  // updated_at: updateOrder lo pisa en cada avance del onboarding —conectar correo,
+  // subir qr_path, etc.— y eso reseteaba la "edad desde el pago" en cada paso, matando
+  // el recordatorio para quien más lo necesita: el que empezó y no terminó). Se deriva
+  // de next_charge_at (se setea SOLO al aprobar el pago / renovar, 365 días a futuro).
   const stepOf = (o) => {
     const acc = o.account_id ? getAccount(o.account_id) : null;
     const hasPay = o.account_id ? paymentsFor(o.account_id, 1).length > 0 : false;
@@ -271,7 +273,12 @@ async function main() {
     if (emailReady) return 2;
     return 1;
   };
-  const confirmedAt = (o) => (o.status === 'cod_pending' ? o.created_at : (o.updated_at || o.created_at));
+  const YEAR_MS = 365 * 24 * 3600 * 1000;
+  const confirmedAt = (o) => {
+    if (o.status === 'cod_pending') return o.created_at;      // COD: cuándo se creó la orden
+    if (o.next_charge_at) return o.next_charge_at - YEAR_MS;  // online: derivado del pago (estable)
+    return o.created_at;                                      // fallback defensivo
+  };
   const waReminderJob = () =>
     runWaReminderJob({ listOrders, stepOf, enqueue: enqueueWhatsApp, confirmedAt, now: Date.now() });
   waReminderJob();
