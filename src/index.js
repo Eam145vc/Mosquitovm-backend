@@ -16,10 +16,12 @@ import { logger } from './logger.js';
 import { openDb, listAccounts, getAccount } from './storage.js';
 import { watchInbox } from './gmail-api.js';
 import { updateAccountHistory, updateAccountWatch, recordPayment, upsertDeviceFromStatus,
-  setSubStatus, accountsToAutoSuspend, markNewlyExpired, listOrders, updateOrder, getOrder } from './storage.js';
+  setSubStatus, accountsToAutoSuspend, markNewlyExpired, listOrders, updateOrder, getOrder,
+  paymentsFor, requeueStaleWa } from './storage.js';
 import { fetchEfiStatus } from './efipay.js';
 import { sendActivationEmail } from './activation-email.js';
 import { enqueueWhatsApp } from './wa-enqueue.js';
+import { runWaReminderJob } from './wa-reminders.js';
 import * as announceLog from './announce-log.js';
 
 const watchers = new Map();   // id -> ImapWatcher (modo IMAP)
@@ -256,6 +258,30 @@ async function main() {
   };
   reconcileEfipayJob();                              // corre una vez al arrancar (recupera lo pendiente)
   setInterval(reconcileEfipayJob, 5 * 60 * 1000);   // y cada 5 minutos
+
+  // ── Recordatorios de onboarding por WhatsApp (3h / 24h) ────────────────────────
+  // stepOf: replica orderView().step. confirmedAt: pago (updated_at al pasar a
+  // pendiente_qr) para online, created_at para COD. Aproximamos con updated_at, que
+  // se setea al confirmar el pago / crear la orden.
+  const stepOf = (o) => {
+    const acc = o.account_id ? getAccount(o.account_id) : null;
+    const hasPay = o.account_id ? paymentsFor(o.account_id, 1).length > 0 : false;
+    const emailReady = Boolean(acc && (acc.change_confirmed || hasPay));
+    if (emailReady && o.qr_path) return 3;
+    if (emailReady) return 2;
+    return 1;
+  };
+  const confirmedAt = (o) => (o.status === 'cod_pending' ? o.created_at : (o.updated_at || o.created_at));
+  const waReminderJob = () =>
+    runWaReminderJob({ listOrders, stepOf, enqueue: enqueueWhatsApp, confirmedAt, now: Date.now() });
+  waReminderJob();
+  setInterval(waReminderJob, 15 * 60 * 1000); // cada 15 min
+
+  // Devuelve a 'queued' los mensajes 'sending' que la PC dejó colgados >30 min.
+  setInterval(() => {
+    const n = requeueStaleWa(30 * 60 * 1000);
+    if (n) logger.info({ n }, 'wa: mensajes colgados re-encolados');
+  }, 10 * 60 * 1000);
 
   // Scheduler de posts de Instagram programados (publica los que ya vencieron, cada 60s).
   startIgScheduler();
