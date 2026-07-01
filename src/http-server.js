@@ -344,10 +344,6 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
           mp_payer_email: formData.payer.email, next_charge_at: nextCharge,
         });
         logger.info({ orderId, payment: payment.id }, 'pago aprobado (in-web)');
-        // WhatsApp de activación (además del correo). No bloquea si falla.
-        try { enqueueWhatsApp(getOrder(orderId), 'activacion'); } catch (e) {
-          logger.error({ orderId, err: e.message }, 'wa: no se pudo encolar activación (in-web)');
-        }
       } else {
         logger.info({ orderId, payment: payment.id, st: payment.status_detail }, 'pago en proceso/no aprobado');
       }
@@ -418,6 +414,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
         logger.info({ orderId, txn: result.transactionId }, 'pago aprobado (efipay embebido)');
         // Correo con el link de activación (red de seguridad si cierra la pantalla).
         sendActivationEmail(getOrder(orderId)).catch(() => {});
+        try { enqueueWhatsApp(getOrder(orderId), 'activacion'); } catch (e) {
+          logger.error({ orderId, err: e.message }, 'wa: no se pudo encolar activación');
+        }
 
         // ── Plan en cuotas: la 1ª cuota ya está cobrada. Tokenizamos la tarjeta para
         //    cobrar las cuotas 2-3 (sin re-pedir la tarjeta) y programamos la 2ª a +30d.
@@ -514,6 +513,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
           mp_payer_email: payer.email, next_charge_at: nextCharge,
         });
         sendActivationEmail(getOrder(orderId)).catch(() => {});
+        try { enqueueWhatsApp(getOrder(orderId), 'activacion'); } catch (e) {
+          logger.error({ orderId, err: e.message }, 'wa: no se pudo encolar activación');
+        }
       }
       logger.info({ orderId, method, status: result.status, paymentId: result.paymentId, hasRedirect: Boolean(result.redirect), hasQr: Boolean(result.qr) }, 'efipay alt iniciado');
       // Bre-B con QR → el front lo muestra embebido (no redirige). PSE/cash → redirect.
@@ -540,9 +542,6 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
             mp_payer_email: payment.payer?.email || null,
           });
           logger.info({ orderId: order.id, payment: payment.id }, 'pago aprobado (webhook)');
-          try { enqueueWhatsApp(getOrder(order.id), 'activacion'); } catch (e) {
-            logger.error({ orderId: order.id, err: e.message }, 'wa: no se pudo encolar activación (webhook)');
-          }
         }
       } catch (e) {
         logger.error({ err: e.message }, 'mp webhook error');
@@ -595,6 +594,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
           logger.info({ orderId: o.id, paymentId: o.efi_payment_id }, 'pago confirmado por polling de estado (webhook no llegó)');
           o = getOrder(o.id);
           sendActivationEmail(o).catch(() => {});
+          try { enqueueWhatsApp(o, 'activacion'); } catch (e) {
+            logger.error({ orderId: o.id, err: e.message }, 'wa: no se pudo encolar activación');
+          }
         }
       } catch (e) {
         logger.warn({ orderId: o.id, err: e.message }, 'polling de estado EfiPay falló (se reintenta en el próximo poll)');
