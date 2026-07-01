@@ -47,6 +47,7 @@ import {
   paymentsFor, subState, setSubStatus,
   saveInboxMail, listInbox, getInboxMail, markInboxSeen, deleteInboxMail, unseenInboxCount,
   markInboxReplied, saveOutboundMail,
+  claimWaPending, markWaSent,
 } from './storage.js';
 import { decodeBrebImage, normalizeKey } from './breb-qr.js';
 import { parseEmail } from './parsers/index.js';
@@ -1937,6 +1938,31 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     // Reenvío transparente: devolvemos a dónde reenviar (el MX hace el forward).
     // forwardTo viene descifrado por hydrateAccount. Si no hay, el MX no reenvía.
     return { ok: true, forwardTo: account.forwardTo || null };
+  });
+
+  // ── Cola de WhatsApp: el agente de la PC del dueño consume por polling ──────────
+  const waAuth = (req, reply) => {
+    const secret = req.headers['x-sono-secret'];
+    if (!config.EMAIL_WEBHOOK_SECRET || secret !== config.EMAIL_WEBHOOK_SECRET) {
+      reply.code(401).send({ error: 'unauthorized' });
+      return false;
+    }
+    return true;
+  };
+
+  app.get('/wa/pending', async (req, reply) => {
+    if (!waAuth(req, reply)) return;
+    const limit = Math.min(Number(req.query.limit) || 5, 50);
+    const rows = claimWaPending(limit);
+    return { messages: rows.map((r) => ({ id: r.id, phone: r.phone, body: r.body })) };
+  });
+
+  app.post('/wa/sent', async (req, reply) => {
+    if (!waAuth(req, reply)) return;
+    const { id, ok, error } = req.body || {};
+    if (!id) return reply.code(400).send({ error: 'falta id' });
+    markWaSent(id, Boolean(ok), error || null);
+    return { ok: true };
   });
 
   // Onboarding Fase 3: el frontend hace polling acá para (a) mostrar el OTP del banco y
