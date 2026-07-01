@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), 'waenq-')), 'db.sqlite');
 process.env.ENCRYPTION_KEY = 'GbIok8pliFrsQG7sKbCEpbN39/waCLO61IWAgWNIFk8=';
+process.env.MQTT_URL = 'mqtt://d'; process.env.MQTT_USERNAME = 'd'; process.env.MQTT_PASSWORD = 'd';
 
 const { openDb, listWaOutbox } = await import('../src/storage.js');
 const { normalizePhoneCO, buildWaBody, enqueueWhatsApp } = await import('../src/wa-enqueue.js');

@@ -4,7 +4,7 @@
 
 import { config } from './config.js';
 import { logger } from './logger.js';
-import { enqueueWa, enqueueWaForce } from './storage.js';
+import { enqueueWa, enqueueWaForce, getShipmentByOrder } from './storage.js';
 
 /** Normaliza a formato WhatsApp COL (57 + celular). Política: siempre intentar. */
 export function normalizePhoneCO(raw) {
@@ -45,6 +45,27 @@ export function buildWaBody(order, kind) {
       `${hola} 🙂 Te recuerdo el último paso para activar tu Sonó (toma 2 min): ${link}`,
     ]);
   }
+  if (kind === 'envio') {
+    const sh = getShipmentByOrder(order.id);
+    const guia = sh?.tracking || '';
+    const carrier = sh?.carrier || 'la transportadora';
+    if (sh?.tracking_url) {
+      return pickVariant(order.id, [
+        `${hola}, tu Sonó ya va en camino 📦 Guía: ${guia} (${carrier}). Rástrealo aquí: ${sh.tracking_url}`,
+        `${hola} 🚚 Tu Sonó fue despachado. Guía ${guia} por ${carrier}. Sigue tu envío: ${sh.tracking_url}`,
+      ]);
+    }
+    if (guia) {
+      return pickVariant(order.id, [
+        `${hola}, tu Sonó ya va en camino 📦 Guía: ${guia} por ${carrier}. Rastréalo con ese número en la web de ${carrier}.`,
+        `${hola} 🚚 Tu Sonó fue despachado. Guía ${guia} (${carrier}). Rastrea con ese número en ${carrier}.`,
+      ]);
+    }
+    return pickVariant(order.id, [
+      `${hola}, tu Sonó ya fue despachado 📦 Pronto te llega.`,
+      `${hola} 🚚 Tu Sonó va en camino, pronto lo recibes.`,
+    ]);
+  }
   // recordatorio_24h
   return pickVariant(order.id, [
     `${hola}, tu Sonó todavía está sin conectar. Cuando quieras lo activas aquí y empieza a anunciar tus pagos: ${link}`,
@@ -79,4 +100,14 @@ export function enqueueWhatsAppForce(order, kind) {
   const ok = enqueueWaForce({ orderId: order.id, phone, kind, body });
   if (ok) logger.info({ orderId: order.id, kind, phone }, 'wa: mensaje reencolado (force, manual admin)');
   return ok;
+}
+
+/** Encola WhatsApp de envío si la orden tiene teléfono y tracking. */
+export function enqueueEnvioIfReady(order) {
+  if (!order) return false;
+  const phone = normalizePhoneCO(order.phone);
+  if (!phone) { logger.warn({ orderId: order.id }, 'wa: envío sin teléfono'); return false; }
+  const sh = getShipmentByOrder(order.id);
+  if (!sh?.tracking) return false; // tracking async: lo tomará el job
+  return enqueueWhatsApp(order, 'envio');
 }
