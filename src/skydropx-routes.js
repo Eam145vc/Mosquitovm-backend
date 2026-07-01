@@ -23,7 +23,6 @@ function originAddress() {
   const c = cityByDane(config.SKYDROPX_ORIGIN_DANE);
   return {
     postal: c?.postal || config.SKYDROPX_ORIGIN_POSTAL,
-    postalAlt: c?.postalAlt || null,
     // area_level1/2 para la API: sin tildes, mayúsculas (la API rompe con tildes).
     depto: c?.deptoApi || config.SKYDROPX_ORIGIN_DEPTO,
     city: c?.cityApi || config.SKYDROPX_ORIGIN_CITY,
@@ -102,12 +101,10 @@ export function registerSkydropxRoutes(app) {
     try {
       const result = await quoteAndWait({
         fromPostal: origin.postal,
-        fromPostalAlt: origin.postalAlt,
         fromDane: origin.dane,
         fromDepto: origin.depto,
         fromCity: origin.city,
         toPostal: dest.postal,
-        toPostalAlt: dest.postalAlt,
         toDane: dest.dane,
         toDepto: dest.deptoApi || dest.depto,
         toCity: dest.cityApi || dest.city,
@@ -153,7 +150,6 @@ export function registerSkydropxRoutes(app) {
       name: to.name || order.business_name || 'Cliente',
       street: to.street || order.address || 'Sin dirección',
       postal: dest.postal,
-      postalAlt: dest.postalAlt,
       depto: dest.deptoApi || dest.depto,
       city: dest.cityApi || dest.city,
       phone: to.phone || order.phone || config.SKYDROPX_ORIGIN_PHONE,
@@ -165,7 +161,6 @@ export function registerSkydropxRoutes(app) {
       company: config.SKYDROPX_ORIGIN_NAME,
       street: config.SKYDROPX_ORIGIN_STREET || 'Bodega',
       postal: origin.postal,
-      postalAlt: origin.postalAlt,
       depto: origin.depto,
       city: origin.city,
       phone: config.SKYDROPX_ORIGIN_PHONE,

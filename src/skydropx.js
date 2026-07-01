@@ -143,24 +143,9 @@ export async function getQuotation(id) {
  * ordenadas de más barata a más cara, más `unavailable` (las descartadas, para diagnóstico).
  */
 export async function quoteAndWait(p, { tries = 6, delayMs = 1500 } = {}) {
-  // El CP primario (DANE+'0') no existe para algunos municipios (ej. Cartagena). Si Skydropx
-  // responde "postal_code no existe", reintentamos con el CP de respaldo del dataset 4-72
-  // (toPostalAlt/fromPostalAlt), que cubre esos casos.
-  let created;
-  try {
-    created = await createQuotation(p);
-  } catch (e) {
-    const isPostalError = e?.status === 422 && /no existe/i.test(JSON.stringify(e.body || ''));
-    const fb = { ...p };
-    if (p.toPostalAlt) fb.toPostal = p.toPostalAlt;
-    if (p.fromPostalAlt) fb.fromPostal = p.fromPostalAlt;
-    if (isPostalError && (fb.toPostal !== p.toPostal || fb.fromPostal !== p.fromPostal)) {
-      created = await createQuotation(fb);
-      p = fb;
-    } else {
-      throw e;
-    }
-  }
+  // El CP de cada ciudad ya viene VALIDADO contra Skydropx (co-dane.js), así que no hace
+  // falta fallback: el postal_code debería existir siempre.
+  const created = await createQuotation(p);
   const id = created.id;
   let rates = [];
   for (let i = 0; i < tries; i++) {
