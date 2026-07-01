@@ -179,6 +179,21 @@ export function openDb() {
     );
     CREATE INDEX IF NOT EXISTS idx_shipments_order ON shipments(order_id);
     CREATE INDEX IF NOT EXISTS idx_shipments_at ON shipments(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS wa_outbox (
+      id TEXT PRIMARY KEY,
+      order_id TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      body TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      created_at INTEGER NOT NULL,
+      sent_at INTEGER
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_wa_outbox_order_kind ON wa_outbox(order_id, kind);
+    CREATE INDEX IF NOT EXISTS idx_wa_outbox_status ON wa_outbox(status, created_at);
   `);
 
   // Migraciones: agregar columnas si las tablas ya existian de una version vieja.
@@ -853,4 +868,60 @@ export function updateShipmentRow(id, patch) {
 export function listShipments() {
   openDb();
   return db.prepare('SELECT * FROM shipments ORDER BY created_at DESC').all();
+}
+
+// ── Cola de WhatsApp saliente (wa_outbox) ────────────────────────────────────
+// El VM encola; el agente de la PC del dueño consume por polling. Idempotente por
+// (order_id, kind): encolar dos veces el mismo mensaje para la misma orden no duplica.
+
+export function enqueueWa({ orderId, phone, kind, body }) {
+  openDb();
+  const now = Date.now();
+  const id = randomBytes(16).toString('hex');
+  const info = db
+    .prepare(
+      `INSERT OR IGNORE INTO wa_outbox (id, order_id, phone, kind, body, status, attempts, created_at)
+       VALUES (?, ?, ?, ?, ?, 'queued', 0, ?)`
+    )
+    .run(id, orderId, phone, kind, body, now);
+  return info.changes > 0; // 0 = ya existía ese (order_id, kind)
+}
+
+export function claimWaPending(limit = 5) {
+  openDb();
+  const rows = db
+    .prepare(`SELECT * FROM wa_outbox WHERE status = 'queued' ORDER BY created_at ASC LIMIT ?`)
+    .all(limit);
+  const upd = db.prepare(`UPDATE wa_outbox SET status = 'sending' WHERE id = ? AND status = 'queued'`);
+  const claimed = [];
+  for (const r of rows) {
+    const info = upd.run(r.id);
+    if (info.changes > 0) claimed.push({ id: r.id, order_id: r.order_id, phone: r.phone, kind: r.kind, body: r.body });
+  }
+  return claimed;
+}
+
+export function markWaSent(id, ok, error = null) {
+  openDb();
+  if (ok) {
+    db.prepare(`UPDATE wa_outbox SET status = 'sent', sent_at = ?, attempts = attempts + 1 WHERE id = ?`)
+      .run(Date.now(), id);
+  } else {
+    db.prepare(`UPDATE wa_outbox SET status = 'failed', last_error = ?, attempts = attempts + 1 WHERE id = ?`)
+      .run(error ? String(error).slice(0, 500) : null, id);
+  }
+}
+
+export function requeueStaleWa(maxAgeMs) {
+  openDb();
+  const cutoff = Date.now() - maxAgeMs;
+  const info = db
+    .prepare(`UPDATE wa_outbox SET status = 'queued' WHERE status = 'sending' AND created_at <= ?`)
+    .run(cutoff);
+  return info.changes;
+}
+
+export function listWaOutbox() {
+  openDb();
+  return db.prepare(`SELECT * FROM wa_outbox ORDER BY created_at ASC`).all();
 }
