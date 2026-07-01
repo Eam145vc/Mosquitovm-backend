@@ -51,3 +51,20 @@ test('orden COD (cod_pending) hace 4h sin completar => recordatorio_3h', () => {
   const due = dueReminders([o], now, stepOf, (o) => o._confirmedAt);
   assert.deepEqual(due.map((d) => d.kind), ['recordatorio_3h']);
 });
+
+// ── Guardas nuevas: corte histórico (since) + tope de antigüedad (maxAgeMs) ──────
+
+test('orden confirmada ANTES del corte since => no encola nada (corte histórico)', () => {
+  const o = make('g', 4, 2); // confirmada hace 4h => confirmedAt = now - 4h
+  const since = o._confirmedAt + 1; // since queda 1ms DESPUÉS de confirmedAt => queda antes del corte
+  const due = dueReminders([o], now, stepOf, (o) => o._confirmedAt, since);
+  assert.equal(due.length, 0);
+});
+
+test('orden posterior a since pero con age > maxAgeMs (50h > 48h) => no encola', () => {
+  const o = make('h', 50, 2);
+  const since = 0;
+  const maxAgeMs = 48 * H;
+  const due = dueReminders([o], now, stepOf, (o) => o._confirmedAt, since, maxAgeMs);
+  assert.equal(due.length, 0);
+});

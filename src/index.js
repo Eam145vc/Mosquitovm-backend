@@ -279,8 +279,17 @@ async function main() {
     if (o.next_charge_at) return o.next_charge_at - YEAR_MS;  // online: derivado del pago (estable)
     return o.created_at;                                      // fallback defensivo
   };
+  // Corte histórico: ignora órdenes confirmadas antes de esta fecha (evita que el job
+  // vuelva a mirar la historia y genere una avalancha como la de las ~124 órdenes viejas).
+  // Se lee de env var (no entra a config.js/Zod): si no está seteada, since=0 (comportamiento
+  // viejo); en el VM se setea al desplegar este fix.
+  const WA_SINCE = Number(process.env.WA_REMINDERS_SINCE) || 0;
+  const WA_MAX_AGE = 48 * 3600 * 1000; // tope de antigüedad: no recordar eternamente una orden colgada
   const waReminderJob = () =>
-    runWaReminderJob({ listOrders, stepOf, enqueue: enqueueWhatsApp, confirmedAt, now: Date.now() });
+    runWaReminderJob({
+      listOrders, stepOf, enqueue: enqueueWhatsApp, confirmedAt, now: Date.now(),
+      since: WA_SINCE, maxAgeMs: WA_MAX_AGE,
+    });
   waReminderJob();
   setInterval(waReminderJob, 15 * 60 * 1000); // cada 15 min
 

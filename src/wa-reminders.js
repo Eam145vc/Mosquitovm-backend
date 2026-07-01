@@ -13,16 +13,21 @@ const H = 3600 * 1000;
  * @param now epoch ms
  * @param stepOf (order) => number  paso del wizard (3 = completo)
  * @param confirmedAt (order) => epoch ms  momento en que se confirmó/creó
+ * @param since epoch ms  corte histórico: órdenes confirmadas antes de esto se ignoran
+ * @param maxAgeMs  tope de antigüedad: si age > maxAgeMs ya no se encola (evita recordar
+ *                  eternamente una orden colgada)
  * @returns Array<{order, kind}>
  */
-export function dueReminders(orders, now, stepOf, confirmedAt) {
+export function dueReminders(orders, now, stepOf, confirmedAt, since = 0, maxAgeMs = Infinity) {
   const out = [];
   for (const o of orders) {
     if (o.status === 'created') continue;        // aún sin confirmar
     if (stepOf(o) >= 3) continue;                // onboarding ya completo
     const started = confirmedAt(o);
     if (!started) continue;
+    if (started < since) continue;               // corte histórico
     const age = now - started;
+    if (age > maxAgeMs) continue;                // demasiado vieja
     if (age >= 3 * H) out.push({ order: o, kind: 'recordatorio_3h' });
     if (age >= 24 * H) out.push({ order: o, kind: 'recordatorio_24h' });
   }
@@ -30,10 +35,10 @@ export function dueReminders(orders, now, stepOf, confirmedAt) {
 }
 
 /** Corre el job: calcula pendientes y los encola (dedupe lo hace wa_outbox). */
-export function runWaReminderJob({ listOrders, stepOf, enqueue, confirmedAt, now }) {
+export function runWaReminderJob({ listOrders, stepOf, enqueue, confirmedAt, now, since = 0, maxAgeMs = Infinity }) {
   try {
     const orders = listOrders();
-    const due = dueReminders(orders, now, stepOf, confirmedAt);
+    const due = dueReminders(orders, now, stepOf, confirmedAt, since, maxAgeMs);
     let n = 0;
     for (const { order, kind } of due) {
       if (enqueue(order, kind)) n += 1;
