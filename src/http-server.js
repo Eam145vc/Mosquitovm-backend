@@ -124,8 +124,21 @@ function orderView(o) {
 export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) {
   const app = Fastify({ logger: false, bodyLimit: 10 * 1024 * 1024 }); // 10MB para correos de ForwardEmail
 
+  // Orígenes permitidos: el front principal (sono.lat) + orígenes extra de la web
+  // espejo (sonoback.com y su deploy en Railway). CORS_EXTRA_ORIGINS es una lista
+  // separada por comas en el .env; se filtra vacío por si no está definida.
+  const corsOrigins = [
+    config.FRONTEND_BASE_URL,
+    'https://sonoback.com',
+    'https://www.sonoback.com',
+    'https://espejosono-production.up.railway.app',
+    ...(process.env.CORS_EXTRA_ORIGINS || '')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean),
+  ];
   app.register(fastifyCors, {
-    origin: [config.FRONTEND_BASE_URL],
+    origin: corsOrigins,
     methods: ['GET', 'POST', 'PATCH', 'DELETE'],
     credentials: true,
   });
