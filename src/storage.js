@@ -194,6 +194,11 @@ export function openDb() {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_wa_outbox_order_kind ON wa_outbox(order_id, kind);
     CREATE INDEX IF NOT EXISTS idx_wa_outbox_status ON wa_outbox(status, created_at);
+
+    CREATE TABLE IF NOT EXISTS wa_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
 
   // Migraciones: agregar columnas si las tablas ya existian de una version vieja.
@@ -924,4 +929,47 @@ export function requeueStaleWa(maxAgeMs) {
 export function listWaOutbox() {
   openDb();
   return db.prepare(`SELECT * FROM wa_outbox ORDER BY created_at ASC`).all();
+}
+
+// ── Settings + heartbeat del agente de WhatsApp (tabla key-value wa_meta) ─────
+const WA_SETTINGS_DEFAULTS = {
+  enabled: true,
+  active_hour_start: 8,
+  active_hour_end: 21,
+  daily_cap: 200,
+  min_delay_ms: 8000,
+  max_delay_ms: 20000,
+};
+
+export function getWaSettings() {
+  const row = db.prepare(`SELECT value FROM wa_meta WHERE key = 'settings'`).get();
+  if (!row) return { ...WA_SETTINGS_DEFAULTS };
+  try { return { ...WA_SETTINGS_DEFAULTS, ...JSON.parse(row.value) }; }
+  catch { return { ...WA_SETTINGS_DEFAULTS }; }
+}
+
+export function setWaSettings(partial) {
+  const merged = { ...getWaSettings(), ...partial };
+  db.prepare(`INSERT INTO wa_meta (key, value) VALUES ('settings', ?)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+    .run(JSON.stringify(merged));
+  return merged;
+}
+
+export function touchWaAgent() {
+  db.prepare(`INSERT INTO wa_meta (key, value) VALUES ('agent_last_seen', ?)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+    .run(String(Date.now()));
+}
+
+export function getWaAgentLastSeen() {
+  const row = db.prepare(`SELECT value FROM wa_meta WHERE key = 'agent_last_seen'`).get();
+  return row ? Number(row.value) : null;
+}
+
+export function countWaByStatus() {
+  const rows = db.prepare(`SELECT status, COUNT(*) n FROM wa_outbox GROUP BY status`).all();
+  const out = { queued: 0, sending: 0, sent: 0, failed: 0, canceled: 0 };
+  for (const r of rows) out[r.status] = r.n;
+  return out;
 }
