@@ -104,19 +104,22 @@ const MIME_EXT = {
 
 /** Vista publica de una orden (sin datos sensibles), con el paso actual del wizard.
  *  El envio se recoge ANTES de pagar (checkout), asi que el post-pago son 2 pasos:
- *  1=correo, 2=qr, 3=listo. */
+ *  1=qr, 2=correo, 3=listo. */
 function orderView(o) {
   // El correo cuenta como LISTO solo si hay PRUEBA de que el reenvío funciona: o el banco
   // confirmó el cambio (change_confirmed), o ya llegó al menos un pago por esa cuenta.
   // Tener account_id NO basta: el cliente pudo poner su correo y crear la cuenta, pero si
-  // no completó el cambio en el banco, debe seguir en el paso 1 (si no, saltaría al QR sin
-  // que los pagos lleguen de verdad).
+  // no completó el cambio en el banco, no cuenta como email listo (si no, saltaría a "listo"
+  // sin que los pagos lleguen de verdad).
   const acc = o.account_id ? getAccount(o.account_id) : null;
   const hasReceivedPayment = o.account_id ? paymentsFor(o.account_id, 1).length > 0 : false;
   const emailReady = Boolean(acc && (acc.change_confirmed || hasReceivedPayment));
+  // Orden del wizard: 1=subir QR (sin requisito previo), 2=conectar correo (se desbloquea
+  // al tener el QR), 3=listo (QR + correo).
+  const qrReady = Boolean(o.qr_path);
   let step = 1;
-  if (emailReady) step = 2;
-  if (emailReady && o.qr_path) step = 3;
+  if (qrReady) step = 2;
+  if (qrReady && emailReady) step = 3;
   return {
     order: o.id,
     // COD reporta paid:true para que el front deje entrar al wizard (el candado real

@@ -270,8 +270,10 @@ async function main() {
     const acc = o.account_id ? getAccount(o.account_id) : null;
     const hasPay = o.account_id ? paymentsFor(o.account_id, 1).length > 0 : false;
     const emailReady = Boolean(acc && (acc.change_confirmed || hasPay));
-    if (emailReady && o.qr_path) return 3;
-    if (emailReady) return 2;
+    const qrReady = Boolean(o.qr_path);
+    // Orden del wizard: 1=qr, 2=correo, 3=listo (replica orderView().step).
+    if (qrReady && emailReady) return 3;
+    if (qrReady) return 2;
     return 1;
   };
   const YEAR_MS = 365 * 24 * 3600 * 1000;
