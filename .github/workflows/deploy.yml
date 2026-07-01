@@ -20,7 +20,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 1) Backup del código actual del VM (rollback si el deploy falla).
+      # 1) Backup del código actual del VM (rollback si el deploy falla). Guarda el HASH
+      #    del package-lock para decidir después si hay que reinstalar dependencias.
       - name: Backup en el VM
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -37,6 +38,8 @@ jobs:
             mkdir -p "$BAK" && cp -r src package.json package-lock.json "$BAK/" 2>/dev/null || true
             echo "$BAK" > /home/sono/.last-deploy-bak
             echo "backup en $BAK"
+            # hash del lock ANTES del scp: si no cambia, no tocamos node_modules (paso 3).
+            sha256sum package-lock.json 2>/dev/null | awk '{print $1}' > /home/sono/.lock-hash-before || echo "" > /home/sono/.lock-hash-before
             # limpiar backups viejos (deja los 5 más nuevos)
             ls -dt /home/sono/.deploy-bak-* 2>/dev/null | tail -n +6 | xargs -r rm -rf
 
@@ -66,8 +69,30 @@ jobs:
             cd /home/sono/backend
             echo "==> sintaxis"
             node --check src/http-server.js
-            echo "==> npm install (solo prod)"
-            npm ci --omit=dev --no-audit --no-fund || npm install --omit=dev --no-audit --no-fund
+
+            # Instalar dependencias SOLO si package-lock cambió. La mayoría de deploys tocan
+            # solo src/ y NO deben rozar node_modules: `npm ci` borra node_modules entero, así
+            # que si falla a mitad (red/espacio) deja el backend sin dependencias -> 502. Antes
+            # se corría siempre; por eso este deploy tumbó el backend. Ahora, si el lock no
+            # cambió, ni tocamos node_modules -> cero riesgo en el caso común.
+            LOCK_BEFORE=$(cat /home/sono/.lock-hash-before 2>/dev/null || echo "")
+            LOCK_NOW=$(sha256sum package-lock.json 2>/dev/null | awk '{print $1}' || echo "")
+            if [ -d node_modules ] && [ -n "$LOCK_NOW" ] && [ "$LOCK_BEFORE" = "$LOCK_NOW" ]; then
+              echo "==> deps sin cambios (lock igual) y node_modules presente: no se toca"
+            else
+              # El lock cambió (o faltaba node_modules): SÍ hay que reinstalar. Preservamos el
+              # node_modules actual como respaldo; si npm ci lo deja roto, el healthcheck falla
+              # y lo restauramos abajo. `npm ci` es la vía correcta ante un lock nuevo.
+              echo "==> package-lock cambió o falta node_modules: reinstalando (npm ci)"
+              rm -rf node_modules.bak-deploy
+              [ -d node_modules ] && cp -al node_modules node_modules.bak-deploy 2>/dev/null || true
+              if ! npm ci --omit=dev --no-audit --no-fund --loglevel=error; then
+                echo "==> npm ci FALLÓ: restaurando node_modules previo"
+                rm -rf node_modules
+                [ -d node_modules.bak-deploy ] && mv node_modules.bak-deploy node_modules
+              fi
+            fi
+
             echo "==> reiniciar PM2"
             pm2 restart sono-backend --update-env
             echo "==> healthcheck (reintentos; rollback automático si nunca responde 200)"
@@ -79,10 +104,17 @@ jobs:
               [ "$code" = "200" ] && break
             done
             if [ "$code" != "200" ]; then
-              echo "==> HEALTHCHECK FALLÓ ($code): restaurando backup"
+              echo "==> HEALTHCHECK FALLÓ ($code): restaurando código y deps"
               BAK=$(cat /home/sono/.last-deploy-bak)
-              cp -r "$BAK/src" . && cp "$BAK/package.json" . 2>/dev/null || true
+              cp -r "$BAK/src" . && cp "$BAK/package.json" "$BAK/package-lock.json" . 2>/dev/null || true
+              # si guardamos el node_modules previo en esta corrida, restaurarlo también
+              if [ -d node_modules.bak-deploy ]; then
+                rm -rf node_modules && mv node_modules.bak-deploy node_modules
+                echo "==> node_modules previo restaurado"
+              fi
               pm2 restart sono-backend --update-env
               exit 1
             fi
+            # deploy OK: descartar el respaldo temporal de node_modules
+            rm -rf node_modules.bak-deploy 2>/dev/null || true
             echo "==> deploy OK"
