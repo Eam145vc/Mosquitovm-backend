@@ -146,15 +146,19 @@ export function registerSkydropxRoutes(app) {
 
     const origin = originAddress();
     const to = body.to || {};
+    const destPhone = to.phone || order.phone || config.SKYDROPX_ORIGIN_PHONE;
     const recipient = {
       name: to.name || order.business_name || 'Cliente',
       street: to.street || order.address || 'Sin dirección',
       postal: dest.postal,
       depto: dest.deptoApi || dest.depto,
       city: dest.cityApi || dest.city,
-      phone: to.phone || order.phone || config.SKYDROPX_ORIGIN_PHONE,
+      phone: destPhone,
       email: to.email || order.customer_email || config.SKYDROPX_ORIGIN_EMAIL,
-      reference: to.reference || `Orden ${order.id}`,
+      // El teléfono va también en la referencia porque la plantilla de guía de Skydropx
+      // NO imprime el campo `phone`, pero SÍ imprime `reference` (observaciones). Así el
+      // mensajero ve el celular del destinatario en la etiqueta para coordinar la entrega.
+      reference: to.reference || (destPhone ? `Tel ${destPhone}` : `Orden ${order.id}`),
     };
     const from = {
       name: config.SKYDROPX_ORIGIN_NAME,
