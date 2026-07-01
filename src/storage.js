@@ -931,6 +931,21 @@ export function listWaOutbox() {
   return db.prepare(`SELECT * FROM wa_outbox ORDER BY created_at ASC`).all();
 }
 
+export function requeueWa(id) {
+  openDb();
+  const info = db.prepare(
+    `UPDATE wa_outbox SET status = 'queued', last_error = NULL
+     WHERE id = ? AND status IN ('failed','canceled')`).run(id);
+  return info.changes > 0;
+}
+
+export function cancelWa(id) {
+  openDb();
+  const info = db.prepare(
+    `UPDATE wa_outbox SET status = 'canceled' WHERE id = ? AND status = 'queued'`).run(id);
+  return info.changes > 0;
+}
+
 // ── Settings + heartbeat del agente de WhatsApp (tabla key-value wa_meta) ─────
 const WA_SETTINGS_DEFAULTS = {
   enabled: true,

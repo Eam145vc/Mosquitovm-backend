@@ -48,6 +48,8 @@ import {
   saveInboxMail, listInbox, getInboxMail, markInboxSeen, deleteInboxMail, unseenInboxCount,
   markInboxReplied, saveOutboundMail,
   claimWaPending, markWaSent,
+  touchWaAgent, getWaSettings, setWaSettings, getWaAgentLastSeen, countWaByStatus,
+  listWaOutbox, requeueWa, cancelWa,
 } from './storage.js';
 import { decodeBrebImage, normalizeKey } from './breb-qr.js';
 import { parseEmail } from './parsers/index.js';
@@ -1952,9 +1954,12 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
 
   app.get('/wa/pending', async (req, reply) => {
     if (!waAuth(req, reply)) return;
+    touchWaAgent(); // heartbeat: el agente está vivo
+    const settings = getWaSettings();
+    if (!settings.enabled) return { messages: [], settings }; // OFF global
     const limit = Math.min(Number(req.query.limit) || 5, 50);
     const rows = claimWaPending(limit);
-    return { messages: rows.map((r) => ({ id: r.id, phone: r.phone, body: r.body })) };
+    return { messages: rows.map((r) => ({ id: r.id, phone: r.phone, body: r.body })), settings };
   });
 
   app.post('/wa/sent', async (req, reply) => {
@@ -1963,6 +1968,45 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     if (!id) return reply.code(400).send({ error: 'falta id' });
     markWaSent(id, Boolean(ok), error || null);
     return { ok: true };
+  });
+
+  // ── Panel admin de WhatsApp: cola, heartbeat del agente, config anti-ban ────
+  app.get('/admin/wa', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const agentLastSeen = getWaAgentLastSeen();
+    const online = agentLastSeen != null && Date.now() - agentLastSeen < 60 * 1000;
+    return {
+      counts: countWaByStatus(),
+      agent: { lastSeen: agentLastSeen, online },
+      settings: getWaSettings(),
+      messages: listWaOutbox().slice(-200).reverse(),
+    };
+  });
+
+  app.patch('/admin/wa/settings', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const b = req.body || {};
+    const allowed = ['enabled', 'active_hour_start', 'active_hour_end', 'daily_cap', 'min_delay_ms', 'max_delay_ms'];
+    const patch = {};
+    for (const k of allowed) if (k in b) patch[k] = b[k];
+    return { settings: setWaSettings(patch) };
+  });
+
+  app.post('/admin/wa/:id/retry', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    return { ok: requeueWa(req.params.id) };
+  });
+
+  app.post('/admin/wa/:id/cancel', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    return { ok: cancelWa(req.params.id) };
+  });
+
+  app.post('/admin/wa/enqueue', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const order = getOrder((req.body || {}).order);
+    if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
+    return { ok: enqueueWhatsApp(order, 'activacion') };
   });
 
   // Onboarding Fase 3: el frontend hace polling acá para (a) mostrar el OTP del banco y
