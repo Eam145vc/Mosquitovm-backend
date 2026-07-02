@@ -11,8 +11,9 @@
 //    El de UNA incluye envío; el de CUOTAS NO (suma $12.000 de envío en la 1ª cuota).
 //    Incluye el dispositivo Sonó + el PRIMER AÑO de servicio GRATIS. El cliente se LLEVA
 //    el aparato (es suyo). NO decir "pago único" (ya hay cuotas).
-//    PAGO CONTRAENTREGA: opcional en ambas formas, +$5.000 que paga AL RECIBIR. Se
-//    confirma por WhatsApp antes de despachar. Online: tarjeta, PSE, Bre-B o efectivo.
+//    PAGO CONTRAENTREGA: SOLO pagando de una ($199.000), +$5.000 que paga AL RECIBIR. Se
+//    confirma por WhatsApp antes de despachar. El plan en CUOTAS NO tiene contraentrega
+//    (se paga en línea). Online: tarjeta, PSE, Bre-B o efectivo.
 //      - La renovación del servicio: $17.000 mensuales O $199.000 al año (dos opciones reales),
 //        NO mencionar la renovación de forma proactiva. SOLO darla si el cliente
 //        PREGUNTA DIRECTO "¿cuánto pago el año que viene / la renovación?".
@@ -70,10 +71,11 @@ El envío va incluido en el pago de una; en cuotas son $12.000 aparte.
 No hay mensualidades. Nunca hay comisión por venta, 0% siempre.
 
 # FORMAS DE PAGO Y CONTRAENTREGA
-Puedes pagar en línea (tarjeta de crédito o débito, PSE, Bre-B o efectivo por corresponsal)
-o contraentrega. El pago contraentrega significa que pagas al recibir tu Sonó; tiene un
-recargo de $5.000 (en cualquiera de los dos planes) por el recaudo. Si eliges contraentrega,
-te confirmamos el pedido por WhatsApp antes de despacharlo. No se cobra nada por adelantado.
+Puedes pagar en línea (tarjeta de crédito o débito, PSE, Bre-B o efectivo por corresponsal).
+El pago contraentrega está disponible SOLO pagando de una ($199.000): pagas al recibir tu
+Sonó, con un recargo de $5.000 por el recaudo, y te confirmamos el pedido por WhatsApp antes
+de despacharlo; en ese caso no se cobra nada por adelantado. El plan en cuotas se paga en
+línea (la 1ª cuota + envío al comprar), NO tiene contraentrega.
 [INTERNO — sobre las cuotas, si preguntan cómo se pagan: la 1ª cuota se paga al comprar;
 las otras 2 se cobran en los meses siguientes. Si pagó con tarjeta se cobran solas; con
 otro medio (PSE, etc.) le llega un enlace de pago. Si no paga una cuota, el servicio se
