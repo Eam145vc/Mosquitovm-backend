@@ -75,6 +75,7 @@ import { handlePubSubPush } from './pubsub-handler.js';
 import { watchInbox } from './gmail-api.js';
 import { registerSupportRoutes } from './support/support-routes.js';
 import { registerSkydropxRoutes } from './skydropx-routes.js';
+import { searchCities, cityByDane } from './co-dane.js';
 import { publishToInstagram, getInstagramAccount, getInstagramMedia } from './instagram.js';
 import { generateCaption } from './ig-caption.js';
 import * as igScheduler from './ig-scheduler.js';
@@ -259,16 +260,28 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
   // Recargo de pago contraentrega (solo disponible en plan contado).
   const RECARGO_CONTRAENTREGA_CENTS = 500_000;
 
+  // Buscador PÚBLICO de ciudades para el checkout: mismo catálogo DANE que usa el
+  // admin al crear envíos (co-dane.js), así la ciudad del cliente queda escrita
+  // exactamente como la espera Skydropx. Sin auth: es data pública de DIVIPOLA.
+  app.get('/cities', async (req) => {
+    const q = String((req.query || {}).q || '').trim();
+    return { cities: q.length >= 2 ? searchCities(q, 8) : [] };
+  });
+
   // Paso 1: crea la orden con los datos de envío. Devuelve el monto (pesos) y la public key
   // para que el front renderice el formulario de tarjeta (Bricks) embebido.
   app.post('/checkout/create', async (req, reply) => {
     if (!config.hasEfipay && !config.hasStripe && !config.hasMp) {
       return reply.code(503).send({ error: 'checkout no configurado' });
     }
-    const { business_name, bank, address, city, phone, email, plan, delivery } = req.body || {};
+    const { business_name, bank, address, city, phone, email, plan, delivery, city_dane } = req.body || {};
     if (!business_name || !address || !phone) {
       return reply.code(400).send({ error: 'faltan nombre, direccion o telefono' });
     }
+    // Ciudad elegida del autocomplete: si el DANE es válido, la ciudad se guarda con el
+    // nombre canónico del catálogo (concuerda 1:1 con el sistema de envíos Skydropx).
+    // Si no llegó DANE (texto libre / página vieja cacheada), queda el texto tal cual.
+    const ciudadCatalogo = city_dane ? cityByDane(city_dane) : null;
     const planNorm = plan === 'cuotas' ? 'cuotas' : 'contado';
     const esContraentrega = delivery === 'contraentrega';
     // Contraentrega SOLO en contado (decisión jul-2026): un plan financiado no se
@@ -282,7 +295,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
       + (esContraentrega ? RECARGO_CONTRAENTREGA_CENTS : 0);
     const orderId = createOrder({ amountCents });            // external_reference = orderId
     updateOrder(orderId, {
-      business_name, bank: bank || null, address, city: city || null, phone,
+      business_name, bank: bank || null, address, phone,
+      city: ciudadCatalogo ? ciudadCatalogo.city : (city || null),
+      city_dane: ciudadCatalogo ? ciudadCatalogo.dane : null,
       customer_email: email || null,
       plan: planNorm,
       delivery: deliveryNorm,

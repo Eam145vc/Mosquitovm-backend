@@ -76,12 +76,17 @@ export function registerSkydropxRoutes(app) {
     if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
 
     const body = req.body || {};
-    // Resolver destino: prioridad al DANE explícito; si no, buscar por la ciudad de la orden.
+    // Resolver destino: prioridad al DANE explícito del panel; luego el DANE que el
+    // cliente eligió en el checkout (autocomplete, sin ambigüedad); al final, adivinar
+    // por el texto de la ciudad (órdenes viejas con ciudad a mano).
     let dest = null;
     if (body.toDane) {
       dest = cityByDane(body.toDane) ||
         { dane: body.toDane, depto: body.toDepto || '', city: body.toCity || '' };
-    } else if (order.city) {
+    } else if (order.city_dane) {
+      dest = cityByDane(order.city_dane);
+    }
+    if (!dest && order.city) {
       dest = searchCities(order.city, 1)[0] || null;
     }
     if (!dest || !dest.dane) {

@@ -228,6 +228,9 @@ export function openDb() {
     ['local_name', 'TEXT'],
     // Entrega: 'online' (paga ya por la pasarela) | 'contraentrega' (paga al recibir).
     ['delivery', 'TEXT'],
+    // Código DANE de la ciudad elegida en el checkout (autocomplete del catálogo
+    // co-dane): destino exacto para Skydropx sin adivinar por texto.
+    ['city_dane', 'TEXT'],
     // Soft-delete (archivar): la orden sale del panel pero NO se borra de la DB.
     // archived_at = epoch ms cuando se archivó (NULL = activa). prev_status = estado
     // que tenía antes de archivar, para poder restaurarla a su estado original.
@@ -556,7 +559,7 @@ export function updateOrder(id, patch) {
   openDb();
   const allowed = new Set([
     'account_id', 'status', 'wompi_reference', 'wompi_txn_id',
-    'business_name', 'bank', 'address', 'city', 'phone', 'customer_email',
+    'business_name', 'bank', 'address', 'city', 'city_dane', 'phone', 'customer_email',
     'qr_path', 'qr_mime', 'email_method', 'mp_plan_id',
     'mp_customer_id', 'mp_card_id', 'mp_payer_email', 'next_charge_at',
     // plan de cuotas
