@@ -121,6 +121,26 @@ export function registerSupportRoutes(app) {
       return { reply: ESCALATION_MESSAGE, escalated: true, msgId: botMsg.id, userMsgId: userMsg.id };
     }
 
+    // PRIMER mensaje: Valeria primero SE PRESENTA (mensaje corto) y la respuesta real
+    // llega ~10s después como un segundo mensaje (el widget muestra "escribiendo…" en
+    // el medio, vía la bandera `more`). Se siente como una persona que saluda y luego
+    // contesta. El prompt le prohíbe a Gemini saludar, así no se duplica el "¡Hola!".
+    if (userTurns <= 1) {
+      const saludo = '¡Hola! Soy Valeria, del equipo de Sonó 👋';
+      const helloMsg = addMessage(conv.id, 'bot', saludo);
+      setTimeout(() => {
+        try { addMessage(conv.id, 'bot', answer); }
+        catch (e) { logger.warn({ convId: conv.id, err: e.message }, 'no se pudo guardar la respuesta diferida'); }
+      }, 10_000);
+      await safeNotify({
+        title: `💬 ${conv.name || 'Cliente'}`,
+        body: text.slice(0, 100),
+        url: `/soporte-app/#/conv/${conv.id}`,
+        tag: `conv-${conv.id}`,
+      });
+      return { reply: saludo, escalated: false, msgId: helloMsg.id, userMsgId: userMsg.id, more: true };
+    }
+
     const botMsg = addMessage(conv.id, 'bot', answer);
     // Notificar TODOS los mensajes (aunque el bot ya respondió), para que el dueño esté
     // al tanto de cada conversación. Texto distinto al de escalada para diferenciar.
