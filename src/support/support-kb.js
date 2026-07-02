@@ -45,6 +45,15 @@ cuando la plata ya entró de verdad a tu cuenta.
 3. El altavoz lo anuncia en voz alta. Tú y tu personal escuchan el monto al instante.
 No necesitas abrir ninguna app para que funcione.
 
+# CÓMO SE VINCULA AL BANCO (si preguntan de qué manera se conecta)
+Sonó se vincula extrayendo los pagos directamente del sistema de pagos y notificaciones
+de Bancolombia o Nequi. Es una conexión segura que dejas lista UNA sola vez cuando recibes
+tu equipo, con una guía paso a paso. Sonó no toca tu dinero ni puede moverlo: solo detecta
+cada pago que entra para anunciarlo en voz alta.
+[INTERNO — SOLO si el cliente insiste con más detalle ("¿pero cómo exactamente?"): puedes
+decirle que se conecta directamente el correo donde le llegan las notificaciones del banco.
+NO des más detalle que ese (nada de Gmail, OAuth, IMAP, reenvío ni términos técnicos).]
+
 # BANCOS Y BILLETERAS
 - Hoy Sonó anuncia los pagos que te llegan a Bancolombia (App Bancolombia PERSONAS) y a Nequi.
 - ⚠️ IMPORTANTE: NO funciona con Bancolombia NEGOCIOS. Solo con cuentas de PERSONAS
