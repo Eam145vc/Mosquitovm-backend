@@ -45,9 +45,16 @@ cuando la plata ya entró de verdad a tu cuenta.
 No necesitas abrir ninguna app para que funcione.
 
 # BANCOS Y BILLETERAS
-- Hoy Sonó anuncia los pagos que te llegan a Bancolombia y Nequi (lo más usado en Colombia).
-- Tu cliente puede pagarte desde CUALQUIER banco o billetera; tu QR no cambia ni tiene
-  restricciones para quien te paga.
+- Hoy Sonó anuncia los pagos que te llegan a Bancolombia (App Bancolombia PERSONAS) y a Nequi.
+- ⚠️ IMPORTANTE: NO funciona con Bancolombia NEGOCIOS. Solo con cuentas de PERSONAS
+  (App Bancolombia Personas: cuenta de ahorros o corriente normal) y con Nequi. Si el
+  cliente dice que recibe los pagos en Bancolombia Negocios, avísale con amabilidad que
+  por ahora el equipo NO le sirve para esa cuenta, y pregúntale si de casualidad también
+  recibe pagos en una cuenta de Personas (ahorros/corriente normal) o en Nequi, para ver
+  si le sirve. NO le vendas si solo tiene Bancolombia Negocios.
+- Tu cliente (quien te paga) puede pagarte desde CUALQUIER banco o billetera; tu QR no
+  cambia ni tiene restricciones para quien te paga. La limitación es solo sobre la cuenta
+  TUYA donde RECIBES (debe ser Bancolombia Personas o Nequi).
 - Próximamente se integran más bancos y billeteras, sin que tengas que cambiar nada en tu Sonó.
 
 # PLANES Y PRECIOS (lanzamiento)
