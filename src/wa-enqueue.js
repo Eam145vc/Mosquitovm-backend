@@ -20,6 +20,12 @@ function linkFor(order) {
   return `${base}/activar-pro?order=${order.id}`;
 }
 
+// Link para conectar el correo (paso diferido: se hace cuando el cliente RECIBE el
+// altavoz, no en el onboarding — pedir el correo antes de entregar generaba desconfianza).
+function emailLinkFor(order) {
+  return `${linkFor(order)}&correo=1`;
+}
+
 // Variantes por kind. La elección es determinista por hash del order.id: distintos
 // clientes reciben textos distintos (baja el patrón "mensaje idéntico masivo"), pero
 // el MISMO cliente siempre ve el mismo texto (idempotencia visual en reintentos).
@@ -35,41 +41,44 @@ export function buildWaBody(order, kind) {
   const hola = nombre ? `Hola ${nombre}` : 'Hola';
   if (kind === 'activacion') {
     return pickVariant(order.id, [
-      `${hola} 👋 Soy de Sonó. ¡Gracias por tu compra! Para que tu Sonó empiece a anunciar tus ventas falta un paso (2 min, desde el celular): ${link}`,
-      `${hola}, gracias por tu compra en Sonó 🎉 Solo queda conectar tu Sonó con tu banco para que escuche cada pago. Entra aquí cuando puedas: ${link}`,
+      `${hola} 👋 Soy de Sonó. ¡Gracias por tu compra! Para enviarte tu Sonó solo falta que subas tu QR de Bre-B (2 min, desde el celular): ${link}`,
+      `${hola}, gracias por tu compra en Sonó 🎉 Solo nos falta tu QR de Bre-B: lo imprimimos y te lo enviamos junto a tu altavoz. Súbelo aquí cuando puedas: ${link}`,
     ]);
   }
   if (kind === 'recordatorio_3h') {
     return pickVariant(order.id, [
-      `${hola}, vi que tu Sonó quedó a medio conectar. En 2 minutos lo dejas listo para que anuncie tus ventas: ${link}`,
-      `${hola} 🙂 Te recuerdo el último paso para activar tu Sonó (toma 2 min): ${link}`,
+      `${hola}, vi que falta subir tu QR de Bre-B. Sin él no podemos despachar tu Sonó (toma 2 min): ${link}`,
+      `${hola} 🙂 Te recuerdo subir tu QR de Bre-B para poder enviarte tu Sonó (2 min): ${link}`,
     ]);
   }
   if (kind === 'envio') {
     const sh = getShipmentByOrder(order.id);
     const guia = sh?.tracking || '';
     const carrier = sh?.carrier || 'la transportadora';
+    // Al despachar se entrega también el link para conectar el correo cuando le llegue
+    // el altavoz (el onboarding solo pidió el QR; este es el paso que quedó diferido).
+    const conectar = `\n\nCuando te llegue, conecta el correo donde te avisan tus pagos (2 min) y tu Sonó empieza a anunciar cada venta: ${emailLinkFor(order)}`;
     if (sh?.tracking_url) {
       return pickVariant(order.id, [
-        `${hola}, tu Sonó ya va en camino 📦 Guía: ${guia} (${carrier}). Rástrealo aquí: ${sh.tracking_url}`,
-        `${hola} 🚚 Tu Sonó fue despachado. Guía ${guia} por ${carrier}. Sigue tu envío: ${sh.tracking_url}`,
+        `${hola}, tu Sonó ya va en camino 📦 Guía: ${guia} (${carrier}). Rástrealo aquí: ${sh.tracking_url}${conectar}`,
+        `${hola} 🚚 Tu Sonó fue despachado. Guía ${guia} por ${carrier}. Sigue tu envío: ${sh.tracking_url}${conectar}`,
       ]);
     }
     if (guia) {
       return pickVariant(order.id, [
-        `${hola}, tu Sonó ya va en camino 📦 Guía: ${guia} por ${carrier}. Rastréalo con ese número en la web de ${carrier}.`,
-        `${hola} 🚚 Tu Sonó fue despachado. Guía ${guia} (${carrier}). Rastrea con ese número en ${carrier}.`,
+        `${hola}, tu Sonó ya va en camino 📦 Guía: ${guia} por ${carrier}. Rastréalo con ese número en la web de ${carrier}.${conectar}`,
+        `${hola} 🚚 Tu Sonó fue despachado. Guía ${guia} (${carrier}). Rastrea con ese número en ${carrier}.${conectar}`,
       ]);
     }
     return pickVariant(order.id, [
-      `${hola}, tu Sonó ya fue despachado 📦 Pronto te llega.`,
-      `${hola} 🚚 Tu Sonó va en camino, pronto lo recibes.`,
+      `${hola}, tu Sonó ya fue despachado 📦 Pronto te llega.${conectar}`,
+      `${hola} 🚚 Tu Sonó va en camino, pronto lo recibes.${conectar}`,
     ]);
   }
   // recordatorio_24h
   return pickVariant(order.id, [
-    `${hola}, tu Sonó todavía está sin conectar. Cuando quieras lo activas aquí y empieza a anunciar tus pagos: ${link}`,
-    `${hola} 👋 Aún puedes terminar de activar tu Sonó en 2 minutos: ${link}. Si necesitas ayuda, escríbeme por aquí.`,
+    `${hola}, tu Sonó sigue esperando tu QR de Bre-B para poder despacharse. Súbelo aquí y lo enviamos: ${link}`,
+    `${hola} 👋 Aún falta subir tu QR de Bre-B para enviarte tu Sonó (2 min): ${link}. Si necesitas ayuda, escríbeme por aquí.`,
   ]);
 }
 

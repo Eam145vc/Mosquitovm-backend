@@ -261,20 +261,16 @@ async function main() {
   setInterval(reconcileEfipayJob, 5 * 60 * 1000);   // y cada 5 minutos
 
   // ── Recordatorios de onboarding por WhatsApp (3h / 24h) ────────────────────────
-  // stepOf: replica orderView().step. confirmedAt: momento del pago, ESTABLE (no usar
+  // stepOf: 3 = onboarding completo. confirmedAt: momento del pago, ESTABLE (no usar
   // updated_at: updateOrder lo pisa en cada avance del onboarding —conectar correo,
   // subir qr_path, etc.— y eso reseteaba la "edad desde el pago" en cada paso, matando
   // el recordatorio para quien más lo necesita: el que empezó y no terminó). Se deriva
   // de next_charge_at (se setea SOLO al aprobar el pago / renovar, 365 días a futuro).
   const stepOf = (o) => {
-    const acc = o.account_id ? getAccount(o.account_id) : null;
-    const hasPay = o.account_id ? paymentsFor(o.account_id, 1).length > 0 : false;
-    const emailReady = Boolean(acc && (acc.change_confirmed || hasPay));
-    const qrReady = Boolean(o.qr_path);
-    // Orden del wizard: 1=qr, 2=correo, 3=listo (replica orderView().step).
-    if (qrReady && emailReady) return 3;
-    if (qrReady) return 2;
-    return 1;
+    // El onboarding post-compra es SOLO subir el QR (sin él no se despacha). El correo
+    // se conecta cuando el cliente RECIBE el altavoz (link &correo=1 en el WhatsApp de
+    // envío), así que estos recordatorios pre-despacho no lo persiguen.
+    return o.qr_path ? 3 : 1;
   };
   const YEAR_MS = 365 * 24 * 3600 * 1000;
   const confirmedAt = (o) => {

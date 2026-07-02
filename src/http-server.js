@@ -104,7 +104,10 @@ const MIME_EXT = {
 
 /** Vista publica de una orden (sin datos sensibles), con el paso actual del wizard.
  *  El envio se recoge ANTES de pagar (checkout), asi que el post-pago son 2 pasos:
- *  1=qr, 2=correo, 3=listo. */
+ *  1=qr, 2=correo, 3=listo.
+ *  OJO: /activar-pro trata step>=2 como onboarding COMPLETO (solo pide el QR; el correo
+ *  se conecta al recibir el altavoz, vía &correo=1). El flujo de 2 pasos completo solo
+ *  lo usa /activar (la ruta que revisa Google para el OAuth de Gmail). */
 function orderView(o) {
   // El correo cuenta como LISTO solo si hay PRUEBA de que el reenvío funciona: o el banco
   // confirmó el cambio (change_confirmed), o ya llegó al menos un pago por esa cuenta.

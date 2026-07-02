@@ -39,9 +39,9 @@ export async function sendActivationEmail(order) {
     '',
     '¡Gracias por tu compra! 🎉 Tu Sonó ya casi está listo para empezar a anunciar tus ventas.',
     '',
-    'Solo falta un paso: conectar tu Sonó con tu banco para que escuche cada pago. Toma 2 minutos, todo desde tu celular y sin contraseñas.',
+    'Solo falta un paso: subir tu QR de Bre-B. Lo imprimimos y te lo enviamos junto a tu altavoz, listo para pegar. Toma 2 minutos, desde tu celular.',
     '',
-    'Entra aquí para terminar de conectarlo:',
+    'Entra aquí para subirlo:',
     link,
     '',
     'Puedes abrirlo cuando quieras. Si ya lo completaste, ignora este correo.',
@@ -65,9 +65,9 @@ export async function sendActivationEmail(order) {
         <tr><td style="padding:28px;">
           <p style="margin:0 0 16px;font-size:16px;line-height:1.5;">${saludo}</p>
           <p style="margin:0 0 16px;font-size:16px;line-height:1.6;">¡Gracias por tu compra! 🎉 Tu Sonó ya casi está listo para empezar a anunciar tus ventas.</p>
-          <p style="margin:0 0 24px;font-size:16px;line-height:1.6;">Solo falta un paso: <strong>conectar tu Sonó con tu banco</strong> para que escuche cada pago. Toma 2 minutos, todo desde tu celular y sin contraseñas.</p>
+          <p style="margin:0 0 24px;font-size:16px;line-height:1.6;">Solo falta un paso: <strong>subir tu QR de Bre-B</strong>. Lo imprimimos y te lo enviamos junto a tu altavoz, listo para pegar. Toma 2 minutos, desde tu celular.</p>
           <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 24px;"><tr><td style="border-radius:12px;background:#18a848;">
-            <a href="${link}" style="display:inline-block;padding:14px 28px;font-size:16px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:12px;">Conectar mi Sonó &rarr;</a>
+            <a href="${link}" style="display:inline-block;padding:14px 28px;font-size:16px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:12px;">Subir mi QR &rarr;</a>
           </td></tr></table>
           <p style="margin:0 0 8px;font-size:13px;line-height:1.5;color:#4a5168;">Puedes abrirlo cuando quieras. Si ya lo completaste, ignora este correo.</p>
           <p style="margin:0;font-size:13px;line-height:1.5;color:#4a5168;">¿Dudas? Respóndenos a este correo o escríbenos por el chat de <a href="https://sono.lat" style="color:#0d8a36;">sono.lat</a>.</p>
@@ -88,7 +88,7 @@ export async function sendActivationEmail(order) {
         fromLocal: 'hola',
         fromName: 'Sonó',
         to,
-        subject: 'Últimos pasos para conectar tu Sonó',
+        subject: 'Sube tu QR para enviarte tu Sonó',
         text,
         html,
       }),
