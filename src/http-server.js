@@ -192,17 +192,22 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
   //  - Cuenta con 2+ devices (varios locales) → match por la llave Bre-B del pago:
   //      match → el speaker de ese local; sin match → null (NO suena, para no confundir).
   // Devuelve { speakerId } si hay que anunciar, o { speakerId: null, unrouted: true } si no.
+  // `deviceKey` = llave Bre-B registrada del local que sonó (del QR subido): sirve para
+  // atribuir la llave a pagos cuyo correo no la trae (Nequi/Daviplata no la incluyen).
   const pickSpeaker = (account, payment) => {
     const devices = listDevicesByAccount(account.id);
     if (devices.length <= 1) {
       // un solo local: suena en su speaker (el de la cuenta o el único device).
-      return { speakerId: account.speaker_id || (devices[0] && devices[0].spkr_id) || null };
+      return {
+        speakerId: account.speaker_id || (devices[0] && devices[0].spkr_id) || null,
+        deviceKey: (devices[0] && devices[0].breb_key) || null,
+      };
     }
     // multipunto: rutear por llave.
     const key = payment.brebKey ? normalizeKey(payment.brebKey) : null;
     if (key) {
       const dev = findDeviceByKey(account.id, key);
-      if (dev) return { speakerId: dev.spkr_id, localName: dev.local_name };
+      if (dev) return { speakerId: dev.spkr_id, localName: dev.local_name, deviceKey: dev.breb_key };
     }
     // sin llave parseable o llave que no coincide con ningún local → NO suena + aviso.
     return { speakerId: null, unrouted: true, key };
@@ -1987,6 +1992,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
         } else {
           onPaymentDetected({
             ...result,
+            // Nequi/Daviplata no traen llave en el correo: heredar la del QR del local que sonó.
+            brebKey: result.brebKey || route.deviceKey || null,
             accountId: account.id,
             speakerId: route.speakerId,
             alias,
@@ -2247,7 +2254,12 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
             // usuario los mostrará desde el historial cuando exista.
             logger.warn({ alias, accountId: account.id, amount: result.amount, key: route.key }, 'multipunto: pago NO ruteado (llave sin local), no se anuncia');
           } else {
-            onPaymentDetected({ ...result, accountId: account.id, speakerId: route.speakerId, alias, from, subject, _lat: lat });
+            onPaymentDetected({
+              ...result,
+              // Nequi/Daviplata no traen llave en el correo: heredar la del QR del local que sonó.
+              brebKey: result.brebKey || route.deviceKey || null,
+              accountId: account.id, speakerId: route.speakerId, alias, from, subject, _lat: lat,
+            });
           }
         }
       } else {
