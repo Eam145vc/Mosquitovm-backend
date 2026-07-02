@@ -45,8 +45,10 @@ function codBlockFor(order) {
   const esCodSinPagar = order.delivery === 'contraentrega' && !order.wompi_txn_id;
   if (!esCodSinPagar || !order.amount_cents) return '';
   const producto = order.amount_cents - RECARGO_COD_CENTS;
+  // En cuotas lo que se recauda al recibir es la 1ª cuota + el envío (no el producto entero).
+  const etiqueta = order.plan === 'cuotas' ? '1ª cuota + envío' : 'Producto';
   const desglose = producto > 0
-    ? `\n• Producto: ${moneyCo(producto)}\n• Recargo contraentrega: ${moneyCo(RECARGO_COD_CENTS)}`
+    ? `\n• ${etiqueta}: ${moneyCo(producto)}\n• Recargo contraentrega: ${moneyCo(RECARGO_COD_CENTS)}`
     : '';
   return `\n\n💵 Pagas al recibir: ${moneyCo(order.amount_cents)} (en efectivo al mensajero)${desglose}`;
 }

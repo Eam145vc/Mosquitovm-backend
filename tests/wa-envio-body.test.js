@@ -47,6 +47,17 @@ test('envio contraentrega sin pagar => incluye el valor a pagar discriminado', (
   assert.match(body, /Recargo contraentrega: \$5\.000/);
 });
 
+test('envio contraentrega en cuotas => desglosa "1ª cuota + envío" (no "Producto")', () => {
+  createShipmentRow({ orderId: 'E9', tracking: 'G9', carrier: 'Envía' });
+  const body = buildWaBody(
+    { id: 'E9', business_name: 'X', phone: '3001112233', delivery: 'contraentrega', plan: 'cuotas', amount_cents: 8_600_000 },
+    'envio',
+  );
+  assert.match(body, /Pagas al recibir: \$86\.000/);
+  assert.match(body, /1ª cuota \+ envío: \$81\.000/);
+  assert.doesNotMatch(body, /Producto:/);
+});
+
 test('envio contraentrega YA cobrada online (wompi_txn_id) => NO pide plata', () => {
   createShipmentRow({ orderId: 'E7', tracking: 'G7', carrier: 'Envía' });
   const body = buildWaBody(

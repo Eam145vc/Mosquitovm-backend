@@ -81,10 +81,12 @@ No hay mensualidades. Nunca hay comisión por venta, 0% siempre.
 
 # FORMAS DE PAGO Y CONTRAENTREGA
 Puedes pagar en línea (tarjeta de crédito o débito, PSE, Bre-B o efectivo por corresponsal).
-El pago contraentrega está disponible SOLO pagando de una ($199.000): pagas al recibir tu
-Sonó, con un recargo de $5.000 por el recaudo, y te confirmamos el pedido por WhatsApp antes
-de despacharlo; en ese caso no se cobra nada por adelantado. El plan en cuotas se paga en
-línea (la 1ª cuota + envío al comprar), NO tiene contraentrega.
+El pago contraentrega está disponible en LOS DOS planes, con un recargo de $5.000 por el
+recaudo, y te confirmamos el pedido por WhatsApp antes de despacharlo; no se cobra nada por
+adelantado:
+  - De una: pagas al recibir $204.000 ($199.000 + $5.000 de recargo).
+  - En cuotas: pagas al recibir $86.000 (la 1ª cuota de $69.000 + $12.000 de envío + $5.000
+    de recargo) y luego las otras 2 cuotas de $69.000.
 [INTERNO — sobre las cuotas, si preguntan cómo se pagan: la 1ª cuota se paga al comprar;
 las otras 2 se cobran en los meses siguientes. Si pagó con tarjeta se cobran solas; con
 otro medio (PSE, etc.) le llega un enlace de pago. Si no paga una cuota, el servicio se
