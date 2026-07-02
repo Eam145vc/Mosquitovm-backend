@@ -35,3 +35,32 @@ test('enqueueEnvioIfReady sin teléfono => false', () => {
   createShipmentRow({ orderId: 'E5', tracking: 'G5', carrier: 'Envía' });
   assert.equal(enqueueEnvioIfReady({ id: 'E5', phone: '', business_name: 'X' }), false);
 });
+
+test('envio contraentrega sin pagar => incluye el valor a pagar discriminado', () => {
+  createShipmentRow({ orderId: 'E6', tracking: 'G6', carrier: 'Envía' });
+  const body = buildWaBody(
+    { id: 'E6', business_name: 'X', phone: '3001112233', delivery: 'contraentrega', amount_cents: 20_400_000 },
+    'envio',
+  );
+  assert.match(body, /Pagas al recibir: \$204\.000/);
+  assert.match(body, /Producto: \$199\.000/);
+  assert.match(body, /Recargo contraentrega: \$5\.000/);
+});
+
+test('envio contraentrega YA cobrada online (wompi_txn_id) => NO pide plata', () => {
+  createShipmentRow({ orderId: 'E7', tracking: 'G7', carrier: 'Envía' });
+  const body = buildWaBody(
+    { id: 'E7', business_name: 'X', phone: '3001112233', delivery: 'contraentrega', amount_cents: 20_400_000, wompi_txn_id: 'efi-123' },
+    'envio',
+  );
+  assert.doesNotMatch(body, /Pagas al recibir/);
+});
+
+test('envio online => NO incluye bloque de pago', () => {
+  createShipmentRow({ orderId: 'E8', tracking: 'G8', carrier: 'Envía' });
+  const body = buildWaBody(
+    { id: 'E8', business_name: 'X', phone: '3001112233', delivery: 'online', amount_cents: 19_900_000, wompi_txn_id: 'efi-9' },
+    'envio',
+  );
+  assert.doesNotMatch(body, /Pagas al recibir/);
+});

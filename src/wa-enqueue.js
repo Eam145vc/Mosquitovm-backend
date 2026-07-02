@@ -32,6 +32,25 @@ function emailLinkFor(order) {
   return `${linkFor(order)}&correo=1`;
 }
 
+const moneyCo = (cents) => `$${Math.round(cents / 100).toLocaleString('es-CO')}`;
+
+// Recargo de pago contraentrega (espejo de RECARGO_CONTRAENTREGA_CENTS en http-server.js).
+// En órdenes COD el amount_cents YA lo incluye, así que acá solo se discrimina.
+const RECARGO_COD_CENTS = 500_000;
+
+// Bloque "cuánto pagas al recibir" para el WhatsApp de envío de órdenes contraentrega.
+// wompi_txn_id presente = ya se cobró online (aunque la orden sea delivery contraentrega),
+// en ese caso no se pide plata. Devuelve '' si no aplica.
+function codBlockFor(order) {
+  const esCodSinPagar = order.delivery === 'contraentrega' && !order.wompi_txn_id;
+  if (!esCodSinPagar || !order.amount_cents) return '';
+  const producto = order.amount_cents - RECARGO_COD_CENTS;
+  const desglose = producto > 0
+    ? `\n• Producto: ${moneyCo(producto)}\n• Recargo contraentrega: ${moneyCo(RECARGO_COD_CENTS)}`
+    : '';
+  return `\n\n💵 Pagas al recibir: ${moneyCo(order.amount_cents)} (en efectivo al mensajero)${desglose}`;
+}
+
 // Variantes por kind. La elección es determinista por hash del order.id: distintos
 // clientes reciben textos distintos (baja el patrón "mensaje idéntico masivo"), pero
 // el MISMO cliente siempre ve el mismo texto (idempotencia visual en reintentos).
@@ -63,22 +82,24 @@ export function buildWaBody(order, kind) {
     const carrier = sh?.carrier || 'la transportadora';
     // Al despachar se entrega también el link para conectar el correo cuando le llegue
     // el altavoz (el onboarding solo pidió el QR; este es el paso que quedó diferido).
+    // Si es contraentrega sin pagar, va primero cuánto debe pagar al mensajero (discriminado).
+    const cod = codBlockFor(order);
     const conectar = `\n\nCuando te llegue, conecta el correo donde te avisan tus pagos (2 min) y tu Sonó empieza a anunciar cada venta: ${emailLinkFor(order)}`;
     if (sh?.tracking_url) {
       return pickVariant(order.id, [
-        `${hola}, tu Sonó ya va en camino 📦 Guía: ${guia} (${carrier}). Rástrealo aquí: ${sh.tracking_url}${conectar}`,
-        `${hola} 🚚 Tu Sonó fue despachado. Guía ${guia} por ${carrier}. Sigue tu envío: ${sh.tracking_url}${conectar}`,
+        `${hola}, tu Sonó ya va en camino 📦 Guía: ${guia} (${carrier}). Rástrealo aquí: ${sh.tracking_url}${cod}${conectar}`,
+        `${hola} 🚚 Tu Sonó fue despachado. Guía ${guia} por ${carrier}. Sigue tu envío: ${sh.tracking_url}${cod}${conectar}`,
       ]);
     }
     if (guia) {
       return pickVariant(order.id, [
-        `${hola}, tu Sonó ya va en camino 📦 Guía: ${guia} por ${carrier}. Rastréalo con ese número en la web de ${carrier}.${conectar}`,
-        `${hola} 🚚 Tu Sonó fue despachado. Guía ${guia} (${carrier}). Rastrea con ese número en ${carrier}.${conectar}`,
+        `${hola}, tu Sonó ya va en camino 📦 Guía: ${guia} por ${carrier}. Rastréalo con ese número en la web de ${carrier}.${cod}${conectar}`,
+        `${hola} 🚚 Tu Sonó fue despachado. Guía ${guia} (${carrier}). Rastrea con ese número en ${carrier}.${cod}${conectar}`,
       ]);
     }
     return pickVariant(order.id, [
-      `${hola}, tu Sonó ya fue despachado 📦 Pronto te llega.${conectar}`,
-      `${hola} 🚚 Tu Sonó va en camino, pronto lo recibes.${conectar}`,
+      `${hola}, tu Sonó ya fue despachado 📦 Pronto te llega.${cod}${conectar}`,
+      `${hola} 🚚 Tu Sonó va en camino, pronto lo recibes.${cod}${conectar}`,
     ]);
   }
   // recordatorio_24h
