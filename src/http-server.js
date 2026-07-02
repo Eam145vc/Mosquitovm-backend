@@ -248,7 +248,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
   // contado: $199.000 (envío incluido). cuotas: 1ª cuota $69.000 + envío $12.000 = $81.000
   // (el plan en cuotas NO incluye envío gratis). anual = compat viejo → contado.
   const PLAN_PRICES_CENTS = { contado: 19_900_000, cuotas: 8_100_000, anual: 19_900_000, test: 500_000 };
-  // Recargo de pago contraentrega (se suma al monto en AMBOS planes).
+  // Recargo de pago contraentrega (solo disponible en plan contado).
   const RECARGO_CONTRAENTREGA_CENTS = 500_000;
 
   // Paso 1: crea la orden con los datos de envío. Devuelve el monto (pesos) y la public key
@@ -263,8 +263,13 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     }
     const planNorm = plan === 'cuotas' ? 'cuotas' : 'contado';
     const esContraentrega = delivery === 'contraentrega';
+    // Contraentrega SOLO en contado (decisión jul-2026): un plan financiado no se
+    // despacha sin cobro previo. El front nuevo ya no la ofrece en cuotas; este 400
+    // frena clientes con la página vieja cacheada.
+    if (esContraentrega && planNorm === 'cuotas') {
+      return reply.code(400).send({ error: 'El pago contraentrega solo está disponible pagando de una (contado).' });
+    }
     const deliveryNorm = esContraentrega ? 'contraentrega' : 'online';
-    // El recargo de contraentrega ($5.000) se suma en ambos planes.
     const amountCents = (PLAN_PRICES_CENTS[plan] ?? PLAN_PRICES_CENTS.contado)
       + (esContraentrega ? RECARGO_CONTRAENTREGA_CENTS : 0);
     const orderId = createOrder({ amountCents });            // external_reference = orderId
