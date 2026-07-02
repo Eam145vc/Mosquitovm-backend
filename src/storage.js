@@ -912,6 +912,24 @@ export function enqueueWa({ orderId, phone, kind, body }) {
   return info.changes > 0; // 0 = ya existía ese (order_id, kind)
 }
 
+/** ¿Ya hay un WhatsApp del mismo tipo al MISMO teléfono (de OTRA orden) reciente?
+ *  Un cliente con varias órdenes (ej: reintentó el checkout y quedó duplicada) recibía
+ *  el mismo recordatorio una vez por orden. Solo bloquean queued/sending/sent:
+ *  failed/canceled no cuentan (se puede reintentar). */
+export function hasRecentWa({ phone, kind, excludeOrderId, sinceMs }) {
+  openDb();
+  const row = db
+    .prepare(
+      `SELECT 1 FROM wa_outbox
+       WHERE phone = ? AND kind = ? AND order_id != ?
+         AND status IN ('queued', 'sending', 'sent')
+         AND created_at >= ?
+       LIMIT 1`
+    )
+    .get(phone, kind, excludeOrderId, sinceMs);
+  return Boolean(row);
+}
+
 /** Igual que enqueueWa pero FUERZA el reenvío: si ya existe una fila para ese
  *  (order_id, kind) —sent/failed/canceled/queued— la resetea a 'queued' con el
  *  body/phone nuevos en vez de ignorarla. Para el botón de envío manual del admin. */

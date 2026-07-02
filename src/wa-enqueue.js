@@ -4,7 +4,13 @@
 
 import { config } from './config.js';
 import { logger } from './logger.js';
-import { enqueueWa, enqueueWaForce, getShipmentByOrder } from './storage.js';
+import { enqueueWa, enqueueWaForce, getShipmentByOrder, hasRecentWa } from './storage.js';
+
+// Mensajes de onboarding: son genéricos ("sube tu QR"), así que si el MISMO teléfono ya
+// recibió ese tipo hace poco por OTRA orden (cliente que reintentó el checkout y quedó
+// con órdenes duplicadas), no se repite. 'envio' NO dedupea: cada orden lleva su guía.
+const PHONE_DEDUPE_KINDS = new Set(['activacion', 'recordatorio_3h', 'recordatorio_24h']);
+const PHONE_DEDUPE_WINDOW_MS = 48 * 3600 * 1000;
 
 /** Normaliza a formato WhatsApp COL (57 + celular). Política: siempre intentar. */
 export function normalizePhoneCO(raw) {
@@ -82,12 +88,20 @@ export function buildWaBody(order, kind) {
   ]);
 }
 
-/** Normaliza el teléfono, arma el texto y encola. Idempotente por (order.id, kind). */
+/** Normaliza el teléfono, arma el texto y encola. Idempotente por (order.id, kind)
+ *  y, en los kinds de onboarding, también por (teléfono, kind) en ventana de 48h. */
 export function enqueueWhatsApp(order, kind) {
   if (!order) return false;
   const phone = normalizePhoneCO(order.phone);
   if (!phone) {
     logger.warn({ orderId: order.id }, 'wa: orden sin teléfono válido, no se encola WhatsApp');
+    return false;
+  }
+  if (
+    PHONE_DEDUPE_KINDS.has(kind) &&
+    hasRecentWa({ phone, kind, excludeOrderId: order.id, sinceMs: Date.now() - PHONE_DEDUPE_WINDOW_MS })
+  ) {
+    logger.info({ orderId: order.id, kind, phone }, 'wa: mismo mensaje ya enviado a este teléfono por otra orden, no se duplica');
     return false;
   }
   const body = buildWaBody(order, kind);
