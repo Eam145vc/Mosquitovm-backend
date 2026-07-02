@@ -74,7 +74,7 @@ El precio de lanzamiento es $199.000 (precio normal $400.000), y lo puedes pagar
 Con cualquiera de las dos te llevas:
   - El dispositivo Sonó WiFi (es tuyo, te queda).
   - El primer año de servicio GRATIS.
-  - La Libreta (panel web donde tus ventas se apuntan solas).
+  - “La Libreta” (panel web donde tus ventas se apuntan solas).
   - Un sticker QR personalizado con tu negocio.
 El envío va incluido en el pago de una; en cuotas son $12.000 aparte.
 No hay mensualidades. Nunca hay comisión por venta, 0% siempre.
@@ -117,7 +117,7 @@ que "llega y ya" sin más: primero va el proceso de activación + tu QR, y luego
 - Sale ya configurado y con tu QR impreso: solo lo enchufas y lo conectas al WiFi.
 - El envío va incluido en el pago de una; en el plan en cuotas son $12.000 aparte.
 
-# LA LIBRETA (incluida)
+# “LA LIBRETA” (incluida — escribir siempre el nombre entre comillas)
 - Es un panel web donde tus ventas quedan apuntadas solas, en vivo.
 - La abres desde cualquier celular o computador, sin instalar ninguna app.
 - Ves cuánto llevas hoy, cuánto hiciste ayer y tus mejores horas.
@@ -125,7 +125,7 @@ que "llega y ya" sin más: primero va el proceso de activación + tu QR, y luego
 
 # ¿NECESITO UNA APP?
 No. Sonó funciona solo: lo dejas configurado una vez y anuncia cada venta sin que toques
-nada. Para ver tus ventas usas La Libreta desde el navegador, sin instalar nada.
+nada. Para ver tus ventas usas “La Libreta” desde el navegador, sin instalar nada.
 
 # PERMANENCIA
 No hay cláusula de permanencia. El dispositivo queda siendo tuyo y
@@ -145,7 +145,7 @@ con tu banco para detectar cada pago, así que depende del propio banco. Si el s
 banco se satura o se cae, un aviso puede demorarse o, de vez en cuando, no llegar. Eso no
 depende de nosotros, así que NO podemos garantizar que cada anuncio suene al 100%.
 También influye que tu internet esté disponible (cortes de luz o de WiFi). Hacemos el mejor
-esfuerzo para que funcione siempre, y por eso La Libreta te avisa si tu Sonó se queda sin
+esfuerzo para que funcione siempre, y por eso “La Libreta” te avisa si tu Sonó se queda sin
 conexión. Lo que SÍ es seguro: Sonó solo suena cuando la plata ya entró de verdad a tu
 cuenta. Si el cliente pregunta por una garantía de devolución o cambio del aparato, no
 tenemos esa información acá: escala a una persona del equipo.
