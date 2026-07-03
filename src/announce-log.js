@@ -2,12 +2,14 @@
 // /demo (el "altavoz web") para reproducir el anuncio cuando se detecta un pago real,
 // y así demostrar el uso de los datos en el video de verificación.
 
-const buf = []; // { accountId, amount, bank, at }
+const buf = []; // { accountId, amount, bank, localName, at }
 const MAX = 80;
 
-export function record({ accountId, amount, bank }) {
+// localName/at opcionales para no romper a los llamadores viejos (/demo solo lee
+// accountId/amount/bank/at). `at` viene de announcePayment: MISMO timestamp que la DB.
+export function record({ accountId, amount, bank, localName = null, at = Date.now() }) {
   if (!accountId) return;
-  buf.push({ accountId, amount, bank: bank || 'unknown', at: Date.now() });
+  buf.push({ accountId, amount, bank: bank || 'unknown', localName, at });
   if (buf.length > MAX) buf.shift();
 }
 

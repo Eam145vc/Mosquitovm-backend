@@ -5,7 +5,7 @@
 
 import { ImapWatcher } from './imap-watcher.js';
 import { GmailPoller } from './gmail-poller.js';
-import { publishVoice, connect as mqttConnect, close as mqttClose, onSpeakerStatus } from './mqtt-publisher.js';
+import { publishVoice, publishCommand, connect as mqttConnect, close as mqttClose, onSpeakerStatus } from './mqtt-publisher.js';
 import { buildVoiceMessage } from './amount-to-wavs.js';
 import { markVoicePublished } from './latency.js';
 import { startHttp } from './http-server.js';
@@ -13,7 +13,7 @@ import { startScheduler as startIgScheduler } from './ig-scheduler.js';
 import { startInstallmentsScheduler } from './installments-scheduler.js';
 import { config } from './config.js';
 import { logger } from './logger.js';
-import { openDb, listAccounts, getAccount } from './storage.js';
+import { openDb, listAccounts, getAccount, getDevice, listDevices } from './storage.js';
 import { watchInbox } from './gmail-api.js';
 import { updateAccountHistory, updateAccountWatch, recordPayment, upsertDeviceFromStatus,
   setSubStatus, accountsToAutoSuspend, markNewlyExpired, listOrders, updateOrder, getOrder,
@@ -50,10 +50,21 @@ async function announcePayment(payment) {
   }
 
   // Registrar para el "altavoz web" (/demo) además de publicar al speaker físico.
-  announceLog.record({ accountId: payment.accountId, amount: payment.amount, bank: payment.bank });
-  // Persistir el pago para el historial del admin (sobrevive reinicios).
+  const at = Date.now(); // MISMO at para memoria y DB
+  // Fallback de local para Gmail mono-local (pubsub/imap no pasan por pickSpeaker):
+  // el nombre sale del device asignado al speaker de la cuenta.
+  let localName = payment.localName || null;
+  if (!localName && payment.speakerId) {
+    try { localName = getDevice(payment.speakerId)?.local_name || null; } catch { /* noop */ }
+  }
+  announceLog.record({ accountId: payment.accountId, amount: payment.amount, bank: payment.bank, localName, at });
+  // Persistir el pago para el historial del admin y La Libreta (sobrevive reinicios).
   try {
-    recordPayment({ accountId: payment.accountId, amount: payment.amount, bank: payment.bank, payer: payment.payer });
+    recordPayment({
+      accountId: payment.accountId, amount: payment.amount, bank: payment.bank, payer: payment.payer,
+      brebKey: payment.brebKey || null, speakerId: payment.speakerId || null,
+      localName, unrouted: false, msgId: payment.messageId || null, at,
+    });
   } catch (e) {
     logger.warn({ err: e.message }, 'no se pudo persistir el pago');
   }
@@ -172,6 +183,30 @@ async function main() {
   });
 
   mqttConnect();
+
+  // ── Ping getinfo periódico: mantiene last_seen fresco para el online/offline de
+  // La Libreta. Solo devices ASIGNADOS (order_id). getinfo es telemetría pura: NO
+  // reproduce audio ni flashea (cumple la regla "flashear solo con orden").
+  const DEVICE_PING_MS = 5 * 60 * 1000;   // umbral offline 12 min = 2 pings perdidos + margen
+  const devicePingJob = () => {
+    try {
+      // Solo devices de órdenes VIVAS: una orden archivada (cliente dado de baja)
+      // no necesita online/offline y pinguearla gasta datos/batería del speaker.
+      const targets = listDevices().filter((d) => {
+        if (!d.order_id) return false;
+        const o = getOrder(d.order_id);
+        return o && !o.archived_at;
+      });
+      for (const [i, d] of targets.entries()) {
+        setTimeout(() => {                 // escalonado 500ms: sin ráfaga MQTT
+          publishCommand(d.spkr_id, { cmd: 'getinfo' })
+            .catch((e) => logger.warn({ spkr: d.spkr_id, err: e.message }, 'ping getinfo falló'));
+        }, i * 500);
+      }
+    } catch (e) { logger.error({ err: e.message }, 'device ping job error'); }
+  };
+  setTimeout(devicePingJob, 15_000);
+  setInterval(devicePingJob, DEVICE_PING_MS);
 
   const accounts = listAccounts();
   logger.info({ count: accounts.length, mode: usingPubSub ? 'PubSub' : 'IMAP' }, 'accounts en DB');

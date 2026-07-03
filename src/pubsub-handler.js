@@ -108,6 +108,9 @@ async function processMessage(account, messageId, emitPayment) {
     logger.info({ id: account.id, fromAddr, subject, messageId, ...result }, 'payment detected');
     emitPayment({
       ...result,
+      // accountId es OBLIGATORIO: sin él announcePayment/recordPayment no persisten
+      // el pago (La Libreta quedaba ciega para las cuentas Gmail Pub/Sub).
+      accountId: account.id,
       speakerId: account.speaker_id,
       from: fromAddr,
       subject,

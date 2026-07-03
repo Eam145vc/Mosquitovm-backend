@@ -216,7 +216,8 @@ export class ImapWatcher extends EventEmitter {
       if (!result) return;
 
       logger.info({ id: this.id, uid: msg.uid, fromAddr, subject, ...result }, 'payment detected');
-      this.emit('payment', { ...result, speakerId: this.speakerId, messageId, from: fromAddr, subject });
+      // accountId (= this.id) es obligatorio para que el pago se persista en La Libreta.
+      this.emit('payment', { ...result, accountId: this.id, speakerId: this.speakerId, messageId, from: fromAddr, subject });
     } catch (e) {
       logger.error({ id: this.id, err: e.message }, 'handleMessage failed');
     }

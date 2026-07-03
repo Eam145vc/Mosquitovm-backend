@@ -53,6 +53,7 @@ import {
   listWaOutbox, requeueWa, cancelWa, cancelPendingWaByKinds, cancelAllPendingWa,
   getShipmentByOrder, updateShipmentRow,
 } from './storage.js';
+import { bogotaDayStart, DAY_MS } from './libreta-time.js';
 import { getShipment, extractLabel, fetchLabelPdf } from './skydropx.js';
 import { decodeBrebImage, normalizeKey } from './breb-qr.js';
 import { parseEmail } from './parsers/index.js';
@@ -147,8 +148,14 @@ function orderView(o) {
   };
 }
 
-export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) {
-  const app = Fastify({ logger: false, bodyLimit: 10 * 1024 * 1024 }); // 10MB para correos de ForwardEmail
+// `opts.listen = false` construye la app SIN abrir el puerto: lo usan los tests
+// con app.inject() de Fastify (la app se devuelve igual en ambos modos).
+export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, { listen = true } = {}) {
+  // trustProxy '127.0.0.1': SOLO se confía el x-forwarded-for cuando el peer directo
+  // es loopback (Caddy local en el VM). Así req.ip es la IP REAL del cliente y los
+  // rate limits "por IP" de La Libreta dejan de ser globales; y un atacante que
+  // llegue directo al puerto 47821 NO puede spoofear XFF (su peer no es loopback).
+  const app = Fastify({ logger: false, trustProxy: '127.0.0.1', bodyLimit: 10 * 1024 * 1024 }); // 10MB para correos de ForwardEmail
 
   // Orígenes permitidos: el front principal (sono.lat) + orígenes extra de la web
   // espejo (sonoback.com y su deploy en Railway). CORS_EXTRA_ORIGINS es una lista
@@ -2009,6 +2016,15 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
       return { ok: true, forwardTo: null };
     }
 
+    // Dedupe: el MX/Worker puede reintentar el POST (timeout/5xx) con el mismo correo.
+    // Mismo guard que /webhook/email-fe: si ya procesamos este Message-ID no se vuelve
+    // a anunciar ni a persistir. SÍ devolvemos forwardTo: el reintento debe seguir
+    // reenviando el correo al cliente (el forward es idempotente, el anuncio no).
+    if (messageId && isDuplicate(`${alias}:${messageId}`)) {
+      logger.info({ alias, messageId }, 'email webhook duplicado, ignorado');
+      return { ok: true, duplicate: true, forwardTo: account.forwardTo || null };
+    }
+
     // ¿Es una notificación de pago? Parseamos SOLO para extraer monto+banco.
     // PRIORIDAD: el pago va PRIMERO (hacer sonar el IoT con el mínimo delay).
     let wasPayment = false;
@@ -2023,13 +2039,19 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
             'multipunto: pago NO ruteado (llave sin local), no se anuncia');
           // Persistir para "La Libreta": el cliente lo ve como "local por confirmar".
           // NO va a announceLog ni suena en ningún speaker.
-          try {
-            recordPayment({
-              accountId: account.id, amount: result.amount, bank: result.bank, payer: null,
-              brebKey: route.key || result.brebKey || null,
-              speakerId: null, localName: null, unrouted: true,
-            });
-          } catch (e) { logger.error({ accountId: account.id, err: e.message }, 'no se pudo persistir pago unrouted'); }
+          // Los EGRESOS ("Transferiste $X") NO se persisten: son plata que sale, no
+          // ventas (announcePayment ya los corta en el camino ruteado). msgId permite
+          // que el índice único (account_id, msg_id) dedupee reintentos del MX.
+          if (result.direction !== 'out') {
+            try {
+              recordPayment({
+                accountId: account.id, amount: result.amount, bank: result.bank, payer: null,
+                brebKey: route.key || result.brebKey || null,
+                speakerId: null, localName: null, unrouted: true,
+                msgId: messageId || null,
+              });
+            } catch (e) { logger.error({ accountId: account.id, err: e.message }, 'no se pudo persistir pago unrouted'); }
+          }
         } else {
           onPaymentDetected({
             ...result,
@@ -2297,13 +2319,19 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
               'multipunto: pago NO ruteado (llave sin local), no se anuncia');
             // Persistir para "La Libreta": el cliente lo ve como "local por confirmar".
             // NO va a announceLog ni suena en ningún speaker.
-            try {
-              recordPayment({
-                accountId: account.id, amount: result.amount, bank: result.bank, payer: null,
-                brebKey: route.key || result.brebKey || null,
-                speakerId: null, localName: null, unrouted: true,
-              });
-            } catch (e) { logger.error({ accountId: account.id, err: e.message }, 'no se pudo persistir pago unrouted'); }
+            // Los EGRESOS ("Transferiste $X") NO se persisten: son plata que sale, no
+            // ventas (announcePayment ya los corta en el camino ruteado). msgId permite
+            // que el índice único (account_id, msg_id) dedupee reintentos de ForwardEmail.
+            if (result.direction !== 'out') {
+              try {
+                recordPayment({
+                  accountId: account.id, amount: result.amount, bank: result.bank, payer: null,
+                  brebKey: route.key || result.brebKey || null,
+                  speakerId: null, localName: null, unrouted: true,
+                  msgId: messageId || null,
+                });
+              } catch (e) { logger.error({ accountId: account.id, err: e.message }, 'no se pudo persistir pago unrouted'); }
+            }
           } else {
             onPaymentDetected({
               ...result,
@@ -2481,9 +2509,11 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
   // Envíos Skydropx (despachar el speaker de una orden + guía PDF).
   registerSkydropxRoutes(app);
 
-  app.listen({ port: config.HTTP_PORT, host: config.HTTP_HOST })
-    .then(() => logger.info({ port: config.HTTP_PORT }, 'http server listening'))
-    .catch(e => { logger.error({ err: e.message }, 'http listen fail'); process.exit(1); });
+  if (listen) {
+    app.listen({ port: config.HTTP_PORT, host: config.HTTP_HOST })
+      .then(() => logger.info({ port: config.HTTP_PORT }, 'http server listening'))
+      .catch(e => { logger.error({ err: e.message }, 'http listen fail'); process.exit(1); });
+  }
 
   return app;
 }

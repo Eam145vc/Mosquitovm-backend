@@ -82,6 +82,25 @@ function normalizeStatus(raw) {
   };
 }
 
+/** Espera (máx 10s) a que el cliente MQTT conecte. Limpia SIEMPRE sus listeners
+ *  al resolver, rechazar o vencer el timeout: sin esto, con el broker caído cada
+ *  publish acumulaba un once('connect')/once('error') huérfano en el cliente
+ *  (warning MaxListeners) hasta que llegara un 'connect'. */
+function waitForConnect(c) {
+  return new Promise((res, rej) => {
+    const cleanup = () => {
+      clearTimeout(t);
+      c.removeListener('connect', onConnect);
+      c.removeListener('error', onError);
+    };
+    const onConnect = () => { cleanup(); res(); };
+    const onError = (err) => { cleanup(); rej(err); };
+    const t = setTimeout(() => { cleanup(); rej(new Error('mqtt connect timeout 10s')); }, 10_000);
+    c.once('connect', onConnect);
+    c.once('error', onError);
+  });
+}
+
 /**
  * @param {string} playAudibleMsg
  * @param {Object} [opts]
@@ -99,13 +118,7 @@ export async function publishVoice(playAudibleMsg, opts = {}) {
   }
 
   const c = connect();
-  if (!c.connected) {
-    await new Promise((res, rej) => {
-      const t = setTimeout(() => rej(new Error('mqtt connect timeout 10s')), 10_000);
-      c.once('connect', () => { clearTimeout(t); res(); });
-      c.once('error', (err) => { clearTimeout(t); rej(err); });
-    });
-  }
+  if (!c.connected) await waitForConnect(c);
 
   const payload = { cmd: 'voice', playAudibleMsg };
   if (opts.amount != null) payload.amount = String(opts.amount).slice(0, 8);
@@ -125,13 +138,7 @@ export async function publishVoice(playAudibleMsg, opts = {}) {
 /** Publica un comando arbitrario al speaker (ej. {cmd:'getinfo'}). */
 export async function publishCommand(speakerId, payload) {
   const c = connect();
-  if (!c.connected) {
-    await new Promise((res, rej) => {
-      const t = setTimeout(() => rej(new Error('mqtt connect timeout 10s')), 10_000);
-      c.once('connect', () => { clearTimeout(t); res(); });
-      c.once('error', (err) => { clearTimeout(t); rej(err); });
-    });
-  }
+  if (!c.connected) await waitForConnect(c);
   const topic = `speakers/${speakerId}/cmd`;
   return new Promise((res, rej) => {
     c.publish(topic, JSON.stringify(payload), { qos: 1 }, (err) => err ? rej(err) : res());
