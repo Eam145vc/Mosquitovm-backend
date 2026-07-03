@@ -45,6 +45,7 @@ import {
   setDeviceBrebKey, listDevicesByAccount, findDeviceByKey,
   updateAccountHistory, updateAccountWatch, setAccountForward, findAccountByForward, markChangeConfirmed,
   paymentsFor, subState, setSubStatus,
+  recordPayment, paymentsAggregate, bestHours, paymentsAfter, paymentsPage,
   saveInboxMail, listInbox, getInboxMail, markInboxSeen, deleteInboxMail, unseenInboxCount,
   markInboxReplied, saveOutboundMail,
   claimWaPending, markWaSent,
@@ -202,9 +203,11 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     const devices = listDevicesByAccount(account.id);
     if (devices.length <= 1) {
       // un solo local: suena en su speaker (el de la cuenta o el único device).
+      // localName acompaña al pago hasta La Libreta (etiqueta del local).
       return {
         speakerId: account.speaker_id || (devices[0] && devices[0].spkr_id) || null,
         deviceKey: (devices[0] && devices[0].breb_key) || null,
+        localName: (devices[0] && devices[0].local_name) || null,
       };
     }
     // multipunto: rutear por llave.
@@ -1263,6 +1266,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
       created_at: o.created_at,
       // envío
       business_name: o.business_name, bank: o.bank, address: o.address, city: o.city, phone: o.phone,
+      // DANE de la ciudad del autocomplete del checkout: el admin preselecciona la
+      // ciudad canónica al cotizar el envío (sin elegir entre homónimas).
+      city_dane: o.city_dane || null,
       // pago / suscripción
       payer_email: o.mp_payer_email || null,
       next_charge_at: o.next_charge_at || null,
@@ -2013,10 +2019,17 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
         const route = pickSpeaker(account, result);
         logger.info({ alias, accountId: account.id, ...result, routedTo: route.speakerId, unrouted: route.unrouted || false }, 'payment detected (email webhook)');
         if (route.unrouted) {
-          // Multipunto: no se pudo determinar el local (llave desconocida) → NO suena.
-          // NO se guarda en el buzón (ensuciaba el inbox con un aviso por pago); queda solo
-          // en el log. Cuando exista el panel del usuario, se mostrarán desde el historial.
-          logger.warn({ alias, accountId: account.id, amount: result.amount, key: route.key }, 'multipunto: pago NO ruteado (llave sin local), no se anuncia');
+          logger.warn({ alias, accountId: account.id, amount: result.amount, key: route.key },
+            'multipunto: pago NO ruteado (llave sin local), no se anuncia');
+          // Persistir para "La Libreta": el cliente lo ve como "local por confirmar".
+          // NO va a announceLog ni suena en ningún speaker.
+          try {
+            recordPayment({
+              accountId: account.id, amount: result.amount, bank: result.bank, payer: null,
+              brebKey: route.key || result.brebKey || null,
+              speakerId: null, localName: null, unrouted: true,
+            });
+          } catch (e) { logger.error({ accountId: account.id, err: e.message }, 'no se pudo persistir pago unrouted'); }
         } else {
           onPaymentDetected({
             ...result,
@@ -2024,6 +2037,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
             brebKey: result.brebKey || route.deviceKey || null,
             accountId: account.id,
             speakerId: route.speakerId,
+            localName: route.localName || null,
+            messageId,
             alias,
             from, subject,
             _lat: lat,
@@ -2278,15 +2293,25 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
           const route = pickSpeaker(account, result);
           logger.info({ alias, accountId: account.id, ...result, routedTo: route.speakerId, unrouted: route.unrouted || false }, 'payment detected (fe webhook)');
           if (route.unrouted) {
-            // NO se guarda en el buzón (ensuciaba el inbox); solo log. El panel del
-            // usuario los mostrará desde el historial cuando exista.
-            logger.warn({ alias, accountId: account.id, amount: result.amount, key: route.key }, 'multipunto: pago NO ruteado (llave sin local), no se anuncia');
+            logger.warn({ alias, accountId: account.id, amount: result.amount, key: route.key },
+              'multipunto: pago NO ruteado (llave sin local), no se anuncia');
+            // Persistir para "La Libreta": el cliente lo ve como "local por confirmar".
+            // NO va a announceLog ni suena en ningún speaker.
+            try {
+              recordPayment({
+                accountId: account.id, amount: result.amount, bank: result.bank, payer: null,
+                brebKey: route.key || result.brebKey || null,
+                speakerId: null, localName: null, unrouted: true,
+              });
+            } catch (e) { logger.error({ accountId: account.id, err: e.message }, 'no se pudo persistir pago unrouted'); }
           } else {
             onPaymentDetected({
               ...result,
               // Nequi/Daviplata no traen llave en el correo: heredar la del QR del local que sonó.
               brebKey: result.brebKey || route.deviceKey || null,
-              accountId: account.id, speakerId: route.speakerId, alias, from, subject, _lat: lat,
+              accountId: account.id, speakerId: route.speakerId,
+              localName: route.localName || null, messageId,
+              alias, from, subject, _lat: lat,
             });
           }
         }
@@ -2315,6 +2340,140 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
   });
 
   app.get('/accounts', async (req, reply) => { if (!requireAdmin(req, reply)) return; return listAccounts(); });
+
+  // ── La Libreta ────────────────────────────────────────────────────────────────
+  // Zona de cliente solo-lectura autenticada por el order id (32-hex aleatorio).
+  // REGLA DURA: /libreta/* es 100% GET. PROHIBIDO agregar endpoints mutantes o que
+  // publiquen MQTT (ni getinfo bajo demanda) autenticados solo por order id.
+  const LIBRETA_OFFLINE_MS = 12 * 60 * 1000;   // sin respuesta a getinfo en 12 min → offline
+  const ORDER_ID_RE = /^[0-9a-f]{32}$/;
+
+  // Rate limit (patrón Map de support-routes.js, con poda para no crecer sin tope).
+  const rlBuckets = new Map();
+  function rlHit(key, windowMs, max) {
+    const t = Date.now();
+    const arr = (rlBuckets.get(key) || []).filter((x) => t - x < windowMs);
+    arr.push(t);
+    rlBuckets.set(key, arr);
+    if (rlBuckets.size > 5000) {
+      for (const [k, v] of rlBuckets) if (!v.some((x) => t - x < 5 * 60_000)) rlBuckets.delete(k);
+    }
+    return arr.length > max;
+  }
+
+  /** Resuelve orden→cuenta con 404 uniforme (sin oráculo) y rate limits.
+   *  Devuelve { o, acc } o null (ya respondió). Setea no-store SIEMPRE. */
+  function resolveLibreta(req, reply) {
+    reply.header('cache-control', 'no-store');
+    const ip = req.ip;
+    // anti-scan: 30 fallos (404) en 5 min → 429 por IP
+    const scanArr = (rlBuckets.get(`lib404:${ip}`) || []).filter((x) => Date.now() - x < 5 * 60_000);
+    if (scanArr.length >= 30) { reply.code(429).send({ error: 'demasiadas solicitudes' }); return null; }
+    if (rlHit(`libip:${ip}`, 60_000, 300)) { reply.code(429).send({ error: 'demasiadas solicitudes' }); return null; }
+    const id = String(req.params.order || '').toLowerCase();
+    const fail = () => {                        // 404 uniforme, mismo cuerpo en TODOS los casos
+      rlHit(`lib404:${ip}`, 5 * 60_000, Infinity);
+      reply.code(404).send({ error: 'no encontrada' });
+      return null;
+    };
+    if (!ORDER_ID_RE.test(id)) return fail();
+    if (rlHit(`libord:${id}`, 60_000, 240)) { reply.code(429).send({ error: 'demasiadas solicitudes' }); return null; }
+    const o = getOrder(id);
+    if (!o || o.archived_at || !canOnboard(o)) return fail();  // archivada = kill-switch de revocación
+    return { o, acc: o.account_id ? getAccount(o.account_id) : null };
+  }
+
+  function libRow(p) {  // lista blanca por pago — NUNCA payer/breb_key/speaker_id/msg_id/account_id
+    return { id: p.id, amount: p.amount, bank: p.bank || null,
+             local: p.local_name || null, unrouted: Boolean(p.unrouted), at: p.at };
+  }
+  function libLocales(accId, acc, now) {
+    const devices = listDevicesByAccount(accId);
+    if (!devices.length && acc.speaker_id) {         // fallback mono-local viejo
+      const d = getDevice(acc.speaker_id);
+      if (d) devices.push(d);
+    }
+    return devices.map((d, i) => ({
+      name: d.local_name || d.label || `Local ${i + 1}`,
+      estado: !d.last_seen ? 'sin_datos' : (now - d.last_seen < LIBRETA_OFFLINE_MS ? 'online' : 'offline'),
+      lastSeenAt: d.last_seen || null,
+    }));
+  }
+  function libSub(acc) {
+    const accOrders = listOrders().filter((x) => x.account_id === acc.id);
+    const paidOrders = accOrders.filter((x) => PAID_STATES.includes(x.status));
+    const main = paidOrders.sort((a, b) => (a.next_charge_at || Infinity) - (b.next_charge_at || Infinity))[0] || accOrders[0] || null;
+    const state = subState(acc, main?.next_charge_at || null);
+    return {
+      main,
+      sub: { state, readOnly: state === 'suspendida',
+             daysLeft: main?.next_charge_at ? Math.ceil((main.next_charge_at - Date.now()) / DAY_MS) : null },
+    };
+  }
+
+  // Resumen: total de hoy/ayer, mejores horas (14 días), locales, sub y 1ª página del feed.
+  app.get('/libreta/:order', async (req, reply) => {
+    const r = resolveLibreta(req, reply);
+    if (!r) return;
+    const { o, acc } = r;
+    const now = Date.now();
+    if (!acc) {
+      return { ok: true, emailConnected: false, businessName: o.business_name || null, now,
+               connectUrl: `${config.FRONTEND_BASE_URL}/activar-pro/?order=${o.id}&correo=1` };
+    }
+    const { main, sub } = libSub(acc);
+    const locales = libLocales(acc.id, acc, now);
+    const todayStart = bogotaDayStart(now);
+    const today = paymentsAggregate(acc.id, todayStart, now + 1);
+    const yesterday = paymentsAggregate(acc.id, todayStart - DAY_MS, todayStart);
+    const hours = bestHours(acc.id, now - 14 * DAY_MS, 24);
+    const rows = paymentsPage(acc.id, Number.MAX_SAFE_INTEGER, 50);
+    return {
+      ok: true, emailConnected: true,
+      businessName: main?.business_name || o.business_name || null,
+      now,                                                    // reloj del server (la UI calcula offset)
+      today:     { total: today.total, count: today.n, startAt: todayStart },
+      yesterday: { total: yesterday.total, count: yesterday.n },
+      bestHours: hours.map((h) => ({ hour: h.hour, count: h.n, total: h.total })),
+      locales, multi: locales.length > 1, sub: sub,
+      payments: rows.map(libRow),
+      nextBefore: rows.length === 50 ? rows[rows.length - 1].id : null,
+      latestId: rows.length ? rows[0].id : 0,
+    };
+  });
+
+  // Feed: polling en vivo (?after=) e historial hacia atrás (?before=).
+  app.get('/libreta/:order/feed', async (req, reply) => {
+    const r = resolveLibreta(req, reply);
+    if (!r) return;
+    const { acc } = r;
+    const now = Date.now();
+    if (!acc) return { ok: true, emailConnected: false, payments: [], now };
+
+    const before = Number.parseInt(req.query.before, 10);
+    if (Number.isFinite(before) && before > 0) {              // historial hacia atrás
+      let limit = Number.parseInt(req.query.limit, 10);
+      limit = Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 50) : 30;  // clamp, nunca 400
+      const rows = paymentsPage(acc.id, before, limit);
+      return { ok: true, now, payments: rows.map(libRow),
+               nextBefore: rows.length === limit ? rows[rows.length - 1].id : null };
+    }
+
+    const after = Math.max(Number.parseInt(req.query.after, 10) || 0, 0);  // polling en vivo
+    let rows = paymentsAfter(acc.id, after, 51);
+    const gap = rows.length === 51;                            // >50 nuevos → cliente recarga resumen
+    if (gap) rows = rows.slice(0, 50);
+    const todayStart = bogotaDayStart(now);
+    const today = paymentsAggregate(acc.id, todayStart, now + 1);
+    return {
+      ok: true, now, gap,
+      payments: rows.map(libRow),
+      latestId: rows.length ? rows[0].id : after,
+      today: { total: today.total, count: today.n, startAt: todayStart },
+      locales: libLocales(acc.id, acc, now),
+      sub: libSub(acc).sub,
+    };
+  });
 
   // Bot de soporte (chat público + admin + web push).
   registerSupportRoutes(app);
