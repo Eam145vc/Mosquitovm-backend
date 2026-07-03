@@ -2411,9 +2411,13 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     return { o, acc: o.account_id ? getAccount(o.account_id) : null };
   }
 
-  function libRow(p) {  // lista blanca por pago — NUNCA payer/breb_key/speaker_id/msg_id/account_id
+  // Lista blanca por pago — NUNCA payer/speaker_id/msg_id/account_id. `key` es la
+  // llave Bre-B del LOCAL: es dato del propio cliente (está impresa en su QR) y es
+  // lo único que separa locales homónimos o sin nombre en multipunto.
+  function libRow(p) {
     return { id: p.id, amount: p.amount, bank: p.bank || null,
-             local: p.local_name || null, unrouted: Boolean(p.unrouted), at: p.at };
+             local: p.local_name || null, key: p.breb_key || null,
+             unrouted: Boolean(p.unrouted), at: p.at };
   }
   function libLocales(accId, acc, now) {
     const devices = listDevicesByAccount(accId);
@@ -2422,7 +2426,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       if (d) devices.push(d);
     }
     return devices.map((d, i) => ({
-      name: d.local_name || d.label || `Local ${i + 1}`,
+      name: d.local_name || d.label || d.breb_key || `Local ${i + 1}`,
+      key: d.breb_key || null,
       estado: !d.last_seen ? 'sin_datos' : (now - d.last_seen < LIBRETA_OFFLINE_MS ? 'online' : 'offline'),
       lastSeenAt: d.last_seen || null,
     }));

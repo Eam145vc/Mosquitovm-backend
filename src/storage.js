@@ -806,7 +806,7 @@ export function bestHours(accountId, fromMs, limit = 24) {
 export function paymentsAfter(accountId, afterId, limit = 51) {
   openDb();
   return db.prepare(
-    `SELECT id, amount, bank, local_name, unrouted, at
+    `SELECT id, amount, bank, local_name, breb_key, unrouted, at
      FROM payments WHERE account_id = ? AND id > ? AND amount > 0
      ORDER BY id DESC LIMIT ?`
   ).all(accountId, afterId, limit);
@@ -816,7 +816,7 @@ export function paymentsAfter(accountId, afterId, limit = 51) {
 export function paymentsPage(accountId, beforeId, limit = 30) {
   openDb();
   return db.prepare(
-    `SELECT id, amount, bank, local_name, unrouted, at
+    `SELECT id, amount, bank, local_name, breb_key, unrouted, at
      FROM payments WHERE account_id = ? AND id < ? AND amount > 0
      ORDER BY id DESC LIMIT ?`
   ).all(accountId, beforeId, limit);

@@ -98,19 +98,24 @@ test('resumen ok: shape exacto y whitelist estricta (nada de infra ni PII)', asy
     'bestHours', 'businessName', 'emailConnected', 'latestId', 'locales', 'multi',
     'nextBefore', 'now', 'ok', 'payments', 'sub', 'today', 'yesterday',
   ]);
-  assert.deepEqual(Object.keys(body.payments[0]).sort(), ['amount', 'at', 'bank', 'id', 'local', 'unrouted']);
-  assert.deepEqual(Object.keys(body.locales[0]).sort(), ['estado', 'lastSeenAt', 'name']);
+  assert.deepEqual(Object.keys(body.payments[0]).sort(), ['amount', 'at', 'bank', 'id', 'key', 'local', 'unrouted']);
+  assert.deepEqual(Object.keys(body.locales[0]).sort(), ['estado', 'key', 'lastSeenAt', 'name']);
   assert.deepEqual(Object.keys(body.sub).sort(), ['daysLeft', 'readOnly', 'state']);
   assert.deepEqual(Object.keys(body.today).sort(), ['count', 'startAt', 'total']);
   assert.deepEqual(Object.keys(body.yesterday).sort(), ['count', 'total']);
 
   // Whitelist: el JSON serializado NO puede contener infra ni datos privados.
+  // La llave Bre-B del PROPIO cliente SÍ se expone (campo `key`): es su dato (está
+  // impresa en su QR) y separa locales homónimos en multipunto — decisión jul-2026.
   for (const prohibido of [
     'payer', 'breb_key', 'speaker_id', 'spkr-', 'msg_id',
-    'JUANSECRETO', '@llaveoculta', 'zzalias', '@gmail.com',
+    'JUANSECRETO', 'zzalias', '@gmail.com',
   ]) {
     assert.ok(!r.body.includes(prohibido), `el body no debe contener "${prohibido}"`);
   }
+  // La llave del local viene como `key` (para el filtro por local del front).
+  assert.ok(body.locales.some((l) => l.key === '@llaveoculta1'), 'la llave del propio cliente viaja en locales[].key');
+  assert.equal(body.payments[0].key, '@llaveoculta1', 'la llave del pago viaja en payments[].key');
 
   assert.equal(body.emailConnected, true);
   assert.equal(body.businessName, 'Panadería La Prueba');
