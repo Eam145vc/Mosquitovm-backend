@@ -1697,7 +1697,17 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       if (v <= 100) return v;
       return Math.max(0, Math.min(100, Math.round(((v - 3400) / (4150 - 3400)) * 100)));
     };
-    return listDevices().map((d) => ({ ...d, battery: battPct(d.battery) }));
+    // Inventario: a los asignados se les agrega A QUIÉN (negocio + ciudad de la orden).
+    const byOrder = new Map(listOrders().map((o) => [o.id, o]));
+    return listDevices().map((d) => {
+      const o = d.order_id ? byOrder.get(d.order_id) : null;
+      return {
+        ...d,
+        battery: battPct(d.battery),
+        assigned_to: o ? (o.business_name || o.customer_email || 'Sin nombre') : null,
+        assigned_city: o?.city || null,
+      };
+    });
   });
 
   app.post('/admin/devices', async (req, reply) => {
