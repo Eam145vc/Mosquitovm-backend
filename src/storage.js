@@ -1026,6 +1026,20 @@ export function cancelWa(id) {
   return info.changes > 0;
 }
 
+/** Cancela los mensajes PENDIENTES de una orden para ciertos kinds. Incluye los
+ *  'sending' colgados (PC apagada): si el agente sí lo estaba enviando, su markWaSent
+ *  posterior lo deja 'sent' igual. Usado al subir el QR para matar el onboarding viejo. */
+export function cancelPendingWaByKinds(orderId, kinds) {
+  openDb();
+  if (!kinds?.length) return 0;
+  const marks = kinds.map(() => '?').join(',');
+  const info = db.prepare(
+    `UPDATE wa_outbox SET status = 'canceled'
+     WHERE order_id = ? AND kind IN (${marks}) AND status IN ('queued','sending')`
+  ).run(orderId, ...kinds);
+  return info.changes;
+}
+
 // ── Settings + heartbeat del agente de WhatsApp (tabla key-value wa_meta) ─────
 const WA_SETTINGS_DEFAULTS = {
   enabled: true,

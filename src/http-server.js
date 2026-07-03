@@ -49,7 +49,7 @@ import {
   markInboxReplied, saveOutboundMail,
   claimWaPending, markWaSent,
   touchWaAgent, getWaSettings, setWaSettings, getWaAgentLastSeen, countWaByStatus,
-  listWaOutbox, requeueWa, cancelWa,
+  listWaOutbox, requeueWa, cancelWa, cancelPendingWaByKinds,
   getShipmentByOrder, updateShipmentRow,
 } from './storage.js';
 import { getShipment, extractLabel, fetchLabelPdf } from './skydropx.js';
@@ -984,6 +984,17 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     const patch = { qr_path: filename, qr_mime: mimetype };
     if (order.business_name) patch.status = 'ready_to_ship';
     updateOrder(order.id, patch);
+
+    // La orden ya tiene su QR: los WhatsApp de onboarding pendientes ("sube tu QR")
+    // quedan obsoletos — cancelarlos para que no salgan cuando la PC prenda (compra
+    // nocturna: el agente estaba apagado, el cliente subió el QR de una, y el mensaje
+    // viejo seguía en cola).
+    try {
+      const n = cancelPendingWaByKinds(order.id, ['activacion', 'recordatorio_3h', 'recordatorio_24h']);
+      if (n) logger.info({ orderId: order.id, n }, 'wa: onboarding pendiente cancelado (QR ya subido)');
+    } catch (e) {
+      logger.warn({ orderId: order.id, err: e.message }, 'wa: no se pudo cancelar el onboarding pendiente');
+    }
 
     let brebKey = null, brebKeyType = null;
     // Multipunto: decodificar el QR Bre-B para extraer la LLAVE del local y guardarla en

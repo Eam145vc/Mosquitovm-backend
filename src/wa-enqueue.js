@@ -145,6 +145,13 @@ export function buildWaBody(order, kind) {
  *  y, en los kinds de onboarding, también por (teléfono, kind) en ventana de 48h. */
 export function enqueueWhatsApp(order, kind) {
   if (!order) return false;
+  // Los mensajes de onboarding piden subir el QR: si la orden YA lo tiene, son ruido
+  // (típico: compra nocturna con PC apagada, el cliente sube el QR de una y el pago se
+  // confirma después). El envío manual del admin (enqueueWhatsAppForce) NO pasa por acá.
+  if (PHONE_DEDUPE_KINDS.has(kind) && order.qr_path) {
+    logger.info({ orderId: order.id, kind }, 'wa: la orden ya tiene QR, onboarding no se encola');
+    return false;
+  }
   const phone = normalizePhoneCO(order.phone);
   if (!phone) {
     logger.warn({ orderId: order.id }, 'wa: orden sin teléfono válido, no se encola WhatsApp');
