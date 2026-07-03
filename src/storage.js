@@ -974,6 +974,23 @@ export function enqueueWaForce({ orderId, phone, kind, body }) {
 
 export function claimWaPending(limit = 5) {
   openDb();
+  // Colapso de onboarding ANTES de entregar: si una orden acumuló varios mensajes de
+  // onboarding en cola (activación + recordatorios, típico backlog con la PC apagada),
+  // el cliente debe recibir UNO solo ("sube tu QR"), no tres seguidos. Se conserva el
+  // más reciente (refleja la etapa actual) y se cancela el resto.
+  db.prepare(`
+    UPDATE wa_outbox SET status = 'canceled'
+    WHERE status = 'queued'
+      AND kind IN ('activacion','recordatorio_3h','recordatorio_24h')
+      AND EXISTS (
+        SELECT 1 FROM wa_outbox b
+        WHERE b.order_id = wa_outbox.order_id
+          AND b.kind IN ('activacion','recordatorio_3h','recordatorio_24h')
+          AND b.status = 'queued'
+          AND (b.created_at > wa_outbox.created_at
+               OR (b.created_at = wa_outbox.created_at AND b.id > wa_outbox.id))
+      )
+  `).run();
   const rows = db
     .prepare(`SELECT * FROM wa_outbox WHERE status = 'queued' ORDER BY created_at ASC LIMIT ?`)
     .all(limit);
