@@ -121,6 +121,9 @@ const ConfigSchema = z.object({
   SKYDROPX_ORIGIN_POSTAL: z.string().default('050001'),  // CP postal real (street meta)
   SKYDROPX_ORIGIN_PHONE: z.string().default(''),
   SKYDROPX_ORIGIN_EMAIL: z.string().default('hola@sono.lat'),
+  // Token Bearer del webhook de tracking (Skydropx web → Conexiones > Webhooks). Skydropx
+  // lo manda en el header Authorization de cada POST /webhook/skydropx. Vacío = no valida.
+  SKYDROPX_WEBHOOK_TOKEN: z.string().default(''),
 
   // ---- Bot de soporte (Gemini) ----
   GEMINI_API_KEY: z.string().default(''),

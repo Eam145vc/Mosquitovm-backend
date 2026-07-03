@@ -283,6 +283,12 @@ export function openDb() {
   // Envíos: agregar tracking_url después de que Skydropx retorna trackingUrl en extractLabel.
   ensureColumns('shipments', [
     ['tracking_url', 'TEXT'],
+    // Estado del paquete que reporta el webhook de Skydropx (picked_up, in_transit,
+    // last_mile, delivery_attempt, delivered, in_return, exception...).
+    ['tracking_status', 'TEXT'],
+    ['tracking_status_at', 'INTEGER'],
+    ['returned', 'INTEGER'],     // 1 si el envío va en devolución al remitente
+    ['returned_status', 'TEXT'], // tracking del trayecto de retorno (cuando returned=1)
   ]);
 
   // Telemetría del speaker (auto-provisioning): el backend escucha speakers/+/status
@@ -861,12 +867,28 @@ export function getShipmentByOrder(orderId) {
   ).get(orderId) || null;
 }
 
+/** Busca el envío al que corresponde un evento del webhook de tracking de Skydropx:
+ *  primero por el UUID del shipment (relationships.shipment.data.id), luego por guía. */
+export function getShipmentByTrackingOrId({ skydropxId, tracking }) {
+  openDb();
+  if (skydropxId) {
+    const row = db.prepare('SELECT * FROM shipments WHERE skydropx_id = ?').get(skydropxId);
+    if (row) return row;
+  }
+  if (tracking) {
+    const row = db.prepare('SELECT * FROM shipments WHERE tracking = ?').get(tracking);
+    if (row) return row;
+  }
+  return null;
+}
+
 /** Actualiza campos de un envío. `patch` es { campo: valor } (whitelist). */
 export function updateShipmentRow(id, patch) {
   openDb();
   const allowed = new Set([
     'skydropx_id', 'quotation_id', 'rate_id', 'carrier', 'service', 'tracking',
     'label_url', 'price_cents', 'currency', 'to_dane', 'to_city', 'status', 'tracking_url',
+    'tracking_status', 'tracking_status_at', 'returned', 'returned_status',
   ]);
   const keys = Object.keys(patch).filter((k) => allowed.has(k));
   if (keys.length === 0) return false;

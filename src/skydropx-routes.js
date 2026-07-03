@@ -9,8 +9,9 @@ import { quoteAndWait, createShipment, getShipment, cancelShipment, extractLabel
 import {
   getOrder, updateOrder,
   createShipmentRow, getShipmentByOrder, getShipmentRow, updateShipmentRow, listShipments, deleteShipment,
+  getShipmentByTrackingOrId,
 } from './storage.js';
-import { enqueueEnvioIfReady } from './wa-enqueue.js';
+import { enqueueEnvioIfReady, enqueueWhatsApp } from './wa-enqueue.js';
 
 // Paquete por defecto del Cloud Speaker en su caja (editable por envío desde el admin).
 const DEFAULT_PARCEL = { length: 17, width: 10, height: 4, weight: 1 };
@@ -56,6 +57,84 @@ export function registerSkydropxRoutes(app) {
         : 'Error comunicándose con Skydropx';
     reply.code(status).send({ error: msg, detail: String(e?.message || e).slice(0, 300) });
   };
+
+  // ──────────────────────── Webhook de tracking de Skydropx ────────────────────────
+  // Skydropx (web → Conexiones > Webhooks, sección Envíos) hace POST acá en cada cambio
+  // de estado del paquete: picked_up, in_transit, last_mile, delivery_attempt,
+  // delivered, in_return, exception... Actualiza la fila del envío y encola los
+  // WhatsApp al cliente: "en reparto" (last_mile, clave en COD para que tenga el
+  // efectivo listo), "intento de entrega" (delivery_attempt, evita la devolución que
+  // paga Sonó) y "entregado" (delivered, con el link de conectar el correo).
+  // Auth: Bearer estático que genera Skydropx al crear el webhook (SKYDROPX_WEBHOOK_TOKEN).
+  // Responde SIEMPRE 200 en errores de datos para que Skydropx no reintente en loop.
+  app.post('/webhook/skydropx', async (req, reply) => {
+    const token = config.SKYDROPX_WEBHOOK_TOKEN;
+    if (token) {
+      const auth = req.headers.authorization || '';
+      if (auth !== `Bearer ${token}` && auth !== token) {
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
+    } else {
+      logger.warn('skydropx webhook: SKYDROPX_WEBHOOK_TOKEN vacío, aceptando sin validar');
+    }
+    try {
+      const data = req.body?.data;
+      // Solo procesamos eventos de paquete (los de orders/quotation/rate se ignoran).
+      if (!data || data.type !== 'packages') return { ok: true, ignored: true };
+      const attrs = data.attributes || {};
+      const status = String(attrs.status || '');
+      const trackingNumber = attrs.tracking_number || '';
+      const shipmentUuid = data.relationships?.shipment?.data?.id || null;
+
+      const row = getShipmentByTrackingOrId({ skydropxId: shipmentUuid, tracking: trackingNumber });
+      if (!row) {
+        logger.warn({ status, trackingNumber, shipmentUuid }, 'skydropx webhook: envío desconocido');
+        return { ok: true, unknown: true };
+      }
+
+      const patch = {
+        tracking_status: status,
+        tracking_status_at: Date.now(),
+        returned: attrs.returned ? 1 : 0,
+        returned_status: attrs.returned_status || null,
+      };
+      if (!row.tracking && trackingNumber) patch.tracking = trackingNumber;
+      if (!row.tracking_url && attrs.tracking_url_provider) patch.tracking_url = attrs.tracking_url_provider;
+      updateShipmentRow(row.id, patch);
+
+      const order = getOrder(row.order_id);
+      if (order) {
+        // Red de seguridad: si el WhatsApp de la guía nunca salió (tracking asíncrono y
+        // el job aún no pasó), sale ahora. Solo en estados tempranos: mandar "va en
+        // camino" cuando ya está entregado sería absurdo. Idempotente por (orden, kind).
+        if (['created', 'picked_up', 'in_transit', 'last_mile'].includes(status)) {
+          try { enqueueEnvioIfReady(order); } catch { /* nunca bloquea el webhook */ }
+        }
+        const kind = {
+          last_mile: 'reparto',
+          delivery_attempt: 'intento_entrega',
+          delivered: 'entregado',
+        }[status];
+        if (kind) {
+          try { enqueueWhatsApp(order, kind); }
+          catch (e) { logger.error({ orderId: order.id, kind, err: e.message }, 'wa: aviso de tracking no encolado'); }
+        }
+      }
+      // Devolución o excepción: no se le escribe al cliente; queda en nivel error para
+      // que el dueño lo vea (logs/panel) y actúe — el flete del retorno lo paga Sonó.
+      if (attrs.returned || status === 'in_return' || status === 'exception') {
+        logger.error(
+          { orderId: row.order_id, tracking: row.tracking || trackingNumber, status, returnedStatus: attrs.returned_status || null },
+          'skydropx: envío en devolución/excepción — revisar'
+        );
+      }
+      logger.info({ orderId: row.order_id, tracking: row.tracking || trackingNumber, status }, 'skydropx webhook: estado actualizado');
+      return { ok: true };
+    } catch (e) {
+      logger.error({ err: e.message }, 'skydropx webhook error');
+      return { ok: true };
+    }
+  });
 
   // ──────────────────────── Buscador de ciudad (DANE) ────────────────────────
 

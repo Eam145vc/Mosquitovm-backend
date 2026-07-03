@@ -104,6 +104,36 @@ export function buildWaBody(order, kind) {
       `${hola} 🚚 Tu Sonó va en camino, pronto lo recibes.${cod}${conectar}`,
     ]);
   }
+  // ── Avisos de tracking (webhook de Skydropx) ──────────────────────────────
+  // 'reparto' (last_mile): el paquete sale a entrega HOY. En COD es el aviso clave:
+  // que el cliente esté en el local y con el efectivo (las devoluciones las paga Sonó).
+  if (kind === 'reparto') {
+    const sh = getShipmentByOrder(order.id);
+    const cod = codBlockFor(order);
+    const rastreo = sh?.tracking_url ? `\n\nSíguelo aquí: ${sh.tracking_url}` : '';
+    return pickVariant(order.id, [
+      `${hola} 📦 ¡Tu Sonó está en reparto y te llega HOY! Mantente atento al mensajero.${cod}${rastreo}`,
+      `${hola} 🚚 Tu Sonó salió a entrega hoy. Está pendiente del mensajero, por favor.${cod}${rastreo}`,
+    ]);
+  }
+  // 'intento_entrega' (delivery_attempt): la transportadora no pudo entregar. Avisar YA:
+  // tras varios intentos fallidos el paquete se devuelve (y el flete de retorno lo paga Sonó).
+  if (kind === 'intento_entrega') {
+    const sh = getShipmentByOrder(order.id);
+    const cod = codBlockFor(order);
+    const rastreo = sh?.tracking_url ? `\n\nRastreo: ${sh.tracking_url}` : '';
+    return pickVariant(order.id, [
+      `${hola}, la transportadora intentó entregar tu Sonó y no fue posible 😕 Suelen reintentar el próximo día hábil: mantente atento al mensajero. Si hay algún problema con la dirección, escríbeme por aquí (tras varios intentos fallidos el paquete se devuelve).${cod}${rastreo}`,
+      `${hola} ⚠️ El mensajero intentó entregar tu Sonó y no te encontró. Normalmente reintentan pronto, mantente pendiente. ¿Algún problema con la dirección? Escríbeme por aquí para que el paquete no se devuelva.${cod}${rastreo}`,
+    ]);
+  }
+  // 'entregado' (delivered): confirmación + el paso diferido de conectar el correo.
+  if (kind === 'entregado') {
+    return pickVariant(order.id, [
+      `${hola} 🎉 ¡Tu Sonó fue entregado! Último paso: conecta el correo donde te avisan tus pagos (2 min) y empieza a anunciar cada venta: ${emailLinkFor(order)}`,
+      `${hola}, ¡ya recibiste tu Sonó! 🎉 Para activarlo, conecta el correo donde te llegan los avisos de pago (2 min): ${emailLinkFor(order)}. Cualquier duda, escríbeme por aquí.`,
+    ]);
+  }
   // recordatorio_24h
   return pickVariant(order.id, [
     `${hola}, tu Sonó sigue esperando tu QR de Bre-B para poder despacharse. Súbelo aquí y lo enviamos: ${link}`,
