@@ -104,10 +104,11 @@ export function registerSkydropxRoutes(app) {
 
       const order = getOrder(row.order_id);
       if (order) {
-        // Red de seguridad: si el WhatsApp de la guía nunca salió (tracking asíncrono y
-        // el job aún no pasó), sale ahora. Solo en estados tempranos: mandar "va en
-        // camino" cuando ya está entregado sería absurdo. Idempotente por (orden, kind).
-        if (['created', 'picked_up', 'in_transit', 'last_mile'].includes(status)) {
+        // El WhatsApp de la guía sale cuando la transportadora RECIBE el paquete
+        // (picked_up/in_transit), no al imprimir la guía — así "va en camino" es real.
+        // 'created' NO dispara (el paquete sigue en la bodega). last_mile incluido por
+        // si la transportadora nunca reportó la recogida. Idempotente por (orden, kind).
+        if (['picked_up', 'in_transit', 'last_mile'].includes(status)) {
           try { enqueueEnvioIfReady(order); } catch { /* nunca bloquea el webhook */ }
         }
         const kind = {
@@ -292,8 +293,9 @@ export function registerSkydropxRoutes(app) {
       });
       // Marcar la orden como enviada (mismo estado que usa el flujo de despacho del admin).
       updateOrder(order.id, { status: 'shipped' });
-      try { enqueueEnvioIfReady(order); }
-      catch (e) { logger.error({ orderId: order.id, err: e.message }, 'wa: envío no encolado en creación'); }
+      // El WhatsApp de la guía YA NO sale acá: se dispara cuando la transportadora
+      // recoge el paquete (webhook picked_up/in_transit), con fallback a las 24h en
+      // el waEnvioJob si la transportadora nunca reporta el evento.
       return { shipment: row, labelUrl: label.labelUrl, tracking: label.tracking };
     } catch (e) {
       return sendSkyError(reply, e);

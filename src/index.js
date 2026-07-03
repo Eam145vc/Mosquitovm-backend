@@ -17,7 +17,8 @@ import { openDb, listAccounts, getAccount } from './storage.js';
 import { watchInbox } from './gmail-api.js';
 import { updateAccountHistory, updateAccountWatch, recordPayment, upsertDeviceFromStatus,
   setSubStatus, accountsToAutoSuspend, markNewlyExpired, listOrders, updateOrder, getOrder,
-  paymentsFor, requeueStaleWa, shipmentsAwaitingTracking, updateShipmentRow, listWaOutbox } from './storage.js';
+  paymentsFor, requeueStaleWa, shipmentsAwaitingTracking, updateShipmentRow, listWaOutbox,
+  listShipments } from './storage.js';
 import { fetchEfiStatus } from './efipay.js';
 import { sendActivationEmail } from './activation-email.js';
 import { enqueueWhatsApp } from './wa-enqueue.js';
@@ -292,16 +293,21 @@ async function main() {
   waReminderJob();
   setInterval(waReminderJob, 15 * 60 * 1000); // cada 15 min
 
-  // ── WhatsApp de guía de envío: completa los tracking async ─────────────────────
+  // ── WhatsApp de guía de envío ────────────────────────────────────────────────
+  // El WhatsApp de la guía se dispara cuando la transportadora RECOGE el paquete
+  // (webhook Skydropx picked_up/in_transit, ver /webhook/skydropx). Este job es el
+  // complemento: (a) completa el tracking asíncrono en la fila del envío, y
+  // (b) FALLBACK: si a las 24h de creado el envío el webhook nunca disparó el
+  // mensaje (transportadora que no reporta la recogida), lo manda igual.
   const WA_ENVIO_MAX_AGE = 48 * 3600 * 1000;
+  const WA_ENVIO_FALLBACK_MS = 24 * 3600 * 1000;
   const waEnvioJob = async () => {
     try {
+      // (a) completar el tracking asíncrono (la guía tarda unos segundos en Skydropx)
       const pend = shipmentsAwaitingTracking(Date.now() - WA_ENVIO_MAX_AGE);
       for (const sh of pend) {
         try {
-          // si ya hay fila 'envio' para esta orden, no re-consultar
-          const yaEncolado = listWaOutbox().some((w) => w.order_id === sh.order_id && w.kind === 'envio');
-          if (yaEncolado || !sh.skydropx_id) continue;
+          if (!sh.skydropx_id) continue;
           const label = extractLabel(await getShipment(sh.skydropx_id));
           if (!label.tracking) continue; // aún no listo
           updateShipmentRow(sh.id, {
@@ -310,11 +316,22 @@ async function main() {
             carrier: label.carrier || sh.carrier || null,
             status: label.labelUrl ? 'label_ready' : sh.status,
           });
-          const order = getOrder(sh.order_id);
-          if (order) enqueueWhatsApp(order, 'envio');
         } catch (e) {
           logger.warn({ shipmentId: sh.id, err: e.message }, 'wa: envío job fallo por shipment');
         }
+      }
+      // (b) fallback 24h: el webhook no reportó recogida y el cliente sigue sin su guía
+      const outbox = listWaOutbox();
+      const now = Date.now();
+      for (const sh of listShipments()) {
+        const age = now - sh.created_at;
+        if (age < WA_ENVIO_FALLBACK_MS || age > WA_ENVIO_MAX_AGE) continue;
+        if (!sh.tracking) continue;
+        // ya entregado o en devolución: mandar "va en camino" no tiene sentido
+        if (['delivered', 'in_return'].includes(sh.tracking_status || '')) continue;
+        if (outbox.some((w) => w.order_id === sh.order_id && w.kind === 'envio')) continue;
+        const order = getOrder(sh.order_id);
+        if (order) enqueueWhatsApp(order, 'envio');
       }
     } catch (e) {
       logger.error({ err: e.message }, 'wa: envío job error');
