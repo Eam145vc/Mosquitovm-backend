@@ -18,7 +18,7 @@ import { watchInbox } from './gmail-api.js';
 import { updateAccountHistory, updateAccountWatch, recordPayment, upsertDeviceFromStatus,
   setSubStatus, accountsToAutoSuspend, markNewlyExpired, listOrders, updateOrder, getOrder,
   paymentsFor, requeueStaleWa, shipmentsAwaitingTracking, updateShipmentRow, listWaOutbox,
-  listShipments } from './storage.js';
+  listShipments, cancelPendingWaByKinds } from './storage.js';
 import { fetchEfiStatus } from './efipay.js';
 import { sendActivationEmail } from './activation-email.js';
 import { enqueueWhatsApp } from './wa-enqueue.js';
@@ -347,6 +347,27 @@ async function main() {
     const n = requeueStaleWa(30 * 60 * 1000);
     if (n) logger.info({ n }, 'wa: mensajes colgados re-encolados');
   }, 10 * 60 * 1000);
+
+  // Barrida: cancela el onboarding pendiente ("sube tu QR") de órdenes que YA tienen
+  // el QR. Cubre los mensajes que quedaron en cola de ANTES de que existiera la
+  // cancelación al subir el QR (compras nocturnas con la PC apagada) y cualquier
+  // carrera que se escape. Corre al arrancar y luego cada 15 min.
+  const ONBOARDING_KINDS = ['activacion', 'recordatorio_3h', 'recordatorio_24h'];
+  const waOnboardingSweep = () => {
+    try {
+      let n = 0;
+      for (const w of listWaOutbox()) {
+        if (!['queued', 'sending'].includes(w.status) || !ONBOARDING_KINDS.includes(w.kind)) continue;
+        const o = getOrder(w.order_id);
+        if (o?.qr_path) n += cancelPendingWaByKinds(w.order_id, [w.kind]);
+      }
+      if (n) logger.info({ n }, 'wa: onboarding obsoleto cancelado (órdenes que ya tienen QR)');
+    } catch (e) {
+      logger.error({ err: e.message }, 'wa: sweep de onboarding error');
+    }
+  };
+  waOnboardingSweep();
+  setInterval(waOnboardingSweep, 15 * 60 * 1000);
 
   // Scheduler de posts de Instagram programados (publica los que ya vencieron, cada 60s).
   startIgScheduler();

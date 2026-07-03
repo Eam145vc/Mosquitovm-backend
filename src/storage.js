@@ -1021,8 +1021,11 @@ export function requeueWa(id) {
 
 export function cancelWa(id) {
   openDb();
+  // 'sending' también: un mensaje puede quedar colgado en ese estado si la PC del
+  // agente se apagó a mitad (si el agente SÍ lo estaba mandando, su markWaSent
+  // posterior lo deja 'sent' de todas formas).
   const info = db.prepare(
-    `UPDATE wa_outbox SET status = 'canceled' WHERE id = ? AND status = 'queued'`).run(id);
+    `UPDATE wa_outbox SET status = 'canceled' WHERE id = ? AND status IN ('queued','sending')`).run(id);
   return info.changes > 0;
 }
 
