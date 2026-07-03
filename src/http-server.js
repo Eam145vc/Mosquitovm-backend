@@ -51,7 +51,7 @@ import {
   claimWaPending, markWaSent,
   touchWaAgent, getWaSettings, setWaSettings, getWaAgentLastSeen, countWaByStatus,
   listWaOutbox, requeueWa, cancelWa, cancelPendingWaByKinds, cancelAllPendingWa,
-  getShipmentByOrder, updateShipmentRow,
+  getShipmentByOrder, updateShipmentRow, renameDeviceLocal,
 } from './storage.js';
 import { bogotaDayStart, DAY_MS } from './libreta-time.js';
 import { getShipment, extractLabel, fetchLabelPdf } from './skydropx.js';
@@ -2187,6 +2187,18 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
     const kind = ['activacion', 'recordatorio_3h', 'recordatorio_24h', 'envio', 'libreta'].includes(rawKind) ? rawKind : 'activacion';
     return { ok: enqueueWhatsAppForce(order, kind) };
+  });
+
+  // Renombrar el LOCAL de un device (nombre del comercio en los chips de La Libreta).
+  // Propaga el nombre a las ventas históricas de esa llave (renameDeviceLocal).
+  app.patch('/admin/devices/:spkr/local', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const name = String(req.body?.name || '').trim().slice(0, 40);
+    if (!name) return reply.code(400).send({ error: 'falta el nombre' });
+    const r = renameDeviceLocal(req.params.spkr, name);
+    if (!r) return reply.code(404).send({ error: 'device no encontrado' });
+    logger.info({ spkr: req.params.spkr, name, pagos: r.pagos }, 'local renombrado');
+    return { ok: true, pagos: r.pagos };
   });
 
   // Onboarding Fase 3: el frontend hace polling acá para (a) mostrar el OTP del banco y

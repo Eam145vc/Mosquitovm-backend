@@ -651,6 +651,36 @@ export function assignDevice(spkrId, orderId) {
  * Guarda la llave Bre-B (y datos del QR) de un device. Usado al subir el QR del local.
  * `key` debe venir ya normalizada (minúsculas, trim). `qrJson` es el objeto decodificado.
  */
+/** Renombra el LOCAL de un device (nombre del comercio que ve el cliente en los
+ *  chips de La Libreta) y PROPAGA el nombre a las ventas ya guardadas de esa llave
+ *  (cada fila de payments lleva su copia de local_name). Devuelve cuántos pagos
+ *  se actualizaron, o null si el device no existe. */
+export function renameDeviceLocal(spkrId, name) {
+  openDb();
+  const dev = db.prepare(
+    `SELECT d.spkr_id, d.breb_key, o.account_id
+     FROM devices d LEFT JOIN orders o ON o.id = d.order_id
+     WHERE d.spkr_id = ?`
+  ).get(spkrId);
+  if (!dev) return null;
+  db.prepare('UPDATE devices SET local_name = ?, updated_at = ? WHERE spkr_id = ?')
+    .run(name, Date.now(), spkrId);
+  let pagos = 0;
+  if (dev.account_id) {
+    if (dev.breb_key) {
+      pagos += db.prepare(
+        'UPDATE payments SET local_name = ? WHERE account_id = ? AND breb_key = ?'
+      ).run(name, dev.account_id, dev.breb_key).changes;
+    }
+    // Pagos atribuidos a este speaker sin llave (mono-local o Gmail): también.
+    pagos += db.prepare(
+      `UPDATE payments SET local_name = ? WHERE account_id = ? AND speaker_id = ?
+       AND (breb_key IS NULL OR breb_key = '')`
+    ).run(name, dev.account_id, spkrId).changes;
+  }
+  return { ok: true, pagos };
+}
+
 export function setDeviceBrebKey(spkrId, { key, qrJson = null, localName = null }) {
   openDb();
   return db.prepare(`UPDATE devices SET breb_key = ?, breb_qr_json = ?, local_name = ?, updated_at = ?
