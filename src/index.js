@@ -18,7 +18,7 @@ import { watchInbox } from './gmail-api.js';
 import { updateAccountHistory, updateAccountWatch, recordPayment, upsertDeviceFromStatus,
   setSubStatus, accountsToAutoSuspend, markNewlyExpired, listOrders, updateOrder, getOrder,
   paymentsFor, requeueStaleWa, shipmentsAwaitingTracking, updateShipmentRow, listWaOutbox,
-  listShipments, cancelPendingWaByKinds } from './storage.js';
+  listShipments, cancelPendingWaByKinds, cancelAllPendingWa } from './storage.js';
 import { fetchEfiStatus } from './efipay.js';
 import { sendActivationEmail } from './activation-email.js';
 import { enqueueWhatsApp } from './wa-enqueue.js';
@@ -348,20 +348,26 @@ async function main() {
     if (n) logger.info({ n }, 'wa: mensajes colgados re-encolados');
   }, 10 * 60 * 1000);
 
-  // Barrida: cancela el onboarding pendiente ("sube tu QR") de órdenes que YA tienen
-  // el QR. Cubre los mensajes que quedaron en cola de ANTES de que existiera la
-  // cancelación al subir el QR (compras nocturnas con la PC apagada) y cualquier
-  // carrera que se escape. Corre al arrancar y luego cada 15 min.
+  // Barrida de mensajes obsoletos en cola (al arrancar y cada 15 min):
+  // - orden ARCHIVADA → se cancela TODO lo pendiente (no se le manda nada);
+  // - orden que YA tiene su QR → se cancela el onboarding ("sube tu QR") pendiente.
+  // Cubre lo que quedó encolado de ANTES de estos fixes (compras nocturnas con la PC
+  // apagada) y cualquier carrera que se escape.
   const ONBOARDING_KINDS = ['activacion', 'recordatorio_3h', 'recordatorio_24h'];
   const waOnboardingSweep = () => {
     try {
-      let n = 0;
+      let nOnboarding = 0, nArchived = 0;
       for (const w of listWaOutbox()) {
-        if (!['queued', 'sending'].includes(w.status) || !ONBOARDING_KINDS.includes(w.kind)) continue;
+        if (!['queued', 'sending'].includes(w.status)) continue;
         const o = getOrder(w.order_id);
-        if (o?.qr_path) n += cancelPendingWaByKinds(w.order_id, [w.kind]);
+        if (!o) continue;
+        if (o.archived_at) { nArchived += cancelAllPendingWa(w.order_id); continue; }
+        if (ONBOARDING_KINDS.includes(w.kind) && o.qr_path) {
+          nOnboarding += cancelPendingWaByKinds(w.order_id, [w.kind]);
+        }
       }
-      if (n) logger.info({ n }, 'wa: onboarding obsoleto cancelado (órdenes que ya tienen QR)');
+      if (nOnboarding) logger.info({ n: nOnboarding }, 'wa: onboarding obsoleto cancelado (órdenes que ya tienen QR)');
+      if (nArchived) logger.info({ n: nArchived }, 'wa: mensajes de órdenes archivadas cancelados');
     } catch (e) {
       logger.error({ err: e.message }, 'wa: sweep de onboarding error');
     }

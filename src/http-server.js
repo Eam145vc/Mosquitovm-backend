@@ -49,7 +49,7 @@ import {
   markInboxReplied, saveOutboundMail,
   claimWaPending, markWaSent,
   touchWaAgent, getWaSettings, setWaSettings, getWaAgentLastSeen, countWaByStatus,
-  listWaOutbox, requeueWa, cancelWa, cancelPendingWaByKinds,
+  listWaOutbox, requeueWa, cancelWa, cancelPendingWaByKinds, cancelAllPendingWa,
   getShipmentByOrder, updateShipmentRow,
 } from './storage.js';
 import { getShipment, extractLabel, fetchLabelPdf } from './skydropx.js';
@@ -1100,6 +1100,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange) 
     if (!o) return reply.code(404).send({ error: 'orden no encontrada' });
     if (o.archived_at) return { ok: true, archived: true }; // ya archivada
     updateOrder(o.id, { prev_status: o.status, status: 'archivada', archived_at: Date.now() });
+    // Una orden archivada no le manda NADA al cliente: matar sus WhatsApps en cola.
+    const nCanceled = cancelAllPendingWa(o.id);
+    if (nCanceled) logger.info({ orderId: o.id, n: nCanceled }, 'wa: mensajes pendientes cancelados al archivar');
     logger.info({ orderId: o.id, business: o.business_name, prevStatus: o.status }, 'orden archivada (soft-delete)');
     return { ok: true, archived: true };
   });

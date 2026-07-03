@@ -145,6 +145,11 @@ export function buildWaBody(order, kind) {
  *  y, en los kinds de onboarding, también por (teléfono, kind) en ventana de 48h. */
 export function enqueueWhatsApp(order, kind) {
   if (!order) return false;
+  // Orden archivada (soft-delete): al cliente no se le manda NINGÚN mensaje automático.
+  if (order.archived_at) {
+    logger.info({ orderId: order.id, kind }, 'wa: orden archivada, no se encola');
+    return false;
+  }
   // Los mensajes de onboarding piden subir el QR: si la orden YA lo tiene, son ruido
   // (típico: compra nocturna con PC apagada, el cliente sube el QR de una y el pago se
   // confirma después). El envío manual del admin (enqueueWhatsAppForce) NO pasa por acá.

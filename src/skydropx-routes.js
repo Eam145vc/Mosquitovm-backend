@@ -105,10 +105,11 @@ export function registerSkydropxRoutes(app) {
       const order = getOrder(row.order_id);
       if (order) {
         // 'guia_creada' sale con el evento created (guía registrada: el cliente recibe
-        // su guía y REVISA los datos de entrega antes del despacho). Los estados
-        // posteriores también la aseguran (red por si created nunca llegó); idempotente
-        // por (orden, kind), así que si ya salió no se repite.
-        if (['created', 'picked_up', 'in_transit', 'last_mile'].includes(status)) {
+        // su guía y REVISA los datos de entrega antes del despacho). picked_up/in_transit
+        // también la aseguran (red por si created nunca llegó); en last_mile YA NO — con
+        // el paquete en reparto es tarde para revisar datos (además del fallback 24h del
+        // job). Idempotente por (orden, kind): si ya salió no se repite.
+        if (['created', 'picked_up', 'in_transit'].includes(status)) {
           try { enqueueGuiaCreadaIfReady(order); } catch { /* nunca bloquea el webhook */ }
         }
         const kind = {

@@ -1029,6 +1029,16 @@ export function cancelWa(id) {
   return info.changes > 0;
 }
 
+/** Cancela TODOS los mensajes pendientes (queued/sending) de una orden, sin importar
+ *  el kind. Usado al ARCHIVAR la orden: una orden archivada no manda nada. */
+export function cancelAllPendingWa(orderId) {
+  openDb();
+  const info = db.prepare(
+    `UPDATE wa_outbox SET status = 'canceled' WHERE order_id = ? AND status IN ('queued','sending')`
+  ).run(orderId);
+  return info.changes;
+}
+
 /** Cancela los mensajes PENDIENTES de una orden para ciertos kinds. Incluye los
  *  'sending' colgados (PC apagada): si el agente sí lo estaba enviando, su markWaSent
  *  posterior lo deja 'sent' igual. Usado al subir el QR para matar el onboarding viejo. */
