@@ -200,13 +200,20 @@ export function enqueueEnvioIfReady(order) {
   return enqueueWhatsApp(order, 'envio');
 }
 
+/** Corte: 'guia_creada' SOLO para envíos creados desde el 3-jul-2026 00:00 Bogotá.
+ *  Los envíos anteriores ya se gestionaron a mano — mandarles "revisa tus datos" con
+ *  el paquete viajando confunde (pasó al estrenar el webhook con pedidos viejos). */
+export const GUIA_CREADA_SINCE = 1783054800000; // 2026-07-03T00:00:00-05:00
+
 /** Encola el WhatsApp de guía creada (guía + revisar datos + COD + correo) si la
- *  orden tiene teléfono y el envío ya tiene número de guía (el texto lo muestra). */
+ *  orden tiene teléfono, el envío ya tiene número de guía (el texto lo muestra) y
+ *  el envío es de hoy (3-jul-2026) en adelante. */
 export function enqueueGuiaCreadaIfReady(order) {
   if (!order) return false;
   const phone = normalizePhoneCO(order.phone);
   if (!phone) { logger.warn({ orderId: order.id }, 'wa: guía creada sin teléfono'); return false; }
   const sh = getShipmentByOrder(order.id);
   if (!sh?.tracking) return false; // tracking async: lo tomará el job o el próximo evento
+  if ((sh.created_at || 0) < GUIA_CREADA_SINCE) return false; // envío viejo: no molestar
   return enqueueWhatsApp(order, 'guia_creada');
 }

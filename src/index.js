@@ -18,10 +18,10 @@ import { watchInbox } from './gmail-api.js';
 import { updateAccountHistory, updateAccountWatch, recordPayment, upsertDeviceFromStatus,
   setSubStatus, accountsToAutoSuspend, markNewlyExpired, listOrders, updateOrder, getOrder,
   paymentsFor, requeueStaleWa, shipmentsAwaitingTracking, updateShipmentRow, listWaOutbox,
-  listShipments, cancelPendingWaByKinds, cancelAllPendingWa } from './storage.js';
+  listShipments, cancelPendingWaByKinds, cancelAllPendingWa, getShipmentByOrder } from './storage.js';
 import { fetchEfiStatus } from './efipay.js';
 import { sendActivationEmail } from './activation-email.js';
-import { enqueueWhatsApp } from './wa-enqueue.js';
+import { enqueueWhatsApp, enqueueGuiaCreadaIfReady, GUIA_CREADA_SINCE } from './wa-enqueue.js';
 import { getShipment, extractLabel } from './skydropx.js';
 import { runWaReminderJob } from './wa-reminders.js';
 import * as announceLog from './announce-log.js';
@@ -333,7 +333,8 @@ async function main() {
         // mensaje viejo (kind 'envio' con toda la info) — no repetirles la guía.
         if (outbox.some((w) => w.order_id === sh.order_id && (w.kind === 'guia_creada' || w.kind === 'envio'))) continue;
         const order = getOrder(sh.order_id);
-        if (order) enqueueWhatsApp(order, 'guia_creada');
+        // enqueueGuiaCreadaIfReady aplica el corte GUIA_CREADA_SINCE (envíos viejos: no).
+        if (order) enqueueGuiaCreadaIfReady(order);
       }
     } catch (e) {
       logger.error({ err: e.message }, 'wa: envío job error');
@@ -356,7 +357,7 @@ async function main() {
   const ONBOARDING_KINDS = ['activacion', 'recordatorio_3h', 'recordatorio_24h'];
   const waOnboardingSweep = () => {
     try {
-      let nOnboarding = 0, nArchived = 0;
+      let nOnboarding = 0, nArchived = 0, nGuiaVieja = 0;
       for (const w of listWaOutbox()) {
         if (!['queued', 'sending'].includes(w.status)) continue;
         const o = getOrder(w.order_id);
@@ -365,9 +366,18 @@ async function main() {
         if (ONBOARDING_KINDS.includes(w.kind) && o.qr_path) {
           nOnboarding += cancelPendingWaByKinds(w.order_id, [w.kind]);
         }
+        // 'guia_creada' en cola de un envío ANTERIOR al corte: cancelarla (pedidos
+        // viejos ya gestionados a mano, no hay que mandarles "revisa tus datos").
+        if (w.kind === 'guia_creada') {
+          const sh = getShipmentByOrder(w.order_id);
+          if (!sh || (sh.created_at || 0) < GUIA_CREADA_SINCE) {
+            nGuiaVieja += cancelPendingWaByKinds(w.order_id, ['guia_creada']);
+          }
+        }
       }
       if (nOnboarding) logger.info({ n: nOnboarding }, 'wa: onboarding obsoleto cancelado (órdenes que ya tienen QR)');
       if (nArchived) logger.info({ n: nArchived }, 'wa: mensajes de órdenes archivadas cancelados');
+      if (nGuiaVieja) logger.info({ n: nGuiaVieja }, 'wa: guia_creada de envíos viejos cancelada');
     } catch (e) {
       logger.error({ err: e.message }, 'wa: sweep de onboarding error');
     }
