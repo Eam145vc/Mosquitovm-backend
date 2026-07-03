@@ -95,6 +95,12 @@ test('guia_creada contraentrega YA cobrada online (wompi_txn_id) => NO pide plat
   assert.doesNotMatch(body, /Pagas al recibir/);
 });
 
+test('libreta => incluye el link personal /libreta/?order=', () => {
+  const body = buildWaBody({ id: 'L1', business_name: 'Tienda', phone: '3001112233' }, 'libreta');
+  assert.match(body, /\/libreta\/\?order=L1/);
+  assert.match(body, /Libreta/);
+});
+
 test('guia_creada online => NO incluye bloque de pago', () => {
   createShipmentRow({ orderId: 'E8', tracking: 'G8', carrier: 'Envía' });
   const body = buildWaBody(

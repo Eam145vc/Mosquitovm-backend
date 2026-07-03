@@ -104,6 +104,16 @@ export function buildWaBody(order, kind) {
       `${hola} 📦 Tu Sonó ya está en manos de la transportadora, ¡va en camino! Te aviso cuando esté por llegar.`,
     ]);
   }
+  // 'libreta': el link privado de “La Libreta” del cliente. Lo dispara el admin
+  // manualmente (botón en el panel); cualquier orden de la cuenta abre toda la cuenta.
+  if (kind === 'libreta') {
+    const base = (config.FRONTEND_BASE_URL || 'https://sono.lat').replace(/\/$/, '');
+    const libretaLink = `${base}/libreta/?order=${order.id}`;
+    return pickVariant(order.id, [
+      `${hola} 📒 Esta es tu Libreta: ahí ves cada venta entrar en vivo, cuánto llevas hoy y tus mejores horas. Es tu enlace personal, guárdalo: ${libretaLink}`,
+      `${hola}, te comparto tu Libreta 📒 Tus ventas se apuntan solas y las ves desde cualquier celular, sin instalar nada: ${libretaLink}. Guárdalo: es tu enlace personal.`,
+    ]);
+  }
   // ── Avisos de tracking (webhook de Skydropx) ──────────────────────────────
   // 'reparto' (last_mile): el paquete sale a entrega HOY. En COD es el aviso clave:
   // que el cliente esté en el local y con el efectivo (las devoluciones las paga Sonó).
