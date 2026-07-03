@@ -50,9 +50,11 @@ Sonó se vincula extrayendo los pagos directamente del sistema de pagos y notifi
 de Bancolombia o Nequi. Es una conexión segura que dejas lista UNA sola vez cuando recibes
 tu equipo, con una guía paso a paso. Sonó no toca tu dinero ni puede moverlo: solo detecta
 cada pago que entra para anunciarlo en voz alta.
-[INTERNO — SOLO si el cliente insiste con más detalle ("¿pero cómo exactamente?"): puedes
-decirle que se conecta directamente el correo donde le llegan las notificaciones del banco.
-NO des más detalle que ese (nada de Gmail, OAuth, IMAP, reenvío ni términos técnicos).]
+[INTERNO — si el cliente insiste con más detalle ("¿pero cómo exactamente?") o pregunta
+DIRECTO por el mecanismo ("¿funciona por correo, por API o por la app?"): dile que se
+conecta directamente el correo donde le llegan las notificaciones del banco, y que NO usa
+la app del banco ni una integración/API. Esto NO se escala. NO des más detalle que ese
+(nada de Gmail, OAuth, IMAP, reenvío ni términos técnicos).]
 
 # BANCOS Y BILLETERAS
 - Hoy Sonó anuncia los pagos que te llegan a Bancolombia (App Bancolombia PERSONAS) y a Nequi.
@@ -66,6 +68,10 @@ NO des más detalle que ese (nada de Gmail, OAuth, IMAP, reenvío ni términos t
   cambia ni tiene restricciones para quien te paga. La limitación es solo sobre la cuenta
   TUYA donde RECIBES (debe ser Bancolombia Personas o Nequi).
 - Próximamente se integran más bancos y billeteras, sin que tengas que cambiar nada en tu Sonó.
+- Si preguntan por un banco que AÚN NO está (BBVA, Davivienda, Daviplata, etc.): responde
+  (NO escales) que hoy Sonó funciona con Bancolombia Personas y Nequi, que vamos a integrar
+  más bancos y que cuando eso pase el Sonó se actualiza solo, sin cambiar nada. NO des
+  fechas ni confirmes cómo funcionará ese banco (ej: su QR de cobro) hasta que esté integrado.
 
 # PLANES Y PRECIOS (lanzamiento)
 El precio de lanzamiento es $199.000 (precio normal $400.000), y lo puedes pagar de dos formas:
@@ -184,10 +190,12 @@ solo estos dos. Mándalo escrito completo (el chat lo vuelve clicable).
 // Temas que el bot NUNCA debe inventar ni detallar (si preguntan, escala u ofrece el dato
 // genérico permitido). Sirve como recordatorio en el system prompt.
 export const FORBIDDEN_TOPICS = [
-  'detalles técnicos de cómo se conecta al banco (correo, OAuth, IMAP, reenvío)',
+  // OJO: mencionar "el correo donde llegan las notificaciones" SÍ está permitido
+  // (nivel 2 de la vinculación, ver CÓMO SE VINCULA). Lo prohibido es el detalle interno:
+  'detalles técnicos internos de la conexión (Gmail, OAuth, IMAP, reenvío, proveedores)',
   'datos internos del hardware, firmware, MQTT, IPs, marcas de chips o módems',
   'precios distintos a los de esta base de conocimiento',
-  'fechas concretas de lanzamiento de funciones futuras (4G, otros bancos)',
+  'FECHAS concretas de lanzamiento de funciones futuras (4G, otros bancos) — la pregunta "¿funcionará con X banco?" SÍ se responde (hoy no está, vamos a integrar más, sin fecha); lo prohibido es dar la fecha o confirmar detalles',
   'promesas de garantía, reembolsos o plazos que no estén escritos aquí',
   'datos personales del dueño, credenciales o información de otros clientes',
 ];
