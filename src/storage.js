@@ -308,6 +308,23 @@ export function openDb() {
   ]);
   db.exec('CREATE INDEX IF NOT EXISTS idx_devices_breb_key ON devices(breb_key)');
 
+  // Historial de pagos enriquecido para "La Libreta". unrouted=1 = pago multipunto
+  // sin local (no sonó, el cliente lo ve como "local por confirmar"). msg_id =
+  // Message-ID del correo para dedupe idempotente. Filas viejas quedan NULL.
+  ensureColumns('payments', [
+    ['breb_key', 'TEXT'],
+    ['speaker_id', 'TEXT'],
+    ['local_name', 'TEXT'],
+    ['unrouted', 'INTEGER NOT NULL DEFAULT 0'],
+    ['msg_id', 'TEXT'],
+  ]);
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_msgid
+      ON payments(account_id, msg_id) WHERE msg_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_payments_account_rowid
+      ON payments(account_id, id);
+  `);
+
   return db;
 }
 
@@ -740,15 +757,20 @@ export function upsertDeviceFromStatus(spkrId, info = {}) {
 // Payments (historial de pagos detectados, por cuenta)
 // ---------------------------------------------------------------------------
 
-/** Guarda un pago detectado. Llamado al anunciar (junto al buffer en memoria). */
-export function recordPayment({ accountId, amount, bank, payer }) {
+/** Guarda un pago. `at` DEBE venir de announcePayment (mismo timestamp que
+ *  announce-log). Si msgId ya existe para la cuenta → no inserta (dedupe). */
+export function recordPayment({ accountId, amount, bank, payer, brebKey = null,
+  speakerId = null, localName = null, unrouted = false, msgId = null, at = Date.now() }) {
   openDb();
   if (!accountId) return null;
-  const at = Date.now();
   const info = db.prepare(
-    'INSERT INTO payments (account_id, amount, bank, payer, at) VALUES (?, ?, ?, ?, ?)'
-  ).run(accountId, amount ?? null, bank || null, payer || null, at);
-  return { id: info.lastInsertRowid, accountId, amount, bank, payer, at };
+    `INSERT OR IGNORE INTO payments
+       (account_id, amount, bank, payer, breb_key, speaker_id, local_name, unrouted, msg_id, at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(accountId, amount ?? null, bank || null, payer || null, brebKey || null,
+        speakerId || null, localName || null, unrouted ? 1 : 0, msgId || null, at);
+  if (info.changes === 0) return null; // duplicado por msg_id
+  return { id: info.lastInsertRowid, accountId, amount, bank, payer, brebKey, speakerId, localName, unrouted, at };
 }
 
 /** Últimos pagos de una cuenta (más recientes primero). */
@@ -756,8 +778,48 @@ export function paymentsFor(accountId, limit = 50) {
   openDb();
   if (!accountId) return [];
   return db.prepare(
-    'SELECT id, amount, bank, payer, at FROM payments WHERE account_id = ? ORDER BY at DESC LIMIT ?'
+    'SELECT id, amount, bank, payer, breb_key, speaker_id, local_name, unrouted, at FROM payments WHERE account_id = ? ORDER BY at DESC LIMIT ?'
   ).all(accountId, limit);
+}
+
+/** Agregado de ventas en [fromMs, toMs). Incluye unrouted; excluye montos nulos/<=0. */
+export function paymentsAggregate(accountId, fromMs, toMs) {
+  openDb();
+  return db.prepare(
+    `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n
+     FROM payments WHERE account_id = ? AND at >= ? AND at < ? AND amount > 0`
+  ).get(accountId, fromMs, toMs);
+}
+
+/** Histograma por hora Bogotá (0-23) desde fromMs. 18000000 = 5h en ms. */
+export function bestHours(accountId, fromMs, limit = 24) {
+  openDb();
+  return db.prepare(
+    `SELECT CAST(((at - 18000000) / 3600000) % 24 AS INTEGER) AS hour,
+            COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total
+     FROM payments WHERE account_id = ? AND at >= ? AND amount > 0
+     GROUP BY hour ORDER BY n DESC, total DESC LIMIT ?`
+  ).all(accountId, fromMs, limit);
+}
+
+/** Polling en vivo: filas con id > afterId, más nuevas primero. Pedir limit+1 para detectar gap. */
+export function paymentsAfter(accountId, afterId, limit = 51) {
+  openDb();
+  return db.prepare(
+    `SELECT id, amount, bank, local_name, unrouted, at
+     FROM payments WHERE account_id = ? AND id > ? AND amount > 0
+     ORDER BY id DESC LIMIT ?`
+  ).all(accountId, afterId, limit);
+}
+
+/** Paginación histórico: filas con id < beforeId (beforeId=Infinity → primera página). */
+export function paymentsPage(accountId, beforeId, limit = 30) {
+  openDb();
+  return db.prepare(
+    `SELECT id, amount, bank, local_name, unrouted, at
+     FROM payments WHERE account_id = ? AND id < ? AND amount > 0
+     ORDER BY id DESC LIMIT ?`
+  ).all(accountId, beforeId, limit);
 }
 
 // ── Buzón (catch-all) ─────────────────────────────────────────────────────────
