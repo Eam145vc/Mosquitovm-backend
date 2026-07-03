@@ -95,6 +95,19 @@ test('guia_creada contraentrega YA cobrada online (wompi_txn_id) => NO pide plat
   assert.doesNotMatch(body, /Pagas al recibir/);
 });
 
+// Antes de la ENTREGA CONFIRMADA ningún mensaje pide vincular el correo (pedirle
+// pasos técnicos al cliente antes de recibir crea fricción y devoluciones COD).
+test('mensajes pre-entrega NO mencionan la vinculación del correo; entregado SÍ', () => {
+  createShipmentRow({ orderId: 'PC1', tracking: 'GPC1', carrier: 'Envía', trackingUrl: 'http://t/GPC1' });
+  const order = { id: 'PC1', business_name: 'X', phone: '3001112233', address: 'Cra 1', city: 'Bogotá' };
+  for (const kind of ['guia_creada', 'envio', 'reparto', 'intento_entrega']) {
+    const body = buildWaBody(order, kind);
+    assert.doesNotMatch(body, /correo/i, `el kind "${kind}" no debe mencionar el correo`);
+    assert.doesNotMatch(body, /&correo=1/, `el kind "${kind}" no debe llevar el link de conexión`);
+  }
+  assert.match(buildWaBody(order, 'entregado'), /&correo=1/, 'entregado SÍ lleva el link de conexión');
+});
+
 test('libreta => incluye el link personal /libreta/?order=', () => {
   const body = buildWaBody({ id: 'L1', business_name: 'Tienda', phone: '3001112233' }, 'libreta');
   assert.match(body, /\/libreta\/\?order=L1/);

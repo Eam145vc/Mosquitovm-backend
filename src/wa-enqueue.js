@@ -80,20 +80,22 @@ export function buildWaBody(order, kind) {
   }
   // 'guia_creada' (webhook created): la guía quedó registrada. Es EL mensaje completo:
   // número de guía + rastreo + datos de entrega para que el cliente los revise ANTES
-  // del despacho (corregir a tiempo evita devoluciones) + COD + link del correo.
+  // del despacho (corregir a tiempo evita devoluciones) + COD. OJO: acá NO se
+  // menciona la vinculación del correo — pedirle pasos técnicos al cliente ANTES
+  // de recibir el paquete crea fricción y devoluciones COD. El correo se pide
+  // SOLO en 'entregado' (entrega confirmada).
   if (kind === 'guia_creada') {
     const sh = getShipmentByOrder(order.id);
     const guia = sh?.tracking || '';
     const carrier = sh?.carrier || 'la transportadora';
     const cod = codBlockFor(order);
-    const conectar = `\n\nCuando te llegue, conecta el correo donde te avisan tus pagos (2 min) y tu Sonó empieza a anunciar cada venta: ${emailLinkFor(order)}`;
     const datos = `\n\nRevisa que tus datos de entrega estén correctos:\n👤 ${order.business_name || 'Sin nombre'}\n📍 ${order.address || 'Sin dirección'}${order.city ? `, ${order.city}` : ''}\nSi algo está mal, escríbeme por aquí YA para corregirlo antes del despacho.`;
     const rastreo = sh?.tracking_url
       ? `\n\nSíguelo aquí: ${sh.tracking_url}`
       : (guia ? `\n\nRastréalo con ese número en la web de ${carrier}.` : '');
     return pickVariant(order.id, [
-      `${hola} 📦 ¡Tu Sonó ya tiene guía de envío! Guía ${guia} por ${carrier}.${datos}${cod}${rastreo}${conectar}`,
-      `${hola}, ¡listo! Ya se generó la guía de tu Sonó: ${guia} (${carrier}).${datos}${cod}${rastreo}${conectar}`,
+      `${hola} 📦 ¡Tu Sonó ya tiene guía de envío! Guía ${guia} por ${carrier}.${datos}${cod}${rastreo}`,
+      `${hola}, ¡listo! Ya se generó la guía de tu Sonó: ${guia} (${carrier}).${datos}${cod}${rastreo}`,
     ]);
   }
   // 'envio' (webhook picked_up/in_transit): la transportadora ya tiene el paquete.
@@ -215,7 +217,7 @@ export function enqueueEnvioIfReady(order) {
  *  el paquete viajando confunde (pasó al estrenar el webhook con pedidos viejos). */
 export const GUIA_CREADA_SINCE = 1783054800000; // 2026-07-03T00:00:00-05:00
 
-/** Encola el WhatsApp de guía creada (guía + revisar datos + COD + correo) si la
+/** Encola el WhatsApp de guía creada (guía + revisar datos + COD; SIN correo) si la
  *  orden tiene teléfono, el envío ya tiene número de guía (el texto lo muestra) y
  *  el envío es de hoy (3-jul-2026) en adelante. */
 export function enqueueGuiaCreadaIfReady(order) {
