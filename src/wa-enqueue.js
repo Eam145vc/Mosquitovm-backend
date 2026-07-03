@@ -78,30 +78,30 @@ export function buildWaBody(order, kind) {
       `${hola} 🙂 Te recuerdo subir tu QR de Bre-B para poder enviarte tu Sonó (2 min): ${link}`,
     ]);
   }
-  if (kind === 'envio') {
+  // 'guia_creada' (webhook created): la guía quedó registrada. Es EL mensaje completo:
+  // número de guía + rastreo + datos de entrega para que el cliente los revise ANTES
+  // del despacho (corregir a tiempo evita devoluciones) + COD + link del correo.
+  if (kind === 'guia_creada') {
     const sh = getShipmentByOrder(order.id);
     const guia = sh?.tracking || '';
     const carrier = sh?.carrier || 'la transportadora';
-    // Al despachar se entrega también el link para conectar el correo cuando le llegue
-    // el altavoz (el onboarding solo pidió el QR; este es el paso que quedó diferido).
-    // Si es contraentrega sin pagar, va primero cuánto debe pagar al mensajero (discriminado).
     const cod = codBlockFor(order);
     const conectar = `\n\nCuando te llegue, conecta el correo donde te avisan tus pagos (2 min) y tu Sonó empieza a anunciar cada venta: ${emailLinkFor(order)}`;
-    if (sh?.tracking_url) {
-      return pickVariant(order.id, [
-        `${hola}, tu Sonó ya va en camino 📦 Guía: ${guia} (${carrier}). Rástrealo aquí: ${sh.tracking_url}${cod}${conectar}`,
-        `${hola} 🚚 Tu Sonó fue despachado. Guía ${guia} por ${carrier}. Sigue tu envío: ${sh.tracking_url}${cod}${conectar}`,
-      ]);
-    }
-    if (guia) {
-      return pickVariant(order.id, [
-        `${hola}, tu Sonó ya va en camino 📦 Guía: ${guia} por ${carrier}. Rastréalo con ese número en la web de ${carrier}.${cod}${conectar}`,
-        `${hola} 🚚 Tu Sonó fue despachado. Guía ${guia} (${carrier}). Rastrea con ese número en ${carrier}.${cod}${conectar}`,
-      ]);
-    }
+    const datos = `\n\nRevisa que tus datos de entrega estén correctos:\n👤 ${order.business_name || 'Sin nombre'}\n📍 ${order.address || 'Sin dirección'}${order.city ? `, ${order.city}` : ''}\nSi algo está mal, escríbeme por aquí YA para corregirlo antes del despacho.`;
+    const rastreo = sh?.tracking_url
+      ? `\n\nSíguelo aquí: ${sh.tracking_url}`
+      : (guia ? `\n\nRastréalo con ese número en la web de ${carrier}.` : '');
     return pickVariant(order.id, [
-      `${hola}, tu Sonó ya fue despachado 📦 Pronto te llega.${cod}${conectar}`,
-      `${hola} 🚚 Tu Sonó va en camino, pronto lo recibes.${cod}${conectar}`,
+      `${hola} 📦 ¡Tu Sonó ya tiene guía de envío! Guía ${guia} por ${carrier}.${datos}${cod}${rastreo}${conectar}`,
+      `${hola}, ¡listo! Ya se generó la guía de tu Sonó: ${guia} (${carrier}).${datos}${cod}${rastreo}${conectar}`,
+    ]);
+  }
+  // 'envio' (webhook picked_up/in_transit): la transportadora ya tiene el paquete.
+  // Versión LIGHT a propósito: la guía/rastreo/COD ya fueron en 'guia_creada'.
+  if (kind === 'envio') {
+    return pickVariant(order.id, [
+      `${hola} 🚚 ¡Tu Sonó ya va en camino! La transportadora recogió el paquete. Te aviso cuando salga a entrega.`,
+      `${hola} 📦 Tu Sonó ya está en manos de la transportadora, ¡va en camino! Te aviso cuando esté por llegar.`,
     ]);
   }
   // ── Avisos de tracking (webhook de Skydropx) ──────────────────────────────
@@ -178,7 +178,7 @@ export function enqueueWhatsAppForce(order, kind) {
   return ok;
 }
 
-/** Encola WhatsApp de envío si la orden tiene teléfono y tracking. */
+/** Encola WhatsApp de envío ("ya va en camino", light) si la orden tiene teléfono y tracking. */
 export function enqueueEnvioIfReady(order) {
   if (!order) return false;
   const phone = normalizePhoneCO(order.phone);
@@ -186,4 +186,15 @@ export function enqueueEnvioIfReady(order) {
   const sh = getShipmentByOrder(order.id);
   if (!sh?.tracking) return false; // tracking async: lo tomará el job
   return enqueueWhatsApp(order, 'envio');
+}
+
+/** Encola el WhatsApp de guía creada (guía + revisar datos + COD + correo) si la
+ *  orden tiene teléfono y el envío ya tiene número de guía (el texto lo muestra). */
+export function enqueueGuiaCreadaIfReady(order) {
+  if (!order) return false;
+  const phone = normalizePhoneCO(order.phone);
+  if (!phone) { logger.warn({ orderId: order.id }, 'wa: guía creada sin teléfono'); return false; }
+  const sh = getShipmentByOrder(order.id);
+  if (!sh?.tracking) return false; // tracking async: lo tomará el job o el próximo evento
+  return enqueueWhatsApp(order, 'guia_creada');
 }

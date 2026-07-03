@@ -294,11 +294,11 @@ async function main() {
   setInterval(waReminderJob, 15 * 60 * 1000); // cada 15 min
 
   // ── WhatsApp de guía de envío ────────────────────────────────────────────────
-  // El WhatsApp de la guía se dispara cuando la transportadora RECOGE el paquete
-  // (webhook Skydropx picked_up/in_transit, ver /webhook/skydropx). Este job es el
-  // complemento: (a) completa el tracking asíncrono en la fila del envío, y
-  // (b) FALLBACK: si a las 24h de creado el envío el webhook nunca disparó el
-  // mensaje (transportadora que no reporta la recogida), lo manda igual.
+  // El webhook de Skydropx manda 'guia_creada' (guía + revisar datos) con el evento
+  // created y 'envio' light al recogerla la transportadora (ver /webhook/skydropx).
+  // Este job es el complemento: (a) completa el tracking asíncrono en la fila, y
+  // (b) FALLBACK: si a las 24h el webhook nunca disparó la guía creada (evento que
+  // no llegó), la manda igual — ningún cliente se queda sin su guía.
   const WA_ENVIO_MAX_AGE = 48 * 3600 * 1000;
   const WA_ENVIO_FALLBACK_MS = 24 * 3600 * 1000;
   const waEnvioJob = async () => {
@@ -320,18 +320,20 @@ async function main() {
           logger.warn({ shipmentId: sh.id, err: e.message }, 'wa: envío job fallo por shipment');
         }
       }
-      // (b) fallback 24h: el webhook no reportó recogida y el cliente sigue sin su guía
+      // (b) fallback 24h: el webhook nunca mandó la guía y el cliente sigue sin ella
       const outbox = listWaOutbox();
       const now = Date.now();
       for (const sh of listShipments()) {
         const age = now - sh.created_at;
         if (age < WA_ENVIO_FALLBACK_MS || age > WA_ENVIO_MAX_AGE) continue;
         if (!sh.tracking) continue;
-        // ya entregado o en devolución: mandar "va en camino" no tiene sentido
+        // ya entregado o en devolución: mandar la guía a estas alturas no tiene sentido
         if (['delivered', 'in_return'].includes(sh.tracking_status || '')) continue;
-        if (outbox.some((w) => w.order_id === sh.order_id && w.kind === 'envio')) continue;
+        // 'envio' también cuenta: los envíos previos a este cambio recibieron el
+        // mensaje viejo (kind 'envio' con toda la info) — no repetirles la guía.
+        if (outbox.some((w) => w.order_id === sh.order_id && (w.kind === 'guia_creada' || w.kind === 'envio'))) continue;
         const order = getOrder(sh.order_id);
-        if (order) enqueueWhatsApp(order, 'envio');
+        if (order) enqueueWhatsApp(order, 'guia_creada');
       }
     } catch (e) {
       logger.error({ err: e.message }, 'wa: envío job error');

@@ -11,7 +11,7 @@ import {
   createShipmentRow, getShipmentByOrder, getShipmentRow, updateShipmentRow, listShipments, deleteShipment,
   getShipmentByTrackingOrId,
 } from './storage.js';
-import { enqueueEnvioIfReady, enqueueWhatsApp } from './wa-enqueue.js';
+import { enqueueGuiaCreadaIfReady, enqueueWhatsApp } from './wa-enqueue.js';
 
 // Paquete por defecto del Cloud Speaker en su caja (editable por envío desde el admin).
 const DEFAULT_PARCEL = { length: 17, width: 10, height: 4, weight: 1 };
@@ -104,14 +104,16 @@ export function registerSkydropxRoutes(app) {
 
       const order = getOrder(row.order_id);
       if (order) {
-        // El WhatsApp de la guía sale cuando la transportadora RECIBE el paquete
-        // (picked_up/in_transit), no al imprimir la guía — así "va en camino" es real.
-        // 'created' NO dispara (el paquete sigue en la bodega). last_mile incluido por
-        // si la transportadora nunca reportó la recogida. Idempotente por (orden, kind).
-        if (['picked_up', 'in_transit', 'last_mile'].includes(status)) {
-          try { enqueueEnvioIfReady(order); } catch { /* nunca bloquea el webhook */ }
+        // 'guia_creada' sale con el evento created (guía registrada: el cliente recibe
+        // su guía y REVISA los datos de entrega antes del despacho). Los estados
+        // posteriores también la aseguran (red por si created nunca llegó); idempotente
+        // por (orden, kind), así que si ya salió no se repite.
+        if (['created', 'picked_up', 'in_transit', 'last_mile'].includes(status)) {
+          try { enqueueGuiaCreadaIfReady(order); } catch { /* nunca bloquea el webhook */ }
         }
         const kind = {
+          picked_up: 'envio',       // "ya va en camino" (light, sin guía ni links)
+          in_transit: 'envio',
           last_mile: 'reparto',
           delivery_attempt: 'intento_entrega',
           delivered: 'entregado',
@@ -293,9 +295,9 @@ export function registerSkydropxRoutes(app) {
       });
       // Marcar la orden como enviada (mismo estado que usa el flujo de despacho del admin).
       updateOrder(order.id, { status: 'shipped' });
-      // El WhatsApp de la guía YA NO sale acá: se dispara cuando la transportadora
-      // recoge el paquete (webhook picked_up/in_transit), con fallback a las 24h en
-      // el waEnvioJob si la transportadora nunca reporta el evento.
+      // El WhatsApp YA NO sale acá: el webhook manda 'guia_creada' con el evento
+      // created (guía + revisar datos) y 'envio' light al recogerla la transportadora
+      // (picked_up/in_transit), con fallback a las 24h en el waEnvioJob.
       return { shipment: row, labelUrl: label.labelUrl, tracking: label.tracking };
     } catch (e) {
       return sendSkyError(reply, e);
