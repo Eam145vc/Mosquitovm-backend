@@ -1315,6 +1315,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       delivery: o.delivery || 'online',
       // plan elegido: 'contado' | 'cuotas' (para mostrarlo en el admin)
       plan: o.plan || null,
+      // llave Bre-B vigente del local (la del device asignado; la de la orden es respaldo)
+      breb_key: (dev && dev.breb_key) || o.breb_key || null,
       // QR
       hasQr: Boolean(o.qr_path),
       qr_mime: o.qr_mime || null,
@@ -1370,6 +1372,26 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     }
     logger.info({ orderId: o.id, spkr_id, account: o.account_id || '(pendiente)' }, 'device asignado a la orden');
     return { ok: true, spkr_id, account_id: o.account_id || null };
+  });
+
+  // Vincular / editar / borrar MANUALMENTE la llave Bre-B de un local desde el admin.
+  // key vacío o null → borrar. Se guarda en el device asignado (lo que rutea) Y en la
+  // orden (respaldo que se transfiere si se reasigna speaker). qrJson va null: es un
+  // vínculo manual, sin QR decodificado.
+  app.post('/admin/orders/:order/breb-key', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const o = getOrder(req.params.order);
+    if (!o) return reply.code(404).send({ error: 'orden no encontrada' });
+    const body = req.body || {};
+    const key = body.key ? normalizeKey(String(body.key)) : null;
+    const name = key
+      ? (body.localName !== undefined ? (body.localName || null) : (o.local_name || o.business_name || null))
+      : null;
+    const dev = listDevices().find((d) => d.order_id === o.id);
+    if (dev) setDeviceBrebKey(dev.spkr_id, { key, qrJson: null, localName: name });
+    updateOrder(o.id, { breb_key: key, breb_qr_json: null, local_name: name });
+    logger.info({ orderId: o.id, spkr: dev ? dev.spkr_id : null, key }, key ? 'admin: llave Bre-B vinculada/editada manualmente' : 'admin: llave Bre-B borrada');
+    return { ok: true, key, spkr_id: dev ? dev.spkr_id : null };
   });
 
   // Desasignar un device de una orden (devolución / reasignar).

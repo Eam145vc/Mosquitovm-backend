@@ -79,7 +79,11 @@ export function extractBrebKey(emvco) {
   const c = t26.children;
 
   const t50 = tlv['50'];
-  const account = (t50 && t50.children && t50.children['01']) || null;
+  // 50.01 puede venir como string o como template anidado {val,children} (igual que los
+  // subtags de 26): tomar el valor crudo. Sin esto, la rama de llave numérica hacía
+  // normalizeKey de un objeto → "[object object]" guardado como llave (caso spkr-012).
+  const t50c = t50 && t50.children ? t50.children['01'] : null;
+  const account = typeof t50c === 'string' ? t50c : (t50c && t50c.val) || null;
   const merchantName = (typeof tlv['59'] === 'string' ? tlv['59'] : null);
 
   // El tipo de llave Bre-B va en el SUBTAG del tag 26 (verificado con QR reales):
