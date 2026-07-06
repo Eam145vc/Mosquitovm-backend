@@ -77,6 +77,35 @@ export async function createClientAlias({ name, forwardTo }) {
   }
 }
 
+/** Actualiza el DESTINO (recipients) de un alias existente SIN cambiar su nombre.
+ *  Para el redo del onboarding: el alias que el cliente ya puso en su banco es
+ *  inmutable; solo se corrige a dónde le llega su copia. Si el alias no existe en
+ *  FE (se creó en modo catch-all), se crea con el destino nuevo. */
+export async function updateClientAliasRecipients(name, forwardTo) {
+  if (!config.FE_API_TOKEN) return { skipped: true };
+  const domain = fwdDomain();
+  try {
+    const list = await fetch(`${FE_API}/domains/${domain}/aliases?name=${encodeURIComponent(name)}`, {
+      headers: { Authorization: authHeader() },
+    });
+    const arr = await list.json();
+    const hit = Array.isArray(arr) ? arr.find((a) => a.name === name) : null;
+    if (!hit) return createClientAlias({ name, forwardTo });
+    const params = new URLSearchParams({ recipients: forwardTo, is_enabled: 'true' });
+    const resp = await fetch(`${FE_API}/domains/${domain}/aliases/${hit.id}`, {
+      method: 'PUT',
+      headers: { Authorization: authHeader(), 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
+    });
+    if (resp.ok) return { ok: true, alias: name, updated: true };
+    const data = await resp.json().catch(() => ({}));
+    return { ok: false, error: data.message || `HTTP ${resp.status}` };
+  } catch (e) {
+    logger.error({ name, err: e.message }, 'forwardemail: updateClientAliasRecipients error');
+    return { ok: false, error: e.message };
+  }
+}
+
 /** Borra un alias por nombre (busca su id primero). Best-effort, no crítico. */
 export async function deleteClientAlias(name) {
   if (!config.FE_API_TOKEN) return { skipped: true };

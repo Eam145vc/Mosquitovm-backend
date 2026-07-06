@@ -58,7 +58,7 @@ import { getShipment, extractLabel, fetchLabelPdf } from './skydropx.js';
 import { decodeBrebImage, normalizeKey } from './breb-qr.js';
 import { parseEmail } from './parsers/index.js';
 import { simpleParser } from 'mailparser';
-import { generateAlias, createClientAlias } from './forwardemail.js';
+import { generateAlias, createClientAlias, updateClientAliasRecipients } from './forwardemail.js';
 import { maybeCaptureOtp, readOtp } from './otp-capture.js';
 import { isDuplicate } from './dedupe.js';
 import { isChangeConfirmation } from './change-confirm.js';
@@ -941,6 +941,27 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     if (self && self.alias && self.forwardTo === forwardTo) {
       linkOrderToAccount(order, accountId, 'redirect');
       logger.info({ orderId: order.id, alias: self.alias }, 'email-redirect: alias ya existente reusado (idempotente)');
+      return {
+        ok: true,
+        alias: `${self.alias}@${config.MAIL_DOMAIN}`,
+        forwardTo,
+        needsVerification: false,
+      };
+    }
+
+    // ALIAS INMUTABLE: la orden ya tiene alias pero el cliente escribió OTRO correo
+    // personal (typo la 1ª vez, o lo cambió). NO se genera alias nuevo — el alias que
+    // el banco ya puede tener configurado se conserva — y solo se actualiza el destino
+    // del reenvío (la copia que le llega al cliente; los pagos entran por el MX propio
+    // y no dependen de esto).
+    if (self && self.alias) {
+      const feUp = await updateClientAliasRecipients(self.alias, forwardTo);
+      if (!feUp.ok && !feUp.skipped) {
+        logger.warn({ orderId: order.id, alias: self.alias, err: feUp.error }, 'email-redirect: no se pudo actualizar destino en FE (se continúa)');
+      }
+      setAccountForward(accountId, { alias: self.alias, forwardTo });
+      linkOrderToAccount(order, accountId, 'redirect');
+      logger.info({ orderId: order.id, alias: self.alias, forwardTo }, 'email-redirect: alias conservado, destino actualizado');
       return {
         ok: true,
         alias: `${self.alias}@${config.MAIL_DOMAIN}`,
