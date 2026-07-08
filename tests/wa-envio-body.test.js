@@ -108,6 +108,12 @@ test('mensajes pre-entrega NO mencionan la vinculación del correo; entregado S�
   assert.match(buildWaBody(order, 'entregado'), /&correo=1/, 'entregado SÍ lleva el link de conexión');
 });
 
+test('correo (manual post-entrega) => incluye el link &correo=1', () => {
+  const body = buildWaBody({ id: 'CM1', business_name: 'Tienda', phone: '3001112233' }, 'correo');
+  assert.match(body, /&correo=1/);
+  assert.match(body, /correo/i);
+});
+
 test('libreta => incluye el link personal /libreta/?order=', () => {
   const body = buildWaBody({ id: 'L1', business_name: 'Tienda', phone: '3001112233' }, 'libreta');
   assert.match(body, /\/libreta\/\?order=L1/);

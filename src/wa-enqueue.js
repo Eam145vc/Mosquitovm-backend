@@ -116,6 +116,15 @@ export function buildWaBody(order, kind) {
       `${hola}, te comparto tu Libreta 📒 Tus ventas se apuntan solas y las ves desde cualquier celular, sin instalar nada: ${libretaLink}. Guárdalo: es tu enlace personal.`,
     ]);
   }
+  // 'correo': pedir la conexión del correo (el paso final). Se manda MANUAL desde
+  // el admin cuando la entrega ya está confirmada — NUNCA antes: pedirle pasos
+  // técnicos al cliente sin haber recibido crea fricción y devoluciones COD.
+  if (kind === 'correo') {
+    return pickVariant(order.id, [
+      `${hola} 👋 ¿Ya tienes tu Sonó contigo? Falta un solo paso para que anuncie tus ventas: conecta el correo donde te avisan los pagos (2 min, desde el celular): ${emailLinkFor(order)}`,
+      `${hola}, para que tu Sonó empiece a cantar tus ventas solo falta conectar el correo donde te llegan los avisos de pago (2 min): ${emailLinkFor(order)}. Si te trabas, escríbeme por aquí.`,
+    ]);
+  }
   // ── Avisos de tracking (webhook de Skydropx) ──────────────────────────────
   // 'reparto' (last_mile): el paquete sale a entrega HOY. En COD es el aviso clave:
   // que el cliente esté en el local y con el efectivo (las devoluciones las paga Sonó).

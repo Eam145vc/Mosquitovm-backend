@@ -2238,7 +2238,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     const { order: orderId, kind: rawKind } = req.body || {};
     const order = getOrder(orderId);
     if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
-    const kind = ['activacion', 'recordatorio_3h', 'recordatorio_24h', 'envio', 'libreta'].includes(rawKind) ? rawKind : 'activacion';
+    const kind = ['activacion', 'recordatorio_3h', 'recordatorio_24h', 'envio', 'libreta', 'correo'].includes(rawKind) ? rawKind : 'activacion';
     return { ok: enqueueWhatsAppForce(order, kind) };
   });
 
