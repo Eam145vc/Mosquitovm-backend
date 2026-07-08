@@ -95,14 +95,20 @@ test('resumen ok: shape exacto y whitelist estricta (nada de infra ni PII)', asy
 
   // Keys EXACTAS del shape A9.2 (ni una más: cada key extra es superficie de fuga).
   assert.deepEqual(Object.keys(body).sort(), [
-    'bestHours', 'businessName', 'emailConnected', 'latestId', 'locales', 'multi',
-    'nextBefore', 'now', 'ok', 'payments', 'sub', 'today', 'yesterday',
+    'bestHours', 'businessName', 'cuenta', 'emailConnected', 'latestId', 'locales', 'month', 'multi',
+    'nextBefore', 'now', 'ok', 'payments', 'prevMonthToDate', 'sub', 'today', 'yesterday',
   ]);
+  assert.deepEqual(Object.keys(body.month).sort(), ['count', 'startAt', 'total']);
+  assert.deepEqual(Object.keys(body.prevMonthToDate).sort(), ['count', 'total']);
   assert.deepEqual(Object.keys(body.payments[0]).sort(), ['amount', 'at', 'bank', 'id', 'key', 'local', 'unrouted']);
   assert.deepEqual(Object.keys(body.locales[0]).sort(), ['estado', 'key', 'lastSeenAt', 'name']);
   assert.deepEqual(Object.keys(body.sub).sort(), ['daysLeft', 'readOnly', 'state']);
   assert.deepEqual(Object.keys(body.today).sort(), ['count', 'startAt', 'total']);
   assert.deepEqual(Object.keys(body.yesterday).sort(), ['count', 'total']);
+  assert.deepEqual(Object.keys(body.cuenta).sort(), ['cuotas', 'nextChargeAt', 'plan', 'sonos']);
+  assert.equal(body.cuenta.sonos, 2, 'dos devices asignados → 2 Sonós');
+  assert.equal(body.cuenta.plan, 'contado');
+  assert.deepEqual(body.cuenta.cuotas, [], 'contado no debe traer cuotas pendientes');
 
   // Whitelist: el JSON serializado NO puede contener infra ni datos privados.
   // La llave Bre-B del PROPIO cliente SÍ se expone (campo `key`): es su dato (está
@@ -287,6 +293,176 @@ test('montos gigantes: $99.999.999 suma y se lista sin overflow', async () => {
   assert.equal(body.payments[0].amount, 99_999_999);
   const feed = (await get(`/libreta/${o}/feed?after=0`)).json();
   assert.equal(feed.payments[0].amount, 99_999_999);
+});
+
+// ── Cierre de mes ────────────────────────────────────────────────────────────
+
+test('month y prevMonthToDate: mes Bogotá a la fecha vs mes pasado al MISMO punto', async () => {
+  const acc = mkCuenta();
+  const o = mkOrdenPagada({ accountId: acc });
+  const now = Date.now();
+  const OFF = 5 * 3600_000;
+  const d = new Date(now - OFF);
+  const monthStart = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) + OFF;
+  const prevStart = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1) + OFF;
+
+  s.recordPayment({ accountId: acc, amount: 40000, bank: 'nequi', at: now - 1000 });     // este mes
+  s.recordPayment({ accountId: acc, amount: 25000, bank: 'x', at: prevStart + 1000 });   // mes pasado, antes del corte
+
+  const body = (await get(`/libreta/${o}`)).json();
+  assert.equal(body.month.total, 40000);
+  assert.equal(body.month.count, 1);
+  assert.equal(body.month.startAt, monthStart);
+  assert.equal(body.prevMonthToDate.total, 25000, 'el pago temprano del mes pasado SÍ cuenta');
+
+  // Un pago del mes pasado DESPUÉS del punto equivalente NO cuenta en la comparativa
+  // (solo verificable si ese instante sigue cayendo dentro del mes pasado).
+  const fueraDeCorte = prevStart + (now - monthStart) + 3600_000;
+  if (fueraDeCorte < monthStart) {
+    s.recordPayment({ accountId: acc, amount: 99000, bank: 'x', at: fueraDeCorte });
+    const b2 = (await get(`/libreta/${o}`)).json();
+    assert.equal(b2.prevMonthToDate.total, 25000, 'lo del mes pasado más allá del corte no compara');
+    assert.equal(b2.month.total, 40000, 'y tampoco se cuela en el mes actual');
+  }
+
+  // El feed en vivo también trae month (una venta nueva no deja la tarjeta vieja).
+  const feed = (await get(`/libreta/${o}/feed?after=0`)).json();
+  assert.equal(feed.month.total, 40000);
+  assert.equal(feed.month.startAt, monthStart);
+});
+
+// ── Cuenta (Sonós, plan, cuotas) ─────────────────────────────────────────────
+
+test('cuenta con plan cuotas: próxima cuota con monto del scheduler, fecha y estado', async () => {
+  const acc = mkCuenta();
+  const o = s.createOrder({ amountCents: 8_100_000 }); // 1ª cuota $81.000 (69k + envío 12k)
+  const proximaAt = Date.now() + 30 * 24 * 3600 * 1000;
+  s.updateOrder(o, {
+    status: 'paid', business_name: 'Cuotas SAS', account_id: acc,
+    plan: 'cuotas', installments_total: 3, installments_paid: 1,
+    installment_next_at: proximaAt, installments_state: 'al_dia',
+    next_charge_at: Date.now() + 300 * 24 * 3600 * 1000,
+    card_token: 'tok-secreto-no-fugar',
+  });
+
+  const body = (await get(`/libreta/${o}`)).json();
+  assert.equal(body.cuenta.plan, 'cuotas');
+  assert.equal(body.cuenta.cuotas.length, 1);
+  assert.deepEqual(body.cuenta.cuotas[0], {
+    pagadas: 1, total: 3, monto: 81000, proximaAt, estado: 'al_dia',
+  });
+  assert.equal(typeof body.cuenta.nextChargeAt, 'number');
+  // El token de la tarjeta JAMÁS puede viajar a La Libreta.
+  const raw2 = JSON.stringify(body);
+  assert.ok(!raw2.includes('tok-secreto'), 'card_token no debe fugarse');
+  assert.ok(!raw2.includes('card_token'), 'ni siquiera el nombre del campo');
+
+  // Plan completado → desaparece de cuotas pendientes.
+  s.updateOrder(o, { installments_paid: 3, installment_next_at: null, installments_state: 'completado' });
+  const body2 = (await get(`/libreta/${o}`)).json();
+  assert.deepEqual(body2.cuenta.cuotas, []);
+});
+
+// ── Filtro por fecha (?day=) ─────────────────────────────────────────────────
+
+// Epoch ms de una hora local Bogotá (UTC-5 fijo).
+const bog = (y, mo, d, h = 0, mi = 0) => Date.UTC(y, mo - 1, d, h + 5, mi);
+
+test('feed day: solo las ventas de ese día Bogotá, con cierre {total,count} y shape exacto', async () => {
+  const acc = mkCuenta();
+  const o = mkOrdenPagada({ accountId: acc });
+  // Bordes del día Bogotá: 30-jun 23:59 y 2-jul 00:10 NO son del 1-jul.
+  s.recordPayment({ accountId: acc, amount: 1000, bank: 'nequi', at: bog(2026, 6, 30, 23, 59) });
+  s.recordPayment({ accountId: acc, amount: 2000, bank: 'bancolombia', at: bog(2026, 7, 1, 0, 0) });
+  s.recordPayment({ accountId: acc, amount: 3000, bank: 'nequi', at: bog(2026, 7, 1, 23, 59) });
+  s.recordPayment({ accountId: acc, amount: 4000, bank: 'daviplata', at: bog(2026, 7, 2, 0, 10) });
+
+  const r = await get(`/libreta/${o}/feed?day=2026-07-01`);
+  assert.equal(r.statusCode, 200);
+  const body = r.json();
+  assert.deepEqual(Object.keys(body).sort(), ['day', 'dayTotal', 'nextBefore', 'now', 'ok', 'payments']);
+  assert.equal(body.day, '2026-07-01');
+  assert.deepEqual(body.dayTotal, { total: 5000, count: 2, startAt: bog(2026, 7, 1) });
+  assert.deepEqual(body.payments.map((p) => p.amount), [3000, 2000], 'más recientes primero, solo el 1-jul');
+  assert.equal(body.nextBefore, null, 'página corta = día completo en una página');
+  // Whitelist: mismas keys de libRow (nada de infra ni PII).
+  assert.deepEqual(Object.keys(body.payments[0]).sort(), ['amount', 'at', 'bank', 'id', 'key', 'local', 'unrouted']);
+
+  const vacio = (await get(`/libreta/${o}/feed?day=2026-07-03`)).json();
+  assert.deepEqual(vacio.payments, []);
+  assert.deepEqual(vacio.dayTotal, { total: 0, count: 0, startAt: bog(2026, 7, 3) });
+});
+
+test('feed day pagina dentro del día con &before= y el cierre no cambia entre páginas', async () => {
+  const acc = mkCuenta();
+  const o = mkOrdenPagada({ accountId: acc });
+  for (let i = 1; i <= 60; i++) {
+    s.recordPayment({ accountId: acc, amount: 100 + i, bank: 'x', at: bog(2026, 7, 5, 8, 0) + i * 1000 });
+  }
+  s.recordPayment({ accountId: acc, amount: 999, bank: 'x', at: bog(2026, 7, 6, 9, 0) }); // otro día: no cuela
+
+  const p1 = (await get(`/libreta/${o}/feed?day=2026-07-05`)).json();
+  assert.equal(p1.payments.length, 50);
+  assert.equal(p1.dayTotal.count, 60, 'el cierre es del día ENTERO, no de la página');
+  assert.ok(p1.nextBefore, 'hay segunda página');
+
+  const p2 = (await get(`/libreta/${o}/feed?day=2026-07-05&before=${p1.nextBefore}`)).json();
+  assert.equal(p2.payments.length, 10);
+  assert.equal(p2.nextBefore, null);
+  assert.equal(p2.dayTotal.count, 60);
+  const ids = new Set([...p1.payments, ...p2.payments].map((p) => p.id));
+  assert.equal(ids.size, 60, 'sin solapes ni faltantes entre páginas');
+  assert.ok(![...p1.payments, ...p2.payments].some((p) => p.amount === 999), 'el pago de otro día no aparece');
+});
+
+test('feed day malformado o inexistente → 404 uniforme (mismo body del resto)', async () => {
+  const acc = mkCuenta();
+  const o = mkOrdenPagada({ accountId: acc });
+  for (const malo of ['2026-02-31', '2026-13-01', 'ayer', '01-07-2026', '']) {
+    const r = await get(`/libreta/${o}/feed?day=${encodeURIComponent(malo)}`);
+    assert.equal(r.statusCode, 404, `day="${malo}" debe dar 404`);
+    assert.deepEqual(r.json(), { error: 'no encontrada' });
+  }
+});
+
+// ── Acceso a mi Libreta (reenvío del enlace por WhatsApp) ────────────────────
+
+const postAcceso = (phone) => app.inject({
+  method: 'POST', url: '/libreta-acceso',
+  headers: { 'content-type': 'application/json' },
+  payload: { phone },
+});
+
+test('libreta-acceso: teléfono con orden pagada → encola WhatsApp kind libreta con el link', async () => {
+  const acc = mkCuenta();
+  const o = mkOrdenPagada({ accountId: acc, businessName: 'Acceso SAS' });
+  s.updateOrder(o, { phone: '300 111 2233' });
+
+  const r = await postAcceso('3001112233');
+  assert.equal(r.statusCode, 200);
+  assert.deepEqual(r.json(), { ok: true });
+
+  const fila = raw.prepare("SELECT * FROM wa_outbox WHERE order_id = ? AND kind = 'libreta'").get(o);
+  assert.ok(fila, 'debe quedar encolado el WhatsApp');
+  assert.equal(fila.phone, '573001112233');
+  assert.ok(fila.body.includes(`/libreta/?order=${o}`), 'el body lleva el link de la Libreta');
+});
+
+test('libreta-acceso: teléfono desconocido o de orden archivada → mismo ok:true y NO encola', async () => {
+  const antes = raw.prepare('SELECT COUNT(*) AS n FROM wa_outbox').get().n;
+
+  const r1 = await postAcceso('3009998877'); // nadie tiene este número
+  assert.equal(r1.statusCode, 200);
+  assert.deepEqual(r1.json(), { ok: true }, 'sin match responde IGUAL (sin oráculo)');
+
+  const archivada = mkOrdenPagada({ businessName: 'Archivada SAS' });
+  s.updateOrder(archivada, { phone: '3007776655', prev_status: 'paid', status: 'archivada', archived_at: Date.now() });
+  const r2 = await postAcceso('3007776655');
+  assert.equal(r2.statusCode, 200);
+  assert.deepEqual(r2.json(), { ok: true });
+
+  const despues = raw.prepare('SELECT COUNT(*) AS n FROM wa_outbox').get().n;
+  assert.equal(despues, antes, 'ni el desconocido ni la archivada encolan nada');
 });
 
 // ── Cache ─────────────────────────────────────────────────────────────────────

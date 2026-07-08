@@ -45,7 +45,7 @@ import {
   setDeviceBrebKey, listDevicesByAccount, findDeviceByKey,
   updateAccountHistory, updateAccountWatch, setAccountForward, findAccountByForward, markChangeConfirmed,
   paymentsFor, subState, setSubStatus,
-  recordPayment, paymentsAggregate, bestHours, paymentsAfter, paymentsPage,
+  recordPayment, paymentsAggregate, bestHours, paymentsAfter, paymentsPage, paymentsPageRange,
   saveInboxMail, listInbox, getInboxMail, markInboxSeen, deleteInboxMail, unseenInboxCount,
   markInboxReplied, saveOutboundMail,
   claimWaPending, markWaSent,
@@ -53,7 +53,7 @@ import {
   listWaOutbox, requeueWa, cancelWa, cancelPendingWaByKinds, cancelAllPendingWa,
   getShipmentByOrder, updateShipmentRow, renameDeviceLocal,
 } from './storage.js';
-import { bogotaDayStart, DAY_MS } from './libreta-time.js';
+import { bogotaDayStart, bogotaDayStartFromKey, bogotaMonthStart, bogotaPrevMonthStart, DAY_MS } from './libreta-time.js';
 import { getShipment, extractLabel, fetchLabelPdf } from './skydropx.js';
 import { decodeBrebImage, normalizeKey } from './breb-qr.js';
 import { parseEmail } from './parsers/index.js';
@@ -68,7 +68,7 @@ import { createStripeCheckout, fetchStripeSession } from './stripe.js';
 import { generatePaymentLink, chargeCard, chargePse, chargeBreb, chargeCash, getResource, fetchEfiTransaction, fetchEfiStatus, isValidEfiWebhook, parseEfiWebhook, tokenizeCard } from './efipay.js';
 import * as announceLog from './announce-log.js';
 import { sendActivationEmail } from './activation-email.js';
-import { enqueueWhatsApp, enqueueWhatsAppForce } from './wa-enqueue.js';
+import { enqueueWhatsApp, enqueueWhatsAppForce, normalizePhoneCO } from './wa-enqueue.js';
 import { publishVoice, publishCommand } from './mqtt-publisher.js';
 import { buildVoiceMessage } from './amount-to-wavs.js';
 import { startLatency, markVoicePublished } from './latency.js';
@@ -2509,6 +2509,30 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     };
   }
 
+  // "Tu cuenta" del resumen: datos de la PROPIA compra del cliente (nada de infra).
+  // El monto de cada cuota es EXACTAMENTE lo que cobra installments-scheduler
+  // (amount_cents de la orden); las cuotas 2 y 3 caen a +30d y +60d del checkout.
+  function libCuenta(accId, main, locales) {
+    const cuotas = listOrders()
+      .filter((o) => o.account_id === accId && PAID_STATES.includes(o.status)
+        && o.plan === 'cuotas'
+        && o.installments_state !== 'completado'
+        && (o.installments_paid || 0) < (o.installments_total || 3))
+      .map((o) => ({
+        pagadas: o.installments_paid || 0,
+        total: o.installments_total || 3,
+        monto: Math.round(o.amount_cents / 100),   // pesos, igual que cobra el scheduler
+        proximaAt: o.installment_next_at || null,  // null = sin reintento programado (manual)
+        estado: o.installments_state || 'al_dia',  // al_dia | en_mora | suspendido | sin_token
+      }));
+    return {
+      sonos: locales.length,
+      plan: main?.plan === 'cuotas' ? 'cuotas' : 'contado',
+      nextChargeAt: main?.next_charge_at || null,  // renovación anual (null = sin fecha aún)
+      cuotas,
+    };
+  }
+
   // Resumen: total de hoy/ayer, mejores horas (14 días), locales, sub y 1ª página del feed.
   app.get('/libreta/:order', async (req, reply) => {
     const r = resolveLibreta(req, reply);
@@ -2524,6 +2548,14 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     const todayStart = bogotaDayStart(now);
     const today = paymentsAggregate(acc.id, todayStart, now + 1);
     const yesterday = paymentsAggregate(acc.id, todayStart - DAY_MS, todayStart);
+    // Cierre de mes: mes calendario Bogotá a la fecha, comparado contra el mes
+    // ANTERIOR cortado en el MISMO punto (día/hora equivalente) — comparar contra
+    // el mes pasado entero haría "perder" siempre a inicio de mes.
+    const monthStart = bogotaMonthStart(now);
+    const prevStart = bogotaPrevMonthStart(now);
+    const prevCut = Math.min(prevStart + (now - monthStart) + 1, monthStart);
+    const month = paymentsAggregate(acc.id, monthStart, now + 1);
+    const prevMonthToDate = paymentsAggregate(acc.id, prevStart, prevCut);
     const hours = bestHours(acc.id, now - 14 * DAY_MS, 24);
     const rows = paymentsPage(acc.id, Number.MAX_SAFE_INTEGER, 50);
     return {
@@ -2532,8 +2564,11 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       now,                                                    // reloj del server (la UI calcula offset)
       today:     { total: today.total, count: today.n, startAt: todayStart },
       yesterday: { total: yesterday.total, count: yesterday.n },
+      month:     { total: month.total, count: month.n, startAt: monthStart },
+      prevMonthToDate: { total: prevMonthToDate.total, count: prevMonthToDate.n },
       bestHours: hours.map((h) => ({ hour: h.hour, count: h.n, total: h.total })),
       locales, multi: locales.length > 1, sub: sub,
+      cuenta: libCuenta(acc.id, main, locales),
       payments: rows.map(libRow),
       nextBefore: rows.length === 50 ? rows[rows.length - 1].id : null,
       latestId: rows.length ? rows[0].id : 0,
@@ -2547,6 +2582,25 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     const { acc } = r;
     const now = Date.now();
     if (!acc) return { ok: true, emailConnected: false, payments: [], now };
+
+    // Filtro por fecha: ?day=YYYY-MM-DD (día calendario Bogotá) → ventas de ese día
+    // + su cierre {total,count}, paginable DENTRO del día con &before=. Día que no
+    // es una fecha real → 404 uniforme (la UI solo manda días válidos).
+    if (req.query.day !== undefined) {
+      const dayStart = bogotaDayStartFromKey(req.query.day);
+      if (dayStart === null) return reply.code(404).send({ error: 'no encontrada' });
+      const dayEnd = dayStart + DAY_MS;
+      const before = Number.parseInt(req.query.before, 10);
+      const cursor = Number.isFinite(before) && before > 0 ? before : Number.MAX_SAFE_INTEGER;
+      const rows = paymentsPageRange(acc.id, dayStart, dayEnd, cursor, 50);
+      const agg = paymentsAggregate(acc.id, dayStart, dayEnd);
+      return {
+        ok: true, now, day: String(req.query.day),
+        dayTotal: { total: agg.total, count: agg.n, startAt: dayStart },
+        payments: rows.map(libRow),
+        nextBefore: rows.length === 50 ? rows[rows.length - 1].id : null,
+      };
+    }
 
     const before = Number.parseInt(req.query.before, 10);
     if (Number.isFinite(before) && before > 0) {              // historial hacia atrás
@@ -2563,14 +2617,51 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     if (gap) rows = rows.slice(0, 50);
     const todayStart = bogotaDayStart(now);
     const today = paymentsAggregate(acc.id, todayStart, now + 1);
+    const monthStart = bogotaMonthStart(now);
+    const month = paymentsAggregate(acc.id, monthStart, now + 1);
     return {
       ok: true, now, gap,
       payments: rows.map(libRow),
       latestId: rows.length ? rows[0].id : after,
       today: { total: today.total, count: today.n, startAt: todayStart },
+      month: { total: month.total, count: month.n, startAt: monthStart },
       locales: libLocales(acc.id, acc, now),
       sub: libSub(acc).sub,
     };
+  });
+
+  // "Acceso a mi Libreta": el cliente que no tiene el enlace mete su celular y, si
+  // coincide con una orden, se le REENVÍA el link por WhatsApp AL número registrado.
+  // El número NUNCA sirve para entrar directo ni el link se muestra en pantalla
+  // (cualquiera puede saber tu teléfono; solo el dueño del WhatsApp recibe el link).
+  // Respuesta SIEMPRE uniforme {ok:true}: sin oráculo de qué números existen.
+  // (Vive FUERA de /libreta/* a propósito: esa ruta sigue siendo 100% GET.)
+  app.post('/libreta-acceso', async (req, reply) => {
+    reply.header('cache-control', 'no-store');
+    const ip = req.ip;
+    if (rlHit(`libacc:${ip}`, 10 * 60_000, 5)) {
+      return reply.code(429).send({ error: 'demasiadas solicitudes' });
+    }
+    const phone = normalizePhoneCO((req.body || {}).phone);
+    if (phone) {
+      // por teléfono: máx 2 reenvíos/hora (el mensajero de WhatsApp no es spam)
+      if (rlHit(`libaccph:${phone}`, 60 * 60_000, 2)) {
+        return reply.code(429).send({ error: 'demasiadas solicitudes' });
+      }
+      // La orden pagada MÁS RECIENTE de ese teléfono (cualquier orden abre toda la
+      // cuenta). Archivadas jamás: archivar = kill-switch también de este reenvío.
+      const match = listOrders()
+        .filter((o) => !o.archived_at && PAID_STATES.includes(o.status)
+          && normalizePhoneCO(o.phone) === phone)
+        .sort((a, b) => (b.created_at || 0) - (a.created_at || 0))[0];
+      if (match) {
+        enqueueWhatsAppForce(match, 'libreta');
+        logger.info({ orderId: match.id }, 'libreta-acceso: enlace reenviado por WhatsApp');
+      } else {
+        logger.info({ phone: phone.slice(-4) }, 'libreta-acceso: teléfono sin orden, no se encola');
+      }
+    }
+    return { ok: true }; // mismo body haya o no match (sin oráculo)
   });
 
   // Bot de soporte (chat público + admin + web push).
