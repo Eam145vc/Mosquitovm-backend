@@ -48,12 +48,32 @@ export function registerSkydropxRoutes(app) {
     return true;
   };
 
+  // Extrae la causa REAL de un 422 de Skydropx (JSON:API errors, o el body crudo).
+  // El panel solo muestra `error`, así que la causa tiene que ir AHÍ (antes iba solo
+  // en `detail` y el admin quedaba con "datos inválidos" sin forma de saber por qué).
+  const skyDetail = (e) => {
+    const b = e?.body;
+    const errs = b?.errors || b?.error_messages || b?.data?.errors;
+    if (Array.isArray(errs) && errs.length) {
+      return errs
+        .map((x) => {
+          const field = x?.source?.pointer?.split('/').pop() || x?.field || '';
+          const msg = x?.detail || x?.title || x?.message || JSON.stringify(x);
+          return field ? `${field}: ${msg}` : String(msg);
+        })
+        .join(' · ');
+    }
+    if (b && typeof b === 'object' && Object.keys(b).length) return JSON.stringify(b);
+    return String(e?.message || e);
+  };
+
   // Convierte un error del cliente Skydropx en una respuesta HTTP entendible.
   const sendSkyError = (reply, e) => {
     const status = e?.status === 422 ? 422 : 502;
+    if (e?.status === 422) logger.warn({ body: e?.body }, 'skydropx 422 (validación)');
     const msg =
       e?.status === 422
-        ? 'Datos del envío inválidos (revisa ciudad destino y medidas)'
+        ? `Skydropx rechazó el envío: ${skyDetail(e).slice(0, 220)}`
         : 'Error comunicándose con Skydropx';
     reply.code(status).send({ error: msg, detail: String(e?.message || e).slice(0, 300) });
   };
