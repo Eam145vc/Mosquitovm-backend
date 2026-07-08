@@ -348,8 +348,9 @@ test('cuenta con plan cuotas: próxima cuota con monto del scheduler, fecha y es
   const body = (await get(`/libreta/${o}`)).json();
   assert.equal(body.cuenta.plan, 'cuotas');
   assert.equal(body.cuenta.cuotas.length, 1);
+  // monto = $69.000 PLANOS aunque el checkout haya sido $81.000 (envío solo en la 1ª)
   assert.deepEqual(body.cuenta.cuotas[0], {
-    n: 2, pagadas: 1, total: 3, monto: 81000, proximaAt, auto: true, estado: 'al_dia',
+    n: 2, pagadas: 1, total: 3, monto: 69000, proximaAt, auto: true, estado: 'al_dia',
   });
   assert.equal(typeof body.cuenta.nextChargeAt, 'number');
 
@@ -362,9 +363,9 @@ test('cuenta con plan cuotas: próxima cuota con monto del scheduler, fecha y es
   });
   const codRow = raw.prepare('SELECT created_at FROM orders WHERE id = ?').get(cod);
   const bodyCod = (await get(`/libreta/${o}`)).json();
-  const cuotaCod = bodyCod.cuenta.cuotas.find((c) => c.monto === 86000);
+  const cuotaCod = bodyCod.cuenta.cuotas.find((c) => c.pagadas === 0);
   assert.deepEqual(cuotaCod, {
-    n: 2, pagadas: 0, total: 3, monto: 86000,
+    n: 2, pagadas: 0, total: 3, monto: 69000, // NUNCA los $86.000 del checkout COD
     proximaAt: codRow.created_at + 30 * 24 * 3600 * 1000,
     auto: false, estado: 'al_dia',
   });

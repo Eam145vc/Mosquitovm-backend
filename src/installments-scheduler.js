@@ -21,9 +21,14 @@ import { chargeWithToken } from './efipay.js';
 const DAY = 24 * 3600 * 1000;
 const MAX_FAILS = 3; // al 3er fallo consecutivo se suspende el servicio
 
-// Cuánto cobrar en cada cuota = el monto de la orden (la 1ª cuota ya fijó amount_cents).
-function cuotaCents(order) {
-  return order.amount_cents;
+// Las cuotas 2 y 3 son $69.000 PLANAS: el envío ($12.000) y el recargo de
+// contraentrega ($5.000) van SOLO en la 1ª (el amount_cents del checkout).
+// Cobrar amount_cents acá repetía el envío en cada cuota (bug detectado el
+// 8-jul-2026 al mostrar el monto en La Libreta; ninguna cuota 2/3 se había
+// cobrado aún). Exportada: La Libreta muestra este mismo monto.
+export const CUOTA_2_3_CENTS = 6_900_000;
+function cuotaCents() {
+  return CUOTA_2_3_CENTS;
 }
 
 // payer + identificación a partir de los datos de envío que guardó la orden.
@@ -54,7 +59,7 @@ async function chargeOneInstallment(order) {
 
   try {
     const res = await chargeWithToken(
-      orderId, cuotaCents(order), order.card_token, payerFrom(order),
+      orderId, cuotaCents(), order.card_token, payerFrom(order),
       { idType: 'CC', idNumber: '0000000000', phone: order.phone },
       `Sonó · cuota ${nextNum} de ${total}`,
     );

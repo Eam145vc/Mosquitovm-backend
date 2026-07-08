@@ -69,6 +69,7 @@ import { generatePaymentLink, chargeCard, chargePse, chargeBreb, chargeCash, get
 import * as announceLog from './announce-log.js';
 import { sendActivationEmail } from './activation-email.js';
 import { enqueueWhatsApp, enqueueWhatsAppForce, normalizePhoneCO } from './wa-enqueue.js';
+import { CUOTA_2_3_CENTS } from './installments-scheduler.js';
 import { publishVoice, publishCommand } from './mqtt-publisher.js';
 import { buildVoiceMessage } from './amount-to-wavs.js';
 import { startLatency, markVoicePublished } from './latency.js';
@@ -2526,8 +2527,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
         // plata. Las COD quedan con installments_paid=0 — la próxima real es la 2ª.
         const n = Math.min(Math.max(pagadas, 1) + 1, total);
         return {
-          n, pagadas, total,                         // n = la cuota que SIGUE por pagar
-          monto: Math.round(o.amount_cents / 100),   // pesos, igual que cobra el scheduler
+          n, pagadas, total,                             // n = la cuota que SIGUE por pagar
+          monto: Math.round(CUOTA_2_3_CENTS / 100),      // $69.000 planos (el envío fue solo en la 1ª)
           // fecha programada por el scheduler; si no hay, la teórica del plan
           // (cuota 2 = orden+30d, cuota 3 = orden+60d)
           proximaAt: o.installment_next_at || (o.created_at + (n - 1) * 30 * DAY_MS),
