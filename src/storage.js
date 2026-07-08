@@ -438,6 +438,14 @@ export function markChangeConfirmed(id) {
     .run(Date.now(), Date.now(), id);
 }
 
+/** Reabre el paso "conectar el correo": limpia la confirmación del cambio de correo.
+ *  (Reset desde el admin; la cuenta, el alias y los pagos históricos NO se tocan.) */
+export function resetChangeConfirmed(id) {
+  openDb();
+  db.prepare('UPDATE accounts SET change_confirmed = 0, updated_at = ? WHERE id = ?')
+    .run(Date.now(), id);
+}
+
 export function setAccountSpeaker(id, speakerId) {
   openDb();
   return db.prepare('UPDATE accounts SET speaker_id = ?, updated_at = ? WHERE id = ?')

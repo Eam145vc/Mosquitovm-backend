@@ -44,6 +44,7 @@ import {
   createDevice, getDevice, listDevices, assignDevice, unassignDevice, setDeviceStatus,
   setDeviceBrebKey, listDevicesByAccount, findDeviceByKey,
   updateAccountHistory, updateAccountWatch, setAccountForward, findAccountByForward, markChangeConfirmed,
+  resetChangeConfirmed,
   paymentsFor, subState, setSubStatus,
   recordPayment, paymentsAggregate, bestHours, paymentsAfter, paymentsPage, paymentsPageRange,
   saveInboxMail, listInbox, getInboxMail, markInboxSeen, deleteInboxMail, unseenInboxCount,
@@ -59,7 +60,7 @@ import { decodeBrebImage, normalizeKey } from './breb-qr.js';
 import { parseEmail } from './parsers/index.js';
 import { simpleParser } from 'mailparser';
 import { generateAlias, createClientAlias, updateClientAliasRecipients } from './forwardemail.js';
-import { maybeCaptureOtp, readOtp } from './otp-capture.js';
+import { maybeCaptureOtp, readOtp, clearOtp } from './otp-capture.js';
 import { isDuplicate } from './dedupe.js';
 import { isChangeConfirmation } from './change-confirm.js';
 import { isTrustedBankEmail, isKnownBankSender } from './sender-filter.js';
@@ -2234,12 +2235,42 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     return { ok: cancelWa(req.params.id) };
   });
 
+  // Resetea el paso "Conectar el correo" de una orden para que el cliente lo rehaga
+  // desde 0 (el wizard &correo=1 vuelve a pedir el correo en vez de decir "listo").
+  // NO borra la cuenta ni el alias: los pagos históricos cuelgan de la cuenta y el
+  // alias es inmutable por orden — al rehacer, el flujo reencuentra los mismos
+  // (accountId = order.account_id || order.id, ver /activar/:order/email-redirect).
+  const resetEmailStep = (order) => {
+    const accId = order.account_id || null;
+    if (accId) {
+      try { resetChangeConfirmed(accId); } catch { /* la cuenta pudo no existir */ }
+      try { clearOtp(accId); } catch { /* efímero */ }
+    }
+    updateOrder(order.id, { account_id: null });
+    return accId;
+  };
+
+  app.post('/admin/orders/:id/reset-email', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const order = getOrder(req.params.id);
+    if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
+    const accId = resetEmailStep(order);
+    logger.info({ orderId: order.id, accountId: accId }, 'paso de correo reseteado (admin)');
+    return { ok: true, hadAccount: Boolean(accId) };
+  });
+
   app.post('/admin/wa/enqueue', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
     const { order: orderId, kind: rawKind } = req.body || {};
     const order = getOrder(orderId);
     if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
     const kind = ['activacion', 'recordatorio_3h', 'recordatorio_24h', 'envio', 'libreta', 'correo'].includes(rawKind) ? rawKind : 'activacion';
+    // Mandar "Conectar el correo" implica que el cliente lo va a REHACER: se resetea
+    // el paso automáticamente para que el link del mensaje arranque desde 0.
+    if (kind === 'correo') {
+      const accId = resetEmailStep(order);
+      logger.info({ orderId: order.id, accountId: accId }, 'wa correo: paso de correo reseteado');
+    }
     return { ok: enqueueWhatsAppForce(order, kind) };
   });
 
