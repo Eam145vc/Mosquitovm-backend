@@ -210,14 +210,21 @@ export async function quoteAndWait(p, { tries = 6, delayMs = 1500 } = {}) {
  * template origen ya NO rompe el valor declarado). El origen usa el address_template si está
  * configurado (mejor cobertura). Devuelve la respuesta cruda (label_url, tracking_number, etc.).
  */
+// Skydropx solo acepta letras, números, espacios y apóstrofes en el NOMBRE de las
+// direcciones — rechaza con 422 el punto/coma/paréntesis que los clientes escriben
+// en el checkout (ej. "Julio mantilla. Santos"). Se limpia sin tocar tildes/ñ.
+function cleanName(s) {
+  return String(s || '').replace(/[^\p{L}\p{N}\s']/gu, ' ').replace(/\s+/g, ' ').trim();
+}
+
 export async function createShipment(p) {
   const declared = Number(p.declaredAmount) || 50000;
   // Origen: template (Dispensario) si está configurado, sino campos sueltos del remitente.
   const addressFrom = config.SKYDROPX_ORIGIN_TEMPLATE_ID
     ? { address_template_id: config.SKYDROPX_ORIGIN_TEMPLATE_ID }
     : {
-        name: p.from.name,
-        company: p.from.company || p.from.name,
+        name: cleanName(p.from.name),
+        company: cleanName(p.from.company || p.from.name),
         street1: p.from.street,
         postal_code: p.from.postal,
         area_level1: p.from.depto,
@@ -246,8 +253,8 @@ export async function createShipment(p) {
       declared_amount: declared,
       address_from: addressFrom,
       address_to: {
-        name: p.to.name,
-        company: p.to.company || undefined,
+        name: cleanName(p.to.name) || 'Cliente',
+        company: p.to.company ? cleanName(p.to.company) : undefined,
         street1: p.to.street,
         postal_code: p.to.postal,
         area_level1: p.to.depto,
