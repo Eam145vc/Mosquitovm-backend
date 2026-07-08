@@ -105,7 +105,7 @@ test('resumen ok: shape exacto y whitelist estricta (nada de infra ni PII)', asy
   assert.deepEqual(Object.keys(body.sub).sort(), ['daysLeft', 'readOnly', 'state']);
   assert.deepEqual(Object.keys(body.today).sort(), ['count', 'startAt', 'total']);
   assert.deepEqual(Object.keys(body.yesterday).sort(), ['count', 'total']);
-  assert.deepEqual(Object.keys(body.cuenta).sort(), ['cuotas', 'nextChargeAt', 'plan', 'sonos']);
+  assert.deepEqual(Object.keys(body.cuenta).sort(), ['cuotas', 'incluidoHasta', 'nextChargeAt', 'plan', 'sonos']);
   assert.equal(body.cuenta.sonos, 2, 'dos devices asignados → 2 Sonós');
   assert.equal(body.cuenta.plan, 'contado');
   assert.deepEqual(body.cuenta.cuotas, [], 'contado no debe traer cuotas pendientes');
@@ -349,9 +349,26 @@ test('cuenta con plan cuotas: próxima cuota con monto del scheduler, fecha y es
   assert.equal(body.cuenta.plan, 'cuotas');
   assert.equal(body.cuenta.cuotas.length, 1);
   assert.deepEqual(body.cuenta.cuotas[0], {
-    pagadas: 1, total: 3, monto: 81000, proximaAt, estado: 'al_dia',
+    n: 2, pagadas: 1, total: 3, monto: 81000, proximaAt, auto: true, estado: 'al_dia',
   });
   assert.equal(typeof body.cuenta.nextChargeAt, 'number');
+
+  // Orden COD sin marcar (installments_paid=0, sin fecha del scheduler, sin token):
+  // la próxima real es la 2ª y la fecha es la teórica del plan (orden + 30d).
+  const cod = s.createOrder({ amountCents: 8_600_000 });
+  s.updateOrder(cod, {
+    status: 'paid', account_id: acc, plan: 'cuotas',
+    installments_total: 3, installments_paid: 0,
+  });
+  const codRow = raw.prepare('SELECT created_at FROM orders WHERE id = ?').get(cod);
+  const bodyCod = (await get(`/libreta/${o}`)).json();
+  const cuotaCod = bodyCod.cuenta.cuotas.find((c) => c.monto === 86000);
+  assert.deepEqual(cuotaCod, {
+    n: 2, pagadas: 0, total: 3, monto: 86000,
+    proximaAt: codRow.created_at + 30 * 24 * 3600 * 1000,
+    auto: false, estado: 'al_dia',
+  });
+  s.updateOrder(cod, { installments_state: 'completado' }); // no ensuciar lo que sigue
   // El token de la tarjeta JAMÁS puede viajar a La Libreta.
   const raw2 = JSON.stringify(body);
   assert.ok(!raw2.includes('tok-secreto'), 'card_token no debe fugarse');

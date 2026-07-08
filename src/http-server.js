@@ -2518,17 +2518,29 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
         && o.plan === 'cuotas'
         && o.installments_state !== 'completado'
         && (o.installments_paid || 0) < (o.installments_total || 3))
-      .map((o) => ({
-        pagadas: o.installments_paid || 0,
-        total: o.installments_total || 3,
-        monto: Math.round(o.amount_cents / 100),   // pesos, igual que cobra el scheduler
-        proximaAt: o.installment_next_at || null,  // null = sin reintento programado (manual)
-        estado: o.installments_state || 'al_dia',  // al_dia | en_mora | suspendido | sin_token
-      }));
+      .map((o) => {
+        const total = o.installments_total || 3;
+        const pagadas = o.installments_paid || 0;
+        // La 1ª cuota SIEMPRE quedó cubierta al comprar (checkout online) o al
+        // recibir (contraentrega): una orden en PAID_STATES no existe sin esa
+        // plata. Las COD quedan con installments_paid=0 — la próxima real es la 2ª.
+        const n = Math.min(Math.max(pagadas, 1) + 1, total);
+        return {
+          n, pagadas, total,                         // n = la cuota que SIGUE por pagar
+          monto: Math.round(o.amount_cents / 100),   // pesos, igual que cobra el scheduler
+          // fecha programada por el scheduler; si no hay, la teórica del plan
+          // (cuota 2 = orden+30d, cuota 3 = orden+60d)
+          proximaAt: o.installment_next_at || (o.created_at + (n - 1) * 30 * DAY_MS),
+          auto: Boolean(o.card_token),               // true = se cobra sola con la tarjeta
+          estado: o.installments_state || 'al_dia',  // al_dia | en_mora | suspendido | sin_token
+        };
+      });
     return {
       sonos: locales.length,
       plan: main?.plan === 'cuotas' ? 'cuotas' : 'contado',
       nextChargeAt: main?.next_charge_at || null,  // renovación anual (null = sin fecha aún)
+      // sin next_charge_at, el servicio va incluido hasta el año de la compra
+      incluidoHasta: main ? main.created_at + 365 * DAY_MS : null,
       cuotas,
     };
   }
