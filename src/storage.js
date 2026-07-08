@@ -842,6 +842,17 @@ export function paymentsAfter(accountId, afterId, limit = 51) {
   ).all(accountId, afterId, limit);
 }
 
+/** Filtro por fecha de La Libreta: filas de [fromMs, toMs) con id < beforeId,
+ *  más nuevas primero. beforeId=MAX_SAFE_INTEGER → primera página del día. */
+export function paymentsPageRange(accountId, fromMs, toMs, beforeId, limit = 50) {
+  openDb();
+  return db.prepare(
+    `SELECT id, amount, bank, local_name, breb_key, unrouted, at
+     FROM payments WHERE account_id = ? AND at >= ? AND at < ? AND id < ? AND amount > 0
+     ORDER BY id DESC LIMIT ?`
+  ).all(accountId, fromMs, toMs, beforeId, limit);
+}
+
 /** Paginación histórico: filas con id < beforeId (beforeId=Infinity → primera página). */
 export function paymentsPage(accountId, beforeId, limit = 30) {
   openDb();
@@ -859,9 +870,12 @@ export function paymentsPage(accountId, beforeId, limit = 30) {
 export function saveInboxMail({ alias, accountId = null, from = '', subject = '', text = '', html = '', isPayment = false, messageId = null, references = null }) {
   openDb();
   const at = Date.now();
-  // Recortamos el cuerpo para no inflar la DB (el HTML del banco puede ser enorme).
-  const t = String(text || '').slice(0, 20000);
-  const h = String(html || '').slice(0, 60000);
+  // Recortamos para no inflar la DB. Los pagos llegan a cada rato y su HTML de banco
+  // es puro adorno → cortos. El resto (soporte/catch-all) es raro pero puede traer
+  // comprobantes embebidos como data: URIs base64, y un corte los deja ilegibles
+  // (pasó el 3-jul-2026 con un comprobante real) → margen amplio.
+  const t = String(text || '').slice(0, isPayment ? 20000 : 100000);
+  const h = String(html || '').slice(0, isPayment ? 60000 : 8_000_000);
   const info = db.prepare(
     `INSERT INTO inbox (alias, account_id, from_addr, subject, text, html, is_payment, message_id, refs, at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
