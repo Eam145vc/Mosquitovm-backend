@@ -404,6 +404,15 @@ export function getAccountByAlias(alias) {
   return hydrateAccount(db.prepare('SELECT * FROM accounts WHERE alias = ?').get(alias));
 }
 
+/** Renombra el alias del correo redirigido de una cuenta (desde el admin).
+ *  Solo cambia alias + email visibles; el forward_to cifrado y los pagos quedan intactos.
+ *  El alias viejo deja de resolver → esos correos caen al buzón catch-all (no se pierden). */
+export function renameAccountAlias(id, alias, email) {
+  openDb();
+  return db.prepare('UPDATE accounts SET alias = ?, email = ?, updated_at = ? WHERE id = ?')
+    .run(alias, email, Date.now(), id).changes > 0;
+}
+
 /** Asigna alias + correo de reenvío (cifrado) a una cuenta del método correo-redirigido. */
 export function setAccountForward(id, { alias, forwardTo }) {
   openDb();

@@ -44,7 +44,7 @@ import {
   createDevice, getDevice, listDevices, assignDevice, unassignDevice, setDeviceStatus,
   setDeviceBrebKey, listDevicesByAccount, findDeviceByKey,
   updateAccountHistory, updateAccountWatch, setAccountForward, findAccountByForward, markChangeConfirmed,
-  resetChangeConfirmed,
+  resetChangeConfirmed, renameAccountAlias,
   paymentsFor, subState, setSubStatus,
   recordPayment, paymentsAggregate, bestHours, paymentsAfter, paymentsPage, paymentsPageRange,
   saveInboxMail, listInbox, getInboxMail, markInboxSeen, deleteInboxMail, unseenInboxCount,
@@ -1720,6 +1720,36 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     if (onSubStatusChange) onSubStatusChange(acc.id, 'suspendida');
     logger.info({ clientId: acc.id }, 'cliente suspendido (manual)');
     return { ok: true, sub_state: 'suspendida' };
+  });
+
+  // Renombrar el ALIAS del correo redirigido (ej. viverestiendalaunica-905c → viveres).
+  // El alias viejo deja de resolver (sus correos caen al buzón catch-all); el forward_to,
+  // los pagos históricos y el vínculo con la orden se conservan. Si ForwardEmail está
+  // configurado, también crea allí el alias nuevo (si no, skipped: el MX propio resuelve).
+  const RESERVED_ALIASES = new Set(['hola', 'admin', 'soporte', 'info', 'contacto', 'pagos',
+    'ventas', 'no-reply', 'noreply', 'mx', 'postmaster', 'abuse', 'webmaster']);
+  app.patch('/admin/clients/:id/alias', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const acc = getAccount(req.params.id);
+    if (!acc) return reply.code(404).send({ error: 'cliente no encontrado' });
+    const alias = String(req.body?.alias || '').trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9._-]{1,30}$/.test(alias)) {
+      return reply.code(400).send({ error: 'alias inválido (a-z, 0-9, punto, guion; 2-31 chars)' });
+    }
+    if (RESERVED_ALIASES.has(alias)) return reply.code(400).send({ error: 'alias reservado' });
+    const clash = getAccountByAlias(alias);
+    if (clash && clash.id !== acc.id) {
+      return reply.code(409).send({ error: `alias en uso por otra cuenta (${clash.email})` });
+    }
+    const email = `${alias}@${config.MAIL_DOMAIN}`;
+    // Si FE está activo, crear el alias nuevo allí (idempotente; skipped sin token).
+    try {
+      const fe = await createClientAlias({ name: alias, forwardTo: acc.forwardTo || null });
+      if (!fe.ok && !fe.skipped) logger.warn({ alias, err: fe.error }, 'rename alias: FE no lo creó (se continúa)');
+    } catch (e) { logger.warn({ alias, err: e.message }, 'rename alias: FE error (se continúa)'); }
+    renameAccountAlias(acc.id, alias, email);
+    logger.info({ clientId: acc.id, from: acc.alias, to: alias }, 'alias renombrado (admin)');
+    return { ok: true, email, previous: acc.email };
   });
 
   // Reactivar (vuelve a anunciar).
