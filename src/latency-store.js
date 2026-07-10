@@ -115,6 +115,17 @@ export function getStats(resolveName, opts = {}) {
   };
   global.avgTotalMs = global.avgBankMs != null ? global.avgBankMs + (global.avgUsMs || 0) : null;
 
+  // Bancos vistos por comercio en la ventana (para mostrar logos en el panel).
+  // El agg histórico no guarda banco, así que esto sale SIEMPRE de las muestras.
+  const banksByAcc = new Map();
+  for (const s of win) {
+    const k = s.accountId || 'unknown';
+    const m = banksByAcc.get(k) || new Map();
+    const b = s.bank || 'unknown';
+    m.set(b, (m.get(b) || 0) + 1);
+    banksByAcc.set(k, m);
+  }
+
   const mapClient = ([accountId, a]) => ({
     accountId,
     name: (resolveName && accountId !== 'unknown' && resolveName(accountId)) || null,
@@ -124,6 +135,9 @@ export function getStats(resolveName, opts = {}) {
     avgUsMs: avg(a.sumUs, a.nUs),
     maxBankMs: a.maxBank || null,
     lastAt: a.lastAt || null,
+    banks: [...(banksByAcc.get(accountId)?.entries() || [])]
+      .map(([bank, n]) => ({ bank, n }))
+      .sort((x, y) => y.n - x.n),
   });
 
   // Por comercio: con rango se agrega sobre la ventana; sin rango, el agg histórico
