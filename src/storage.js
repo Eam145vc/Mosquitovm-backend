@@ -325,6 +325,30 @@ export function openDb() {
       ON payments(account_id, id);
   `);
 
+  // Aplicaciones a la convocatoria UGC (creadores de Medellín). Llegan del
+  // formulario público sonoback.com/convocatoria y se gestionan en /admin.
+  // status: nuevo | contactado | aprobado | descartado.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ugc_applications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nombre TEXT,
+      whatsapp TEXT,
+      comuna TEXT,
+      redes TEXT,
+      contenido TEXT,
+      tipo_local TEXT,
+      relacion_local TEXT,
+      link_local TEXT,
+      celular_graba TEXT,
+      disponible_7dias TEXT,
+      origen TEXT,
+      ip TEXT,
+      status TEXT NOT NULL DEFAULT 'nuevo',
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ugc_created ON ugc_applications(created_at DESC);
+  `);
+
   return db;
 }
 
@@ -1254,4 +1278,58 @@ export function countWaByStatus() {
   const out = { queued: 0, sending: 0, sent: 0, failed: 0, canceled: 0 };
   for (const r of rows) out[r.status] = r.n;
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// UGC applications (convocatoria de creadores)
+// ---------------------------------------------------------------------------
+
+const UGC_STATUSES = ['nuevo', 'contactado', 'aprobado', 'descartado'];
+
+export function insertUgcApplication(d = {}) {
+  openDb();
+  const info = db.prepare(`
+    INSERT INTO ugc_applications
+      (nombre, whatsapp, comuna, redes, contenido, tipo_local, relacion_local,
+       link_local, celular_graba, disponible_7dias, origen, ip, status, created_at)
+    VALUES
+      (@nombre, @whatsapp, @comuna, @redes, @contenido, @tipo_local, @relacion_local,
+       @link_local, @celular_graba, @disponible_7dias, @origen, @ip, 'nuevo', @created_at)
+  `).run({
+    nombre: d.nombre || null,
+    whatsapp: d.whatsapp || null,
+    comuna: d.comuna || null,
+    redes: d.redes || null,
+    contenido: d.contenido || null,
+    tipo_local: d.tipo_local || null,
+    relacion_local: d.relacion_local || null,
+    link_local: d.link_local || null,
+    celular_graba: d.celular_graba || null,
+    disponible_7dias: d.disponible_7dias || null,
+    origen: d.origen || null,
+    ip: d.ip || null,
+    created_at: Date.now(),
+  });
+  return info.lastInsertRowid;
+}
+
+export function listUgcApplications() {
+  openDb();
+  return db.prepare('SELECT * FROM ugc_applications ORDER BY created_at DESC LIMIT 500').all();
+}
+
+export function countUgcNuevo() {
+  openDb();
+  return db.prepare(`SELECT COUNT(*) n FROM ugc_applications WHERE status = 'nuevo'`).get().n;
+}
+
+export function setUgcStatus(id, status) {
+  openDb();
+  if (!UGC_STATUSES.includes(status)) return false;
+  return db.prepare('UPDATE ugc_applications SET status = ? WHERE id = ?').run(status, id).changes > 0;
+}
+
+export function deleteUgcApplication(id) {
+  openDb();
+  return db.prepare('DELETE FROM ugc_applications WHERE id = ?').run(id).changes > 0;
 }

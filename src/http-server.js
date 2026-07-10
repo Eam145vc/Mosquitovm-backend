@@ -53,6 +53,7 @@ import {
   touchWaAgent, getWaSettings, setWaSettings, getWaAgentLastSeen, countWaByStatus,
   listWaOutbox, requeueWa, cancelWa, cancelPendingWaByKinds, cancelAllPendingWa,
   getShipmentByOrder, updateShipmentRow, renameDeviceLocal,
+  insertUgcApplication, listUgcApplications, countUgcNuevo, setUgcStatus, deleteUgcApplication,
 } from './storage.js';
 import { bogotaDayStart, bogotaDayStartFromKey, bogotaMonthStart, bogotaPrevMonthStart, DAY_MS } from './libreta-time.js';
 import { getShipment, extractLabel, fetchLabelPdf } from './skydropx.js';
@@ -278,6 +279,35 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
   app.get('/cities', async (req) => {
     const q = String((req.query || {}).q || '').trim();
     return { cities: q.length >= 2 ? searchCities(q, 8) : [] };
+  });
+
+  // Convocatoria UGC: recibe una aplicación del formulario público de
+  // sonoback.com/convocatoria y la guarda para gestionarla en /admin.
+  // Sin auth (público). Honeypot 'botcheck': si viene relleno, se descarta en silencio.
+  app.post('/ugc-apply', async (req, reply) => {
+    const b = req.body || {};
+    if (b.botcheck) return { ok: true };               // bot: aceptar sin guardar
+    const s = (v, max = 2000) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+    const nombre = s(b.nombre, 120);
+    const whatsapp = s(b.whatsapp, 40);
+    if (!nombre || !whatsapp) {
+      return reply.code(400).send({ error: 'nombre y whatsapp son obligatorios' });
+    }
+    insertUgcApplication({
+      nombre,
+      whatsapp,
+      comuna: s(b.comuna, 120),
+      redes: s(b.redes, 300),
+      contenido: s(b.contenido, 4000),
+      tipo_local: s(b.tipo_local, 120),
+      relacion_local: s(b.relacion_local, 120),
+      link_local: s(b.link_local, 500),
+      celular_graba: s(b.celular_graba, 120),
+      disponible_7dias: s(b.disponible_7dias, 60),
+      origen: s(b.origen, 200) || 'convocatoria',
+      ip: req.ip || null,
+    });
+    return { ok: true };
   });
 
   // Paso 1: crea la orden con los datos de envío. Devuelve el monto (pesos) y la public key
@@ -1641,6 +1671,25 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
   app.delete('/admin/inbox/:id', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
     return { ok: deleteInboxMail(Number(req.params.id)) };
+  });
+
+  // ── Convocatoria UGC (gestión de aplicaciones) ──
+  app.get('/admin/ugc', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    return { applications: listUgcApplications(), nuevo: countUgcNuevo() };
+  });
+
+  app.post('/admin/ugc/:id/status', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const status = String((req.body || {}).status || '');
+    const ok = setUgcStatus(Number(req.params.id), status);
+    if (!ok) return reply.code(400).send({ error: 'estado inválido o no encontrado' });
+    return { ok: true };
+  });
+
+  app.delete('/admin/ugc/:id', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    return { ok: deleteUgcApplication(Number(req.params.id)) };
   });
 
   app.get('/admin/clients/:id/detail', async (req, reply) => {
