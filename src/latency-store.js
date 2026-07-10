@@ -95,20 +95,27 @@ function p95(arr) {
  */
 export function getStats(resolveName, opts = {}) {
   const { from = null, to = null, all = false } = opts;
-  // Global: promedios y p95 sobre las muestras recientes.
+  const inRange = (s) => (from == null || s.at >= from) && (to == null || s.at <= to);
+  const hasRange = from != null || to != null;
+  // Ventana de análisis: con rango, TODAS las estadísticas (global, por banco y por
+  // comercio) se calculan SOLO sobre ese rango. Sin rango, sobre el histórico en
+  // memoria (últimas MAX_SAMPLES). Antes el rango solo filtraba el detalle y las
+  // tarjetas siempre mostraban el histórico completo — engañoso.
+  const win = hasRange ? samples.filter(inRange) : samples;
+
+  // Global: promedios y p95 sobre la ventana.
   const global = {
-    n: samples.length,
-    avgBankMs: avg(samples.reduce((s, x) => s + (x.bankToBackendMs || 0), 0), samples.filter((x) => x.bankToBackendMs != null).length),
-    avgFeMs: avg(samples.reduce((s, x) => s + (x.feToBackendMs || 0), 0), samples.filter((x) => x.feToBackendMs != null).length),
-    avgUsMs: avg(samples.reduce((s, x) => s + (x.backendToVoiceMs || 0), 0), samples.filter((x) => x.backendToVoiceMs != null).length),
-    p95BankMs: p95(samples.map((x) => x.bankToBackendMs)),
-    p95FeMs: p95(samples.map((x) => x.feToBackendMs)),
-    p95UsMs: p95(samples.map((x) => x.backendToVoiceMs)),
+    n: win.length,
+    avgBankMs: avg(win.reduce((s, x) => s + (x.bankToBackendMs || 0), 0), win.filter((x) => x.bankToBackendMs != null).length),
+    avgFeMs: avg(win.reduce((s, x) => s + (x.feToBackendMs || 0), 0), win.filter((x) => x.feToBackendMs != null).length),
+    avgUsMs: avg(win.reduce((s, x) => s + (x.backendToVoiceMs || 0), 0), win.filter((x) => x.backendToVoiceMs != null).length),
+    p95BankMs: p95(win.map((x) => x.bankToBackendMs)),
+    p95FeMs: p95(win.map((x) => x.feToBackendMs)),
+    p95UsMs: p95(win.map((x) => x.backendToVoiceMs)),
   };
   global.avgTotalMs = global.avgBankMs != null ? global.avgBankMs + (global.avgUsMs || 0) : null;
 
-  // Por comercio: promedios históricos del agg.
-  const perClient = [...agg.entries()].map(([accountId, a]) => ({
+  const mapClient = ([accountId, a]) => ({
     accountId,
     name: (resolveName && accountId !== 'unknown' && resolveName(accountId)) || null,
     n: a.n,
@@ -117,12 +124,33 @@ export function getStats(resolveName, opts = {}) {
     avgUsMs: avg(a.sumUs, a.nUs),
     maxBankMs: a.maxBank || null,
     lastAt: a.lastAt || null,
-  })).sort((x, y) => (y.lastAt || 0) - (x.lastAt || 0));
+  });
+
+  // Por comercio: con rango se agrega sobre la ventana; sin rango, el agg histórico
+  // (que sobrevive aunque samples esté capado).
+  let clientEntries;
+  if (hasRange) {
+    const byAcc = new Map();
+    for (const s of win) {
+      const k = s.accountId || 'unknown';
+      const a = byAcc.get(k) || blankAgg();
+      a.n += 1;
+      a.lastAt = Math.max(a.lastAt, s.at);
+      if (s.bankToBackendMs != null) { a.sumBank += s.bankToBackendMs; a.nBank += 1; a.maxBank = Math.max(a.maxBank, s.bankToBackendMs); }
+      if (s.feToBackendMs != null)   { a.sumFe += s.feToBackendMs;     a.nFe += 1; }
+      if (s.backendToVoiceMs != null){ a.sumUs += s.backendToVoiceMs;  a.nUs += 1; }
+      byAcc.set(k, a);
+    }
+    clientEntries = [...byAcc.entries()];
+  } else {
+    clientEntries = [...agg.entries()];
+  }
+  const perClient = clientEntries.map(mapClient).sort((x, y) => (y.lastAt || 0) - (x.lastAt || 0));
 
   // Por BANCO: cada entidad (bancolombia, nequi, daviplata...) tiene latencia muy
   // distinta (Nequi ~1s, Bancolombia ~5s). Promediarlas juntas engaña; las separamos.
   const byBank = {};
-  for (const s of samples) {
+  for (const s of win) {
     const b = s.bank || 'unknown';
     if (!byBank[b]) byBank[b] = { bank: b, n: 0, sumBank: 0, nBank: 0, sumUs: 0, nUs: 0, bankVals: [] };
     const e = byBank[b];
@@ -138,11 +166,9 @@ export function getStats(resolveName, opts = {}) {
     avgUsMs: avg(e.sumUs, e.nUs),
   })).sort((x, y) => y.n - x.n);
 
-  // Detalle: por defecto las últimas 50; con rango de fecha (from/to) o all=1 se filtra
-  // y se devuelve todo lo que caiga en el rango (más nuevas primero).
-  const inRange = (s) => (from == null || s.at >= from) && (to == null || s.at <= to);
-  const hasFilter = from != null || to != null || all;
-  let picked = hasFilter ? samples.filter(inRange) : samples.slice(-50);
+  // Detalle: por defecto las últimas 50; con rango o all=1 se devuelve toda la ventana
+  // (más nuevas primero).
+  let picked = hasRange || all ? win : win.slice(-50);
   // Tope de seguridad para no devolver un payload gigante al panel.
   const RECENT_CAP = 1000;
   const recent = picked.slice(-RECENT_CAP).reverse().map((s) => ({
