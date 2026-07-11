@@ -101,7 +101,10 @@ jobs:
               sleep 2
               code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:47821/healthz || echo 000)
               echo "intento $i healthz: $code"
-              [ "$code" = "200" ] && break
+              # el "|| true" es OBLIGATORIO: con set -e, "[ ... ] && break" evaluando a falso
+              # devuelve 1 y MATA el script en el primer intento fallido (sin rollback) en
+              # vez de reintentar. Pasó en el run 130: arranque >2s → abort en intento 1.
+              if [ "$code" = "200" ]; then break; fi
             done
             if [ "$code" != "200" ]; then
               echo "==> HEALTHCHECK FALLÓ ($code): restaurando código y deps"

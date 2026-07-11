@@ -34,20 +34,29 @@ function parseDate(value) {
  * que el banco rellena de forma inconsistente: a veces atrasado, a veces "fresco"
  * aunque el correo salió tarde). El cuerpo siempre trae la hora del pago real.
  *
- * Bancolombia: "...el 26/06/2026 a las 16:34. Con codigo QR es facil..."
- * Resolución: MINUTOS (sin segundos) → precisión ±60s. Asume hora Colombia (GMT-5).
- * Devuelve epoch ms UTC, o null si no se encuentra el patrón.
+ * Formatos conocidos (hora Colombia GMT-5, sin DST):
+ *  - Nequi Bre-B:  "Fecha:</th><td>11/07/2026 12:56:52</td>"  → CON segundos
+ *  - Bancolombia:  "...el 26/06/2026 a las 16:34. Con codigo QR..." → SIN segundos (±60s)
+ * Devuelve { ms, hasSeconds } (epoch ms UTC), o null si no matchea ningún patrón.
  */
 function extractBodyPaidAt(text) {
   if (!text || typeof text !== 'string') return null;
-  // "el DD/MM/YYYY a las HH:MM" (24h). Tolera espacios variables.
-  const m = text.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\s+a\s+las\s+(\d{1,2}):(\d{2})\b/i);
-  if (!m) return null;
-  const [, dd, mm, yyyy, hh, min] = m.map(Number);
-  // El cuerpo está en hora local Colombia (GMT-5, sin DST). Construimos el epoch UTC
-  // sumando 5h al wall-clock colombiano. Date.UTC evita que el TZ del server interfiera.
-  const utcMs = Date.UTC(yyyy, mm - 1, dd, hh + 5, min, 0);
-  return Number.isFinite(utcMs) ? utcMs : null;
+  // 1) "DD/MM/YYYY HH:MM:SS" (Nequi). Con segundos: hora del pago exacta por sí sola.
+  let m = text.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})\b/);
+  if (m) {
+    const [, dd, mm, yyyy, hh, min, ss] = m.map(Number);
+    const utcMs = Date.UTC(yyyy, mm - 1, dd, hh + 5, min, ss);
+    if (Number.isFinite(utcMs)) return { ms: utcMs, hasSeconds: true };
+  }
+  // 2) "el DD/MM/YYYY a las HH:MM" (Bancolombia, 24h). Tolera espacios variables.
+  m = text.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\s+a\s+las\s+(\d{1,2}):(\d{2})\b/i);
+  if (m) {
+    const [, dd, mm, yyyy, hh, min] = m.map(Number);
+    // Date.UTC con +5h evita que el TZ del server interfiera.
+    const utcMs = Date.UTC(yyyy, mm - 1, dd, hh + 5, min, 0);
+    if (Number.isFinite(utcMs)) return { ms: utcMs, hasSeconds: false };
+  }
+  return null;
 }
 
 /**
@@ -108,24 +117,38 @@ export function startLatency(body) {
   //     hora confiable: el header Date el banco lo rellena inconsistente (a veces
   //     atrasado, a veces "fresco" aunque el correo salió tarde). Precisión ±60s.
   const bodyText = body?.text || body?.html || '';
-  const paidAt = extractBodyPaidAt(bodyText);          // hora del pago, SIN segundos (resolución minuto)
+  const bodyPaid = extractBodyPaidAt(bodyText);        // { ms, hasSeconds } | null
+  const paidAt = bodyPaid ? bodyPaid.ms : null;
   const headerDate = body?.date ? parseDate(body.date) : extractBankDate(body); // CON segundos
   // [B] cuándo el MX (mx.sono.lat) recibió el correo del banco.
   const mxReceived = Number(body?.receivedAtMs) || null;
 
-  // BASE para medir la demora. Elegimos entre cuerpo (minutos) y header (segundos):
-  //  - Si header y cuerpo caen en el MISMO MINUTO → el banco emitió al instante (no hubo
-  //    cola antes del Date) → el header es fiable como hora del pago y trae SEGUNDOS →
-  //    lo usamos para tener precisión exacta cuando todo va rápido.
-  //  - Si DIFIEREN → hubo cola antes del Date (header adelantado, p.ej. cuerpo 16:34 /
-  //    header 16:40) → el header miente → usamos el cuerpo (minutos) que sí captura la cola.
-  //  - Si no hay cuerpo → caemos al header (degradado, comportamiento viejo).
-  const sameMinute = (paidAt != null && headerDate != null)
-    && Math.floor(paidAt / 60_000) === Math.floor(headerDate / 60_000);
-  const usedHeaderForPrecision = sameMinute;          // true = medimos con segundos (rápido)
-  const bankDate = paidAt != null
-    ? (sameMinute ? headerDate : paidAt)              // cuerpo salvo que header coincida en minuto
-    : headerDate;                                      // sin cuerpo → header
+  // BASE para medir la demora:
+  //  - Cuerpo CON segundos (Nequi) → es la hora exacta del pago: se usa directo, precisa.
+  //  - Cuerpo SIN segundos (Bancolombia): si el header cae en el MISMO minuto del cuerpo,
+  //    o en los PRIMEROS segundos del minuto siguiente (pago 16:34:58 → correo 16:35:01,
+  //    cruce de minuto legítimo), el banco emitió al instante → header fiable y CON
+  //    segundos → precisión exacta. La tolerancia corta (10s) evita disfrazar de rápida
+  //    una cola real de ~1 min (header 16:35:45 con cuerpo 16:34 NO pasa).
+  //  - Si difieren más → hubo cola antes del Date → el header miente → cuerpo (±60s).
+  //  - Sin cuerpo → header (degradado, comportamiento viejo).
+  const ADJ_TOLERANCE_S = 10;
+  let bankDate;
+  let precise;
+  if (paidAt != null && bodyPaid.hasSeconds) {
+    bankDate = paidAt; precise = true;
+  } else if (paidAt != null && headerDate != null) {
+    const minPaid = Math.floor(paidAt / 60_000);
+    const minHdr = Math.floor(headerDate / 60_000);
+    const secHdr = Math.floor((headerDate % 60_000) / 1000);
+    const headerOk = minHdr === minPaid || (minHdr === minPaid + 1 && secHdr < ADJ_TOLERANCE_S);
+    bankDate = headerOk ? headerDate : paidAt;
+    precise = headerOk;
+  } else {
+    bankDate = paidAt != null ? paidAt : headerDate;
+    precise = false;
+  }
+  const usedHeaderForPrecision = precise;
   return {
     receivedAt,
     bankDate,

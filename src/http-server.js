@@ -2139,19 +2139,6 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     const { alias, from = '', subject = '', text = '', html = '', messageId = null, references = null } = req.body || {};
     if (!alias) return reply.code(400).send({ error: 'alias requerido' });
 
-    // TEMPORAL (jul-2026): capturar UN correo real de Nequi tal como llega del MX,
-    // para ver si el cuerpo trae la hora del pago (mejorar extractBodyPaidAt/precise
-    // en latency.js). Se guarda una sola vez y fuera del camino del pago. QUITAR después.
-    if (/nequi/i.test(String(from))) {
-      const sample = path.join(path.dirname(config.DB_PATH), 'nequi-sample.json');
-      if (!fs.existsSync(sample)) {
-        fs.writeFile(sample, JSON.stringify(req.body, null, 2), (e) => {
-          if (e) logger.warn({ err: e.message }, 'nequi-sample: no se pudo guardar');
-          else logger.info('nequi-sample: correo de Nequi capturado');
-        });
-      }
-    }
-
     const account = getAccountByAlias(String(alias).toLowerCase());
     if (!account) {
       // Alias desconocido: no reenviamos a ciegas (no sabemos a quién), pero SÍ lo
