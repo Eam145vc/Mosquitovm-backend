@@ -43,6 +43,7 @@ import {
   createOrder, getOrder, getOrderByPlanId, updateOrder, listOrders,
   createDevice, getDevice, listDevices, assignDevice, unassignDevice, setDeviceStatus,
   setDeviceBrebKey, listDevicesByAccount, findDeviceByKey,
+  listDeviceKeys, addDeviceKey, removeDeviceKey,
   updateAccountHistory, updateAccountWatch, setAccountForward, findAccountByForward, markChangeConfirmed,
   resetChangeConfirmed, renameAccountAlias,
   paymentsFor, subState, setSubStatus,
@@ -1721,6 +1722,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
         local_name: localName,
         breb_key: key,
         has_key: Boolean(key),
+        // llaves adicionales vinculadas a mano (POST /admin/clients/:id/keys)
+        extra_keys: dev ? listDeviceKeys(dev.spkr_id) : [],
         spkr_id: dev ? dev.spkr_id : null,
         status: o.status,
         hasQr: Boolean(o.qr_path),
@@ -1799,6 +1802,51 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     renameAccountAlias(acc.id, alias, email);
     logger.info({ clientId: acc.id, from: acc.alias, to: alias }, 'alias renombrado (admin)');
     return { ok: true, email, previous: acc.email };
+  });
+
+  // MULTI-LLAVE: vincular manualmente una llave Bre-B ADICIONAL al speaker de un
+  // cliente (ej. además del QR del local, la llave de su celular). Los pagos que
+  // lleguen a esa llave suenan en ese speaker y salen en su Libreta.
+  //   POST   /admin/clients/:id/keys  { spkr_id, key }  → agrega
+  //   DELETE /admin/clients/:id/keys  { spkr_id, key }  → quita (solo adicionales)
+  const deviceOfClient = (acc, spkrId) => {
+    if (!spkrId) return null;
+    return listDevicesByAccount(acc.id).find((d) => d.spkr_id === spkrId) || null;
+  };
+  app.post('/admin/clients/:id/keys', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const acc = getAccount(req.params.id);
+    if (!acc) return reply.code(404).send({ error: 'cliente no encontrado' });
+    const { spkr_id } = req.body || {};
+    const key = req.body?.key ? normalizeKey(String(req.body.key)) : null;
+    if (!key) return reply.code(400).send({ error: 'falta la llave' });
+    const dev = deviceOfClient(acc, spkr_id);
+    if (!dev) return reply.code(404).send({ error: 'ese speaker no es de este cliente' });
+    // La llave no puede estar ya en OTRO device de la cuenta (rompería el ruteo).
+    const clash = findDeviceByKey(acc.id, key);
+    if (clash && clash.spkr_id !== dev.spkr_id) {
+      return reply.code(409).send({ error: `llave ya vinculada al speaker ${clash.spkr_id}` });
+    }
+    if (dev.breb_key === key) {
+      return reply.code(409).send({ error: 'esa ya es la llave principal de este speaker' });
+    }
+    addDeviceKey(dev.spkr_id, key);
+    logger.info({ clientId: acc.id, spkr: dev.spkr_id, key }, 'admin: llave adicional vinculada');
+    return { ok: true, spkr_id: dev.spkr_id, keys: listDeviceKeys(dev.spkr_id) };
+  });
+  app.delete('/admin/clients/:id/keys', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const acc = getAccount(req.params.id);
+    if (!acc) return reply.code(404).send({ error: 'cliente no encontrado' });
+    const src = { ...(req.query || {}), ...(req.body || {}) };
+    const key = src.key ? normalizeKey(String(src.key)) : null;
+    if (!key) return reply.code(400).send({ error: 'falta la llave' });
+    const dev = deviceOfClient(acc, src.spkr_id);
+    if (!dev) return reply.code(404).send({ error: 'ese speaker no es de este cliente' });
+    const removed = removeDeviceKey(dev.spkr_id, key);
+    if (!removed) return reply.code(404).send({ error: 'esa llave no está vinculada como adicional' });
+    logger.info({ clientId: acc.id, spkr: dev.spkr_id, key }, 'admin: llave adicional quitada');
+    return { ok: true, spkr_id: dev.spkr_id, keys: listDeviceKeys(dev.spkr_id) };
   });
 
   // Reactivar (vuelve a anunciar).

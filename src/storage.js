@@ -308,6 +308,20 @@ export function openDb() {
   ]);
   db.exec('CREATE INDEX IF NOT EXISTS idx_devices_breb_key ON devices(breb_key)');
 
+  // Llaves Bre-B ADICIONALES de un device (multipunto/multi-llave). La principal vive
+  // en devices.breb_key (viene del QR subido); estas se vinculan a mano desde el admin
+  // (ej. el cliente también recibe pagos a la llave de su celular y quiere que suenen
+  // en el mismo speaker). El ruteo (findDeviceByKey) matchea principal + adicionales.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS device_keys (
+      spkr_id TEXT NOT NULL,
+      breb_key TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (spkr_id, breb_key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_device_keys_key ON device_keys(breb_key);
+  `);
+
   // Historial de pagos enriquecido para "La Libreta". unrouted=1 = pago multipunto
   // sin local (no sonó, el cliente lo ve como "local por confirmar"). msg_id =
   // Message-ID del correo para dedupe idempotente. Filas viejas quedan NULL.
@@ -752,17 +766,48 @@ export function listDevicesByAccount(accountId) {
 export function findDeviceByKey(accountId, key) {
   openDb();
   if (!accountId || !key) return null;
+  // Matchea la llave principal (devices.breb_key) O una adicional (device_keys).
   return db.prepare(`
     SELECT d.* FROM devices d
     JOIN orders o ON o.id = d.order_id
-    WHERE o.account_id = ? AND d.breb_key = ?
+    WHERE o.account_id = ?
+      AND (d.breb_key = ? OR EXISTS (
+        SELECT 1 FROM device_keys k WHERE k.spkr_id = d.spkr_id AND k.breb_key = ?
+      ))
     LIMIT 1
-  `).get(accountId, key) || null;
+  `).get(accountId, key, key) || null;
 }
 
-/** Desasigna un device: limpia order_id y vuelve a 'provisionado'. */
+/** Llaves Bre-B adicionales de un device (las manuales del admin, sin la principal). */
+export function listDeviceKeys(spkrId) {
+  openDb();
+  return db.prepare(
+    'SELECT breb_key FROM device_keys WHERE spkr_id = ? ORDER BY created_at'
+  ).all(spkrId).map((r) => r.breb_key);
+}
+
+/** Vincula una llave adicional a un device. Idempotente. `key` ya normalizada. */
+export function addDeviceKey(spkrId, key) {
+  openDb();
+  return db.prepare(
+    'INSERT OR IGNORE INTO device_keys (spkr_id, breb_key, created_at) VALUES (?, ?, ?)'
+  ).run(spkrId, key, Date.now()).changes > 0;
+}
+
+/** Quita una llave adicional de un device. */
+export function removeDeviceKey(spkrId, key) {
+  openDb();
+  return db.prepare(
+    'DELETE FROM device_keys WHERE spkr_id = ? AND breb_key = ?'
+  ).run(spkrId, key).changes > 0;
+}
+
+/** Desasigna un device: limpia order_id y vuelve a 'provisionado'. Las llaves
+ *  adicionales se borran (son del cliente, no del aparato: no deben viajar si
+ *  el speaker se reasigna a otra cuenta). */
 export function unassignDevice(spkrId) {
   openDb();
+  db.prepare('DELETE FROM device_keys WHERE spkr_id = ?').run(spkrId);
   return db.prepare(`UPDATE devices SET status = 'provisionado', order_id = NULL, updated_at = ?
     WHERE spkr_id = ?`).run(Date.now(), spkrId).changes > 0;
 }
