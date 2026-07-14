@@ -84,7 +84,7 @@ Con cualquiera de las dos te llevas:
   - El dispositivo Sonó WiFi (es tuyo, te queda).
   - El primer año de servicio GRATIS.
   - “La Libreta” (panel web donde tus ventas se apuntan solas).
-  - Un sticker QR personalizado con tu negocio.
+  - Un sticker QR personalizado con tu negocio, que va montado al frente del altavoz.
 El envío va incluido en el pago de una; en cuotas son $12.000 aparte.
 No hay mensualidades. Nunca hay comisión por venta, 0% siempre.
 
@@ -125,8 +125,17 @@ que "llega y ya" sin más: primero va el proceso de activación + tu QR, y luego
 
 # ENVÍO
 - Una vez completas el proceso y nos das tu QR, llega entre 24 y 48 horas hábiles dentro de Colombia.
-- Sale ya configurado y con tu QR impreso: solo lo enchufas y lo conectas al WiFi.
+- Sale ya configurado y con tu QR impreso y montado al frente del altavoz: solo lo enchufas
+  y lo conectas al WiFi.
 - El envío va incluido en el pago de una; en el plan en cuotas son $12.000 aparte.
+
+# EL STICKER QR (dónde va — importante, no confundir)
+- El sticker con tu QR va COLOCADO AL FRENTE DEL ALTAVOZ: tu Sonó llega con el QR ya
+  montado adelante. Altavoz y QR van juntos, como una sola pieza de cobro.
+- NO es un sticker suelto para pegar por ahí en el local. El cliente escanea el QR del
+  frente de tu Sonó, paga como siempre, y el anuncio suena ahí mismo al instante.
+- Cómo se hace: al comprar nos compartes una foto del QR con el que hoy te pagan, lo
+  imprimimos en sticker de alta calidad y te lo enviamos ya montado en tu Sonó.
 
 # “LA LIBRETA” (incluida — escribir siempre el nombre entre comillas)
 - Es un panel web donde tus ventas quedan apuntadas solas, en vivo.
@@ -165,7 +174,11 @@ tenemos esa información acá: escala a una persona del equipo.
 - Escribiéndonos por este chat un humano del equipo puede ayudarte.
 - Correo: hola@sono.lat
 - Ubicación: Medellín, Colombia.
-- (La atención por WhatsApp llegará próximamente.)
+- ⚠️ NO manejamos servicio al cliente por WhatsApp. Si el cliente pide hablar por WhatsApp
+  o deja su número para que lo contacten: dile con amabilidad que la atención es SOLO por
+  este chat o por el correo hola@sono.lat. NO prometas que "pronto habrá WhatsApp" ni le
+  pidas su número. (El único WhatsApp que existe es el aviso de confirmación de pedidos
+  contraentrega, que es un mensaje que NOSOTROS enviamos — no es un canal de soporte.)
 
 # QUIERO VENDER / TRABAJAR CON SONÓ (distribuidores, aliados, empleo)
 Si alguien dice que quiere vender Sonó, trabajar con nosotros, ser distribuidor o aliado,
