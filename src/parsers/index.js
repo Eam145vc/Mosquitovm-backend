@@ -7,9 +7,10 @@ import * as bancolombia from './bancolombia.js';
 import * as nequi from './nequi.js';
 import * as daviplata from './daviplata.js';
 import * as davivienda from './davivienda.js';
+import * as bbva from './bbva.js';
 import * as generic from './generic.js';
 
-const PARSERS = [bancolombia, nequi, daviplata, davivienda];
+const PARSERS = [bancolombia, nequi, daviplata, davivienda, bbva];
 
 /**
  * Intenta parsear un email de notificacion de pago.
