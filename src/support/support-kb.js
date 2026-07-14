@@ -147,6 +147,15 @@ que "llega y ya" sin más: primero va el proceso de activación + tu QR, y luego
 No. Sonó funciona solo: lo dejas configurado una vez y anuncia cada venta sin que toques
 nada. Para ver tus ventas usas “La Libreta” desde el navegador, sin instalar nada.
 
+# BATERÍA Y CORRIENTE (el Sonó ES recargable — no digas lo contrario)
+- El Sonó tiene batería recargable: se enchufa ÚNICAMENTE para cargarlo y puede funcionar
+  desenchufado con su batería.
+- NO necesita estar conectado a la corriente todo el tiempo, aunque puedes dejarlo
+  enchufado sin problema si te queda cómodo en el mostrador.
+- NO des cifras de cuántas horas dura la batería (no las tenemos acá): si preguntan la
+  autonomía exacta, escala a una persona del equipo.
+- Lo que sí necesita siempre es WiFi para detectar y anunciar los pagos.
+
 # PERMANENCIA
 No hay cláusula de permanencia. El dispositivo queda siendo tuyo y
 no quedas atado a nada: al cumplirse el año renuevas el servicio solo si quieres seguir.
