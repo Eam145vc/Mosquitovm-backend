@@ -93,19 +93,37 @@ export function registerSupportRoutes(app) {
       return { reply: null, mode: 'human', userMsgId: userMsg.id };
     }
 
-    // Modo bot: consultar Gemini con guardarraíl.
-    const history = historyForModel(conv.id);
+    // ¿Este handler sigue atendiendo el ÚLTIMO mensaje del cliente? Si el cliente
+    // escribió otra vez durante una espera (o mientras Gemini generaba), este handler
+    // CALLA: el handler del mensaje más reciente responde UNA sola vez con todo el
+    // contexto. Evita la doble respuesta desordenada (bug del saludo tardío, jul-2026).
+    const isLastUserMsg = () => {
+      const users = listMessages(conv.id, 0).filter((m) => m.role === 'user');
+      return users.length === 0 || users[users.length - 1].id === userMsg.id;
+    };
+
+    const userTurns = historyForModel(conv.id).filter((m) => m.role === "user").length;
 
     // El PRIMER mensaje del cliente se responde despacio (como una persona que está
-    // leyendo y escribiendo): mínimo ~20s. Así se siente atención humana, no un bot.
-    const userTurns = history.filter((m) => m.role === "user").length;
-    if (userTurns <= 1) {
-      const wait = 20000 + Math.floor(Math.random() * 5000);
-      logger.info({ convId: conv.id, wait }, "soporte: delay humano del 1er mensaje");
-      await new Promise((r) => setTimeout(r, wait));
+    // leyendo y escribiendo): mínimo ~20s. Los siguientes llevan un cooldown corto que
+    // agrupa ráfagas: si el cliente manda 2-3 mensajes seguidos, responde solo el último.
+    const wait = userTurns <= 1 ? 20000 + Math.floor(Math.random() * 5000) : 6000;
+    logger.info({ convId: conv.id, wait, userTurns }, "soporte: ventana antes de responder");
+    await new Promise((r) => setTimeout(r, wait));
+    if (!isLastUserMsg()) {
+      logger.info({ convId: conv.id, userMsgId: userMsg.id }, "soporte: superseded, no respondo");
+      return { reply: null, superseded: true, userMsgId: userMsg.id };
     }
 
+    // El historial se arma DESPUÉS de la ventana: incluye lo que llegó mientras esperábamos.
+    const history = historyForModel(conv.id);
     const { answer, escalate, reason } = await askGemini(history, text);
+
+    // Re-chequear: el cliente pudo escribir mientras Gemini generaba.
+    if (!isLastUserMsg()) {
+      logger.info({ convId: conv.id, userMsgId: userMsg.id }, "soporte: superseded post-Gemini, no respondo");
+      return { reply: null, superseded: true, userMsgId: userMsg.id };
+    }
 
     if (escalate || !answer) {
       // El bot NO inventa: escala al humano.
@@ -129,7 +147,12 @@ export function registerSupportRoutes(app) {
       const saludo = '¡Hola! Soy Valeria, del equipo de Sonó 👋';
       const helloMsg = addMessage(conv.id, 'bot', saludo);
       setTimeout(() => {
-        try { addMessage(conv.id, 'bot', answer); }
+        try {
+          // Si el cliente escribió de nuevo en estos 10s, la respuesta quedó vieja:
+          // no la mandamos; el handler del mensaje nuevo responde con todo el contexto.
+          if (!isLastUserMsg()) return;
+          addMessage(conv.id, 'bot', answer);
+        }
         catch (e) { logger.warn({ convId: conv.id, err: e.message }, 'no se pudo guardar la respuesta diferida'); }
       }, 10_000);
       await safeNotify({
