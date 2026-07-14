@@ -133,14 +133,33 @@ export function decodeBrebString(emvco) {
  * @param {Buffer} imageBuffer
  */
 export async function decodeBrebImage(imageBuffer) {
-  let img;
+  let base;
   try {
-    img = await Jimp.read(imageBuffer);
+    base = await Jimp.read(imageBuffer);
   } catch {
     return null;
   }
-  const { data, width, height } = img.bitmap;
-  const code = jsQR(new Uint8ClampedArray(data), width, height);
-  if (!code || !code.data) return null;
-  return decodeBrebString(code.data);
+  // jsQR es sensible a la resolución y el contraste: el template oficial de
+  // Bancolombia (880px, QR con logo al centro) fallaba tal cual pero decodifica
+  // reescalado (visto jul-2026, orden de Vera Sáenz). Intentos en cascada; el
+  // primero que decodifique un Bre-B válido gana.
+  const attempts = [
+    () => base,
+    () => base.clone().greyscale().contrast(0.5),
+    () => base.clone().resize({ w: 1600 }),
+    () => base.clone().resize({ w: 900 }),
+    () => base.clone().resize({ w: 600 }),
+    () => base.clone().resize({ w: 400 }),
+  ];
+  for (const make of attempts) {
+    try {
+      const { data, width, height } = make().bitmap;
+      const code = jsQR(new Uint8ClampedArray(data), width, height);
+      if (code && code.data) {
+        const decoded = decodeBrebString(code.data);
+        if (decoded) return decoded;
+      }
+    } catch { /* siguiente intento */ }
+  }
+  return null;
 }
