@@ -123,12 +123,12 @@ export async function askGemini(history, userText) {
     contents,
     generationConfig: {
       temperature: 0.2,            // bajo: más fiel a la KB, menos creatividad
-      // Subido a 2048: las respuestas con desglose (cuotas: 3x$69.000 + $12.000 envío)
-      // se cortaban a la mitad con 1024 → el JSON quedaba incompleto → el bot escalaba
-      // de más ("json invalido"). thinkingBudget:0 desactiva el razonamiento de Gemini
-      // (innecesario para un bot con KB fija) para que TODO el presupuesto vaya a la
-      // respuesta y además responda más rápido (ayuda con el timeout de 15s).
-      maxOutputTokens: 2048,
+      // Subido a 4096 (antes 2048, antes 1024): respuestas largas se cortaban → JSON
+      // incompleto → el bot escalaba de más ("json invalido"). Además salvageAnswer
+      // rescata el answer de un JSON truncado como red final. thinkingBudget:0
+      // desactiva el razonamiento de Gemini (innecesario para un bot con KB fija) para
+      // que TODO el presupuesto vaya a la respuesta y además responda más rápido.
+      maxOutputTokens: 4096,
       thinkingConfig: { thinkingBudget: 0 },
       responseMimeType: 'application/json',
     },
@@ -152,10 +152,20 @@ export async function askGemini(history, userText) {
     }
 
     const data = await res.json();
-    const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const cand = data?.candidates?.[0];
+    const raw = cand?.content?.parts?.[0]?.text || '';
     const parsed = safeParse(raw);
     if (!parsed) {
-      logger.warn({ raw: raw.slice(0, 200) }, 'gemini: respuesta no parseable, escalando');
+      // El JSON a veces llega TRUNCADO a mitad del string "answer" (visto 14-jul-2026:
+      // el bot escalaba preguntas triviales con "json invalido" aunque Gemini había
+      // generado una respuesta buena). Antes de rendirnos, rescatamos lo que alcanzó a
+      // escribir: mejor una respuesta recortada a la última frase que escalar de más.
+      const salvaged = salvageAnswer(raw);
+      logger.warn(
+        { finishReason: cand?.finishReason, usage: data?.usageMetadata, raw },
+        salvaged ? 'gemini: JSON roto, answer rescatado' : 'gemini: respuesta no parseable, escalando'
+      );
+      if (salvaged) return { answer: salvaged, escalate: false, reason: 'json rescatado' };
       return { answer: '', escalate: true, reason: 'json invalido' };
     }
 
@@ -168,6 +178,23 @@ export async function askGemini(history, userText) {
     logger.error({ err: e.message }, 'gemini call failed');
     return { answer: '', escalate: true, reason: `excepcion: ${e.message}` };
   }
+}
+
+// Rescate de un JSON truncado: extrae el valor de "answer" aunque el string no cierre,
+// lo des-escapa y lo recorta hasta el final de la última frase completa. Devuelve null
+// si no hay nada usable (ahí sí se escala).
+function salvageAnswer(raw) {
+  if (!raw) return null;
+  const m = raw.match(/"answer"\s*:\s*"((?:[^"\\]|\\.)*)/);
+  if (!m || !m[1]) return null;
+  let text;
+  try { text = JSON.parse('"' + m[1] + '"'); }
+  catch { text = m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"'); }
+  text = text.trim();
+  if (text.length < 20) return null;
+  const cut = Math.max(text.lastIndexOf('.'), text.lastIndexOf('!'), text.lastIndexOf('?'));
+  if (cut > 40) text = text.slice(0, cut + 1);
+  return text;
 }
 
 // Parseo tolerante: a veces el modelo envuelve el JSON en ```json ... ```.
