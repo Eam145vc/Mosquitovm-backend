@@ -77,6 +77,7 @@ import { publishVoice, publishCommand } from './mqtt-publisher.js';
 import { buildVoiceMessage } from './amount-to-wavs.js';
 import { startLatency, markVoicePublished } from './latency.js';
 import { getStats as getLatencyStats } from './latency-store.js';
+import { snapshot as bankStatusSnapshot } from './bank-status.js';
 import { handlePubSubPush } from './pubsub-handler.js';
 import { watchInbox } from './gmail-api.js';
 import { registerSupportRoutes } from './support/support-routes.js';
@@ -1539,7 +1540,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     const from = req.query.from ? Number(req.query.from) : null;
     const to = req.query.to ? Number(req.query.to) : null;
     const all = req.query.all === '1' || req.query.all === 'true';
-    return getLatencyStats(resolveName, { from, to, all });
+    // `incidentes`: estado del detector de demoras por banco (auto-aviso audio 120).
+    return { ...getLatencyStats(resolveName, { from, to, all }), incidentes: bankStatusSnapshot() };
   });
 
   // ── Buzón (catch-all): correo que entra al MX a un alias DESCONOCIDO ──

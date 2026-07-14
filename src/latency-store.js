@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
 import { logger } from './logger.js';
+import { recordBankSample } from './bank-status.js';
 
 const FILE = path.join(path.dirname(config.DB_PATH), 'latency.json');
 const MAX_SAMPLES = 5000; // detalle histórico (para filtrar por fecha y ver "todo el registro")
@@ -67,6 +68,13 @@ export function recordLatency(line) {
   };
   samples.push(s);
   if (samples.length > MAX_SAMPLES) samples.shift();
+
+  // Alimenta el detector de demoras por banco (auto-aviso a los speakers afectados).
+  try {
+    recordBankSample({ bank: s.bank, bankToBackendMs: s.bankToBackendMs, precise: s.precise });
+  } catch (e) {
+    logger.warn({ err: e.message }, 'bank-status: no se pudo registrar la muestra');
+  }
 
   const key = s.accountId || 'unknown';
   const a = agg.get(key) || blankAgg();

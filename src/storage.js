@@ -889,6 +889,30 @@ export function recordPayment({ accountId, amount, bank, payer, brebKey = null,
   return { id: info.lastInsertRowid, accountId, amount, bank, payer, brebKey, speakerId, localName, unrouted, at };
 }
 
+/** Speakers de los clientes que reciben pagos de un banco (para el aviso de demora
+ *  segmentado). Une el speaker del pago (multipunto) con el de la cuenta, sobre los
+ *  pagos desde `sinceMs`. Excluye cuentas suspendidas (sus speakers no deben sonar). */
+export function speakersForBank(bank, sinceMs) {
+  openDb();
+  if (!bank) return [];
+  return db
+    .prepare(
+      `SELECT DISTINCT s FROM (
+         SELECT p.speaker_id AS s FROM payments p
+           JOIN accounts a ON a.id = p.account_id
+          WHERE p.bank = ? AND p.at >= ? AND p.speaker_id IS NOT NULL
+            AND COALESCE(a.sub_status, '') != 'suspendida'
+         UNION
+         SELECT a.speaker_id AS s FROM payments p
+           JOIN accounts a ON a.id = p.account_id
+          WHERE p.bank = ? AND p.at >= ? AND a.speaker_id IS NOT NULL
+            AND COALESCE(a.sub_status, '') != 'suspendida'
+       ) WHERE s IS NOT NULL AND s != ''`
+    )
+    .all(bank, sinceMs, bank, sinceMs)
+    .map((r) => r.s);
+}
+
 /** Últimos pagos de una cuenta (más recientes primero). */
 export function paymentsFor(accountId, limit = 50) {
   openDb();

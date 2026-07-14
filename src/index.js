@@ -18,7 +18,9 @@ import { watchInbox } from './gmail-api.js';
 import { updateAccountHistory, updateAccountWatch, recordPayment, upsertDeviceFromStatus,
   setSubStatus, accountsToAutoSuspend, markNewlyExpired, listOrders, updateOrder, getOrder,
   paymentsFor, requeueStaleWa, shipmentsAwaitingTracking, updateShipmentRow, listWaOutbox,
-  listShipments, cancelPendingWaByKinds, cancelAllPendingWa, getShipmentByOrder } from './storage.js';
+  listShipments, cancelPendingWaByKinds, cancelAllPendingWa, getShipmentByOrder,
+  speakersForBank } from './storage.js';
+import { onIncident as onBankIncident } from './bank-status.js';
 import { fetchEfiStatus } from './efipay.js';
 import { sendActivationEmail } from './activation-email.js';
 import { enqueueWhatsApp, enqueueGuiaCreadaIfReady, GUIA_CREADA_SINCE } from './wa-enqueue.js';
@@ -327,6 +329,27 @@ async function main() {
     });
   waReminderJob();
   setInterval(waReminderJob, 15 * 60 * 1000); // cada 15 min
+
+  // ── Auto-aviso de demoras del banco ─────────────────────────────────────────
+  // El detector (bank-status.js, alimentado por la latencia de cada pago) abre un
+  // incidente cuando un banco viene lento de forma SOSTENIDA (≥3 pagos lentos en
+  // 15 min y mayoría; no un pago aislado). Al abrirse, se reproduce el audio 120
+  // ("las notificaciones pueden tardar más de lo normal por demoras del banco")
+  // SOLO en los speakers de clientes que reciben pagos de ese banco (últimos 30 días).
+  const AVISO_DEMORA_WAV = '120';
+  const BANK_CLIENTS_WINDOW_MS = 30 * 24 * 3600 * 1000;
+  onBankIncident(async (bank) => {
+    const speakers = speakersForBank(bank, Date.now() - BANK_CLIENTS_WINDOW_MS);
+    if (!speakers.length) {
+      logger.warn({ bank }, 'demoras del banco: sin speakers afectados, no se envía aviso');
+      return;
+    }
+    const results = await Promise.allSettled(
+      speakers.map((s) => publishCommand(s, { cmd: 'voice', playAudibleMsg: AVISO_DEMORA_WAV })),
+    );
+    const enviados = results.filter((r) => r.status === 'fulfilled').length;
+    logger.warn({ bank, enviados, total: speakers.length, speakers }, 'demoras del banco: aviso 120 enviado');
+  });
 
   // ── WhatsApp de guía de envío ────────────────────────────────────────────────
   // El webhook de Skydropx manda 'guia_creada' (guía + revisar datos) con el evento
