@@ -8,7 +8,7 @@
 //
 // Histéresis anti-falsas-alarmas (decisión del usuario: que NO sea sensible — un
 // pago puede demorar y al ratico estar bien):
-//  - "lento" = bankToBackendMs ≥ 90s si la medición es precisa; ≥150s si es
+//  - "lento" = bankToBackendMs ≥ 180s si la medición es precisa; ≥240s si es
 //    imprecisa (±60s, ej. Bancolombia medida por header adyacente).
 //  - DISPARA: ≥3 pagos lentos en 15 min Y que sean mayoría de los pagos del banco.
 //  - CIERRA: 10 min sin un solo pago lento → incidente terminado.
@@ -17,8 +17,8 @@
 
 import { logger } from './logger.js';
 
-export const SLOW_PRECISE_MS = 90_000;
-export const SLOW_IMPRECISE_MS = 150_000;
+export const SLOW_PRECISE_MS = 180_000;
+export const SLOW_IMPRECISE_MS = 240_000;
 export const WINDOW_MS = 15 * 60_000;
 export const MIN_SLOW = 3;
 export const MIN_RATIO = 0.5;

@@ -336,7 +336,9 @@ async function main() {
   // 15 min y mayoría; no un pago aislado). Al abrirse, se reproduce el audio 120
   // ("las notificaciones pueden tardar más de lo normal por demoras del banco")
   // SOLO en los speakers de clientes que reciben pagos de ese banco (últimos 30 días).
-  const AVISO_DEMORA_WAV = '120';
+  // '120-120' = el aviso suena 2 veces seguidas (los WAV se concatenan por ID),
+  // para que se alcance a escuchar aunque el local esté ruidoso.
+  const AVISO_DEMORA_WAV = '120-120';
   const BANK_CLIENTS_WINDOW_MS = 30 * 24 * 3600 * 1000;
   onBankIncident(async (bank) => {
     const speakers = speakersForBank(bank, Date.now() - BANK_CLIENTS_WINDOW_MS);
