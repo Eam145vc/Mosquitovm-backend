@@ -187,6 +187,66 @@ export function registerSupportRoutes(app) {
     };
   });
 
+  // Formulario "el agente no llegó": el widget lo abre a los 2 min de una escalación
+  // sin respuesta humana. El mensaje queda en la conversación (rastro en el panel),
+  // notifica por push y se manda a hola@sono.lat por el MX saliente firmado.
+  const contactSent = new Set(); // 1 formulario por conversación (anti doble-submit)
+  app.post('/soporte/conv/:id/contact', async (req, reply) => {
+    const conv = getConversation(req.params.id);
+    if (!conv) return reply.code(404).send({ error: 'conversación no encontrada' });
+    if (contactSent.has(conv.id)) return { ok: true, already: true };
+
+    const name = String((req.body || {}).name || '').trim().slice(0, 120);
+    const contact = String((req.body || {}).contact || '').trim().slice(0, 160);
+    const message = String((req.body || {}).message || '').trim();
+    if (!message) return reply.code(400).send({ error: 'mensaje vacío' });
+    if (message.length > 3000) return reply.code(413).send({ error: 'mensaje muy largo' });
+    contactSent.add(conv.id);
+
+    addMessage(conv.id, 'user',
+      `📮 Formulario de contacto (el agente no alcanzó a unirse)\n` +
+      `Nombre: ${name || '—'}\nContacto: ${contact || '—'}\n\n${message}`);
+    touchConversation(conv.id, { status: 'pending' });
+
+    let mailed = false;
+    if (config.MX_SEND_API_URL && config.EMAIL_WEBHOOK_SECRET) {
+      try {
+        const resp = await fetch(`${config.MX_SEND_API_URL.replace(/\/$/, '')}/send`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-sono-secret': config.EMAIL_WEBHOOK_SECRET },
+          body: JSON.stringify({
+            fromLocal: 'hola',
+            fromName: 'Soporte Sonó',
+            to: 'hola@sono.lat',
+            subject: `📮 Chat sin agente — ${name || 'visitante'}`,
+            text: [
+              'Un cliente escaló en el chat y ningún agente se unió en 2 minutos.',
+              '',
+              `Nombre: ${name || '—'}`,
+              `Contacto: ${contact || '—'}`,
+              '',
+              'Mensaje:',
+              message,
+              '',
+              `Conversación: https://sono.lat/soporte-app/#/conv/${conv.id}`,
+            ].join('\n'),
+          }),
+        });
+        mailed = resp.ok;
+      } catch (e) {
+        logger.warn({ convId: conv.id, err: e.message }, 'soporte: no se pudo enviar el formulario por correo');
+      }
+    }
+    await safeNotify({
+      title: `📮 ${name || 'Cliente'} dejó un mensaje (sin agente)`,
+      body: message.slice(0, 120),
+      url: `/soporte-app/#/conv/${conv.id}`,
+      tag: `conv-${conv.id}`,
+    });
+    logger.info({ convId: conv.id, mailed }, 'soporte: formulario de contacto recibido');
+    return { ok: true, mailed };
+  });
+
   app.get('/soporte/vapid-public', async () => ({
     publicKey: config.VAPID_PUBLIC_KEY || null,
     pushEnabled: pushEnabled(),

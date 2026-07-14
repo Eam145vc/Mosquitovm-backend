@@ -20,9 +20,11 @@ const API = (model, key) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
 
 // Mensaje que el usuario ve cuando el bot decide escalar (no muestra el "reason" interno).
+// El widget arranca un timer de 2 min al verlo (escalated:true): si ningún agente se une,
+// abre el formulario de contacto que llega a hola@sono.lat.
 export const ESCALATION_MESSAGE =
-  'Dame un momentico que confirmo eso con el equipo y ya te respondo por acá 🙌 ' +
-  'Si prefieres, también puedes escribirnos a hola@sono.lat.';
+  'Esa pregunta te la responde mejor un agente del equipo 🙌 ' +
+  'Ya te transfiero, dame un momentico…';
 
 const SYSTEM_PROMPT = `
 Eres Valeria, del equipo de Sonó (sono.lat), un altavoz que anuncia por voz los
