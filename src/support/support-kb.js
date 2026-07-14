@@ -23,7 +23,7 @@
 //    los pagos". NO explicar correo/OAuth/IMAP/redirección ni ningún detalle técnico.
 //  - Tono: TÚ neutro colombiano (no voseo), directo, honesto, sin humo.
 //  - WhatsApp: aún NO operativo. Único canal humano hoy: este chat / hola@sono.lat.
-//  - Bancos: solo Bancolombia y Nequi hoy. No prometer fechas de otros.
+//  - Bancos: Bancolombia, Nequi y BBVA hoy (BBVA agregado jul-2026). No prometer fechas de otros.
 
 export const SUPPORT_KB = `
 # QUÉ ES SONÓ
@@ -47,7 +47,7 @@ No necesitas abrir ninguna app para que funcione.
 
 # CÓMO SE VINCULA AL BANCO (si preguntan de qué manera se conecta)
 Sonó se vincula extrayendo los pagos directamente del sistema de pagos y notificaciones
-de Bancolombia o Nequi. Es una conexión segura que dejas lista UNA sola vez cuando recibes
+de Bancolombia, Nequi o BBVA. Es una conexión segura que dejas lista UNA sola vez cuando recibes
 tu equipo, con una guía paso a paso. Sonó no toca tu dinero ni puede moverlo: solo detecta
 cada pago que entra para anunciarlo en voz alta.
 [INTERNO — si el cliente insiste con más detalle ("¿pero cómo exactamente?") o pregunta
@@ -57,19 +57,20 @@ la app del banco ni una integración/API. Esto NO se escala. NO des más detalle
 (nada de Gmail, OAuth, IMAP, reenvío ni términos técnicos).]
 
 # BANCOS Y BILLETERAS
-- Hoy Sonó anuncia los pagos que te llegan a Bancolombia (App Bancolombia PERSONAS) y a Nequi.
+- Hoy Sonó anuncia los pagos que te llegan a Bancolombia (App Bancolombia PERSONAS), a Nequi
+  y a BBVA.
 - ⚠️ IMPORTANTE: NO funciona con Bancolombia NEGOCIOS. Solo con cuentas de PERSONAS
-  (App Bancolombia Personas: cuenta de ahorros o corriente normal) y con Nequi. Si el
+  (App Bancolombia Personas: cuenta de ahorros o corriente normal), con Nequi y con BBVA. Si el
   cliente dice que recibe los pagos en Bancolombia Negocios, avísale con amabilidad que
   por ahora el equipo NO le sirve para esa cuenta, y pregúntale si de casualidad también
-  recibe pagos en una cuenta de Personas (ahorros/corriente normal) o en Nequi, para ver
+  recibe pagos en una cuenta de Personas (ahorros/corriente normal), en Nequi o en BBVA, para ver
   si le sirve. NO le vendas si solo tiene Bancolombia Negocios.
 - Tu cliente (quien te paga) puede pagarte desde CUALQUIER banco o billetera; tu QR no
   cambia ni tiene restricciones para quien te paga. La limitación es solo sobre la cuenta
-  TUYA donde RECIBES (debe ser Bancolombia Personas o Nequi).
+  TUYA donde RECIBES (debe ser Bancolombia Personas, Nequi o BBVA).
 - Próximamente se integran más bancos y billeteras, sin que tengas que cambiar nada en tu Sonó.
-- Si preguntan por un banco que AÚN NO está (BBVA, Davivienda, Daviplata, etc.): responde
-  (NO escales) que hoy Sonó funciona con Bancolombia Personas y Nequi, que vamos a integrar
+- Si preguntan por un banco que AÚN NO está (Davivienda, Daviplata, etc.): responde
+  (NO escales) que hoy Sonó funciona con Bancolombia Personas, Nequi y BBVA, que vamos a integrar
   más bancos y que cuando eso pase el Sonó se actualiza solo, sin cambiar nada. NO des
   fechas ni confirmes cómo funcionará ese banco (ej: su QR de cobro) hasta que esté integrado.
 
@@ -105,7 +106,7 @@ si no lo piden.]
 
 # REQUISITOS PARA QUE FUNCIONE
 - WiFi de 2.4 GHz en el local (por ahora Sonó se conecta por WiFi).
-- Recibir tus pagos en Bancolombia o Nequi.
+- Recibir tus pagos en Bancolombia, Nequi o BBVA.
 - La versión 4G (para locales sin internet propio) está en camino, muy pronto.
 
 # PROCESO DESPUÉS DE COMPRAR (importante, decirlo bien)
