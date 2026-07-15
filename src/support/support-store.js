@@ -59,6 +59,9 @@ function db() {
     // Migración idempotente: bandera de re-enganche (el bot escribió 1 vez para
     // recuperar al cliente que dejó de responder; 0 = aún no, 1 = ya lo hizo).
     try { d.exec('ALTER TABLE support_conversations ADD COLUMN reengaged INTEGER NOT NULL DEFAULT 0'); } catch (e) { /* ya existe */ }
+    // Migración idempotente: revisión de edición. Sube al editar/borrar un mensaje ya
+    // enviado; el widget la compara en cada poll y repinta el historial si cambió.
+    try { d.exec('ALTER TABLE support_conversations ADD COLUMN rev INTEGER NOT NULL DEFAULT 0'); } catch (e) { /* ya existe */ }
     inited = true;
   }
   return d;
@@ -147,6 +150,30 @@ export function listMessages(convId, sinceId = 0) {
   return db().prepare(
     'SELECT id, role, text, escalated, created_at FROM support_messages WHERE conv_id = ? AND id > ? ORDER BY id ASC'
   ).all(convId, sinceId);
+}
+
+export function getMessage(convId, msgId) {
+  return db().prepare('SELECT * FROM support_messages WHERE conv_id = ? AND id = ?')
+    .get(convId, msgId) || null;
+}
+
+function bumpRev(convId) {
+  db().prepare('UPDATE support_conversations SET rev = rev + 1, updated_at = ? WHERE id = ?')
+    .run(now(), convId);
+}
+
+export function editMessage(convId, msgId, text) {
+  const r = db().prepare('UPDATE support_messages SET text = ? WHERE conv_id = ? AND id = ?')
+    .run(text, convId, msgId);
+  if (r.changes) bumpRev(convId);
+  return r.changes > 0;
+}
+
+export function deleteMessage(convId, msgId) {
+  const r = db().prepare('DELETE FROM support_messages WHERE conv_id = ? AND id = ?')
+    .run(convId, msgId);
+  if (r.changes) bumpRev(convId);
+  return r.changes > 0;
 }
 
 // Historial en el formato que espera gemini.js ({role:'user'|'bot', text}).

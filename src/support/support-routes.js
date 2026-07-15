@@ -13,6 +13,8 @@
 //   GET  /soporte/admin/analytics/live - lista de visitantes activos en este momento
 //   GET  /soporte/admin/conv/:id       - detalle + mensajes
 //   POST /soporte/admin/conv/:id/reply - el dueño responde manual (pone mode=human)
+//   POST /soporte/admin/conv/:id/msg/:msgId/edit   - { text } corrige un mensaje enviado (bot/human)
+//   POST /soporte/admin/conv/:id/msg/:msgId/delete - borra un mensaje enviado (bot/human)
 //   POST /soporte/admin/conv/:id/mode  - { mode: 'bot'|'human' } tomar/soltar el control
 //   POST /soporte/admin/conv/:id/close - cerrar conversación
 //   POST /soporte/admin/push/subscribe - registrar suscripción Web Push del iPhone
@@ -28,7 +30,7 @@ import { pushEnabled, notifyAdmins } from './webpush.js';
 import {
   createConversation, getConversation, touchConversation, clearUnreadAdmin, incUnreadAdmin,
   addMessage, listMessages, historyForModel, listConversations, countPending, savePushSub,
-  findConvsToReengage, markReengaged,
+  findConvsToReengage, markReengaged, getMessage, editMessage, deleteMessage,
 } from './support-store.js';
 
 // Mensaje de re-enganche: si el cliente deja de responder ~30s y el último mensaje
@@ -183,6 +185,7 @@ export function registerSupportRoutes(app) {
     return {
       mode: conv.mode,
       status: conv.status,
+      rev: conv.rev || 0,
       messages: listMessages(conv.id, since).filter(m => m.role !== 'system'),
     };
   });
@@ -301,6 +304,39 @@ export function registerSupportRoutes(app) {
     clearUnreadAdmin(conv.id);
     logger.info({ convId: conv.id }, 'soporte: respuesta humana enviada');
     return { ok: true, message: msg };
+  });
+
+  // Corregir un mensaje ya enviado (bot o human; los del cliente no se tocan).
+  // Sube `rev` en la conversación → el widget del cliente repinta el historial.
+  app.post('/soporte/admin/conv/:id/msg/:msgId/edit', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const conv = getConversation(req.params.id);
+    if (!conv) return reply.code(404).send({ error: 'no encontrada' });
+    const msg = getMessage(conv.id, Number(req.params.msgId));
+    if (!msg) return reply.code(404).send({ error: 'mensaje no encontrado' });
+    if (msg.role === 'user' || msg.role === 'system') {
+      return reply.code(403).send({ error: 'solo se editan mensajes del bot o tuyos' });
+    }
+    const text = String((req.body || {}).text || '').trim();
+    if (!text) return reply.code(400).send({ error: 'mensaje vacío' });
+    if (text.length > 2000) return reply.code(413).send({ error: 'mensaje muy largo' });
+    editMessage(conv.id, msg.id, text);
+    logger.info({ convId: conv.id, msgId: msg.id }, 'soporte: mensaje editado');
+    return { ok: true };
+  });
+
+  app.post('/soporte/admin/conv/:id/msg/:msgId/delete', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const conv = getConversation(req.params.id);
+    if (!conv) return reply.code(404).send({ error: 'no encontrada' });
+    const msg = getMessage(conv.id, Number(req.params.msgId));
+    if (!msg) return reply.code(404).send({ error: 'mensaje no encontrado' });
+    if (msg.role === 'user' || msg.role === 'system') {
+      return reply.code(403).send({ error: 'solo se borran mensajes del bot o tuyos' });
+    }
+    deleteMessage(conv.id, msg.id);
+    logger.info({ convId: conv.id, msgId: msg.id }, 'soporte: mensaje borrado');
+    return { ok: true };
   });
 
   // Tomar (human) o soltar (bot) el control de una conversación.
