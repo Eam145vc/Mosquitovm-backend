@@ -150,6 +150,10 @@ function orderView(o) {
     hasShipping: Boolean(o.business_name),
     payerEmail: o.mp_payer_email || null,  // para pre-rellenar el correo del método redirect
     customerEmail: o.customer_email || null, // correo del checkout, para prellenar el onboarding
+    // Destino REAL del reenvío si la cuenta redirect ya existe. El front lo precarga con
+    // prioridad sobre customerEmail: el correo del checkout puede NO ser el del banco
+    // (incidente Ricardo jul-2026: el link mostraba el de la orden y pisaba el corregido).
+    forwardTo: acc?.forwardTo || null,
     delivery: o.delivery || 'online', // 'online' | 'contraentrega' → el front decide cuándo reportar el Purchase a los pixels
   };
 }
