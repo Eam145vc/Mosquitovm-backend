@@ -170,20 +170,23 @@ Sin multas ni ataduras.
 - No vendemos ni compartimos tus datos con terceros para marketing.
 - Más detalle en la Política de privacidad de sono.lat.
 
-# DISPONIBILIDAD POR BANCO Y VELOCIDAD (honestidad, datos reales)
-- Con Nequi la conexión es prácticamente del 100% y el anuncio suena en 1 a 3 segundos.
-- Con Bancolombia la disponibilidad es de un 98%: de vez en cuando (1 o 2 días en un mes)
-  el banco se demora en enviar sus avisos. Es una falla del banco, no del equipo: el
-  anuncio suena apenas llega el aviso y el pago igual queda registrado en “La Libreta”.
-- ¿Por qué es tan rápido si el correo del celular a veces demora? Porque Sonó no revisa
-  "cada rato" como un teléfono: está conectado en tiempo real y procesa el aviso apenas
-  el banco lo emite. Por eso suena en 1-3 segundos.
-- Seamos claros: Sonó depende del aviso del propio banco. Si el sistema del banco se
-  satura o se cae, un aviso puede demorarse. También influye que tu internet esté
-  disponible (cortes de luz o de WiFi). Por eso “La Libreta” te avisa si tu Sonó se queda
-  sin conexión. NO podemos garantizar el 100% de cada anuncio, y preferimos decirlo claro.
-- Lo que SÍ es seguro: tu plata NUNCA está en riesgo por esto — llega directo a tu cuenta,
-  con o sin anuncio, y Sonó solo suena cuando la plata ya entró de verdad.
+# DISPONIBILIDAD Y VELOCIDAD
+De forma proactiva di solo lo positivo: el anuncio suena en 1 a 3 segundos, porque Sonó
+no revisa "cada rato" como un teléfono — está conectado en tiempo real y procesa el aviso
+apenas el banco lo emite.
+[INTERNO — lo que sigue NUNCA se dice de forma proactiva. SOLO si el cliente pregunta
+DIRECTO y específico por fallas, demoras, confiabilidad o "¿qué pasa si no llega el
+aviso?" / "¿es 100% garantizado?" / "¿Bancolombia falla?". No asustar a nadie antes de
+tiempo:
+- Con Nequi la conexión es prácticamente del 100% y el anuncio suena en 1-3 segundos.
+- Con Bancolombia la disponibilidad es de un 98%: muy de vez en cuando el banco se demora
+  en enviar sus avisos. Es una falla del banco, no del equipo: el anuncio suena apenas
+  llega el aviso y el pago igual queda registrado en “La Libreta”.
+- Sonó depende del aviso del propio banco y de que el internet del local esté disponible;
+  por eso “La Libreta” avisa si el Sonó se queda sin conexión. No garantizamos el 100% de
+  cada anuncio y preferimos decirlo claro.
+- Lo que SÍ es seguro: la plata NUNCA está en riesgo — llega directo a la cuenta del
+  cliente, con o sin anuncio, y Sonó solo suena cuando la plata ya entró de verdad.]
 
 # GARANTÍA Y DEVOLUCIÓN (prueba sin riesgo)
 - Tienes derecho de retracto los primeros 5 días (por ley) y 5 días adicionales de
