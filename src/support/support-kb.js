@@ -146,6 +146,8 @@ que "llega y ya" sin más: primero va el proceso de activación + tu QR, y luego
 # ¿NECESITO UNA APP?
 No. Sonó funciona solo: lo dejas configurado una vez y anuncia cada venta sin que toques
 nada. Para ver tus ventas usas “La Libreta” desde el navegador, sin instalar nada.
+Si preguntan si existe una app: hay una en desarrollo que llegará más adelante (NO dar
+fechas), pero no se necesita para nada del funcionamiento.
 
 # BATERÍA Y CORRIENTE (el Sonó ES recargable — no digas lo contrario)
 - El Sonó tiene batería recargable: se enchufa ÚNICAMENTE para cargarlo y puede funcionar
@@ -168,16 +170,110 @@ Sin multas ni ataduras.
 - No vendemos ni compartimos tus datos con terceros para marketing.
 - Más detalle en la Política de privacidad de sono.lat.
 
-# DISPONIBILIDAD Y "¿ES 100% GARANTIZADO?" (honestidad)
-La mayoría de las veces el aviso suena en segundos. Pero seamos claros: Sonó se conecta
-con tu banco para detectar cada pago, así que depende del propio banco. Si el sistema del
-banco se satura o se cae, un aviso puede demorarse o, de vez en cuando, no llegar. Eso no
-depende de nosotros, así que NO podemos garantizar que cada anuncio suene al 100%.
-También influye que tu internet esté disponible (cortes de luz o de WiFi). Hacemos el mejor
-esfuerzo para que funcione siempre, y por eso “La Libreta” te avisa si tu Sonó se queda sin
-conexión. Lo que SÍ es seguro: Sonó solo suena cuando la plata ya entró de verdad a tu
-cuenta. Si el cliente pregunta por una garantía de devolución o cambio del aparato, no
-tenemos esa información acá: escala a una persona del equipo.
+# DISPONIBILIDAD POR BANCO Y VELOCIDAD (honestidad, datos reales)
+- Con Nequi la conexión es prácticamente del 100% y el anuncio suena en 1 a 3 segundos.
+- Con Bancolombia la disponibilidad es de un 98%: de vez en cuando (1 o 2 días en un mes)
+  el banco se demora en enviar sus avisos. Es una falla del banco, no del equipo: el
+  anuncio suena apenas llega el aviso y el pago igual queda registrado en “La Libreta”.
+- ¿Por qué es tan rápido si el correo del celular a veces demora? Porque Sonó no revisa
+  "cada rato" como un teléfono: está conectado en tiempo real y procesa el aviso apenas
+  el banco lo emite. Por eso suena en 1-3 segundos.
+- Seamos claros: Sonó depende del aviso del propio banco. Si el sistema del banco se
+  satura o se cae, un aviso puede demorarse. También influye que tu internet esté
+  disponible (cortes de luz o de WiFi). Por eso “La Libreta” te avisa si tu Sonó se queda
+  sin conexión. NO podemos garantizar el 100% de cada anuncio, y preferimos decirlo claro.
+- Lo que SÍ es seguro: tu plata NUNCA está en riesgo por esto — llega directo a tu cuenta,
+  con o sin anuncio, y Sonó solo suena cuando la plata ya entró de verdad.
+
+# GARANTÍA Y DEVOLUCIÓN (prueba sin riesgo)
+- Tienes derecho de retracto los primeros 5 días (por ley) y 5 días adicionales de
+  garantía de reembolso: en total 10 días para probarlo con tus ventas reales y, si no
+  te convence, devolverlo y recibir tu dinero de vuelta.
+- Tip que usan muchos clientes: empezar con una cuenta secundaria (un Nequi o una cuenta
+  Bancolombia aparte) para probar la funcionalidad sin tocar su cuenta principal, y cuando
+  ya están seguros la cambian a su cuenta de siempre (el cambio lo hace el equipo por el
+  chat, es rápido y sin costo).
+- Si un cliente que YA compró quiere ejecutar una devolución o reclamar la garantía: escala.
+
+# SEGURIDAD ANTI-FRAUDE (pantallazos falsos, apps tipo "NequiTrampa")
+- Sonó solo procesa avisos que llegan con la firma criptográfica oficial del banco. Un
+  correo falso o imitado no pasa esa verificación y el sistema lo descarta.
+- Las apps de estafa falsifican la pantalla de un celular, pero no pueden falsificar al
+  banco. Regla de oro: si no sonó, no entró.
+
+# CREDENCIALES Y ACCESO (qué NO pedimos — decirlo con total claridad)
+- NUNCA pedimos usuario, contraseña, claves dinámicas ni datos personales del banco.
+- El sistema NO tiene acceso a la cuenta bancaria: no puede ver saldo, mover dinero ni
+  hacer ninguna operación. Solo detecta los avisos de pago entrante para anunciarlos.
+- Tampoco pedimos permisos sobre el correo personal del cliente ni leemos sus correos:
+  sus correos, historial e información siguen siendo 100% suyos y privados.
+- Todo se maneja con estricta privacidad. Política: sono.lat/privacidad — Términos:
+  sono.lat/terminos (dar estos links si piden ver las políticas).
+
+# ¿REPORTA A LA DIAN?
+No. Sonó no reporta nada a la DIAN ni a ninguna entidad: no es un banco ni una pasarela,
+no procesa la plata ni lleva registros ante nadie. Es un dispositivo privado del
+comerciante que solo anuncia los avisos de pago de su banco. Su relación con el banco y
+sus temas tributarios siguen exactamente igual, con o sin Sonó.
+
+# LÍMITE DE TRANSACCIONES
+No hay: Sonó anuncia TODAS las transacciones, sin límite de cantidad ni de monto, y no
+cobra nada por transacción. Los únicos topes que aplican son los de la propia cuenta
+bancaria del cliente (eso es entre él y su banco).
+
+# PAGOS POR LLAVE (sin escanear el QR) Y DOMICILIOS
+- Si el cliente paga DIGITANDO la llave Bre-B (la misma del QR) en vez de escanearlo,
+  suena igual: el pago entra a la misma llave y el banco envía el mismo aviso.
+- Para domicilios funciona perfecto: pasas tu llave, te pagan desde cualquier banco, y en
+  el local suena; además queda registrado en “La Libreta”, que se abre desde el celular
+  para validar el pago estando en la calle (o con el negocio cerrado).
+- Las transferencias directas al número de celular POR FUERA de Bre-B (sin QR ni llave)
+  NO se anuncian: el cobro debe entrar siempre por el QR/llave Bre-B del Sonó.
+
+# UN QR POR DISPOSITIVO
+- Cada Sonó trabaja con UNA cuenta y UN QR. Para otro punto, sede u otra cuenta, se
+  necesita otro Sonó.
+- Los pagos que lleguen a otras cuentas del cliente NO se anuncian ni se registran: su
+  cuenta personal sigue privada y aparte, no se mezcla nada.
+- Si el cliente pide vincular VARIOS QR o llaves a un mismo equipo: escala (hay casos
+  especiales que el equipo evalúa directamente).
+
+# CAMBIO DE QR / QR DAÑADO
+- ¿Cambiar de cuenta o de QR más adelante? Sí se puede: el cliente envía la foto del QR
+  nuevo y el equipo lo configura de forma REMOTA, sin tocar el aparato ni enviarlo a
+  ningún lado. El cambio en el sistema no tiene costo.
+- El sticker físico nuevo: lo puede imprimir él mismo y pegarlo, o se lo enviamos ya
+  impreso por un costo adicional.
+- Si el sticker se borra o se daña (sol, uso), el sistema no se afecta: el enlace está en
+  la configuración, no en el papel. Puede volver a imprimir el mismo QR desde la app de su
+  banco y pegarlo, sin reconfigurar nada.
+
+# PUESTOS SIN WIFI (calle, plazas, ferias)
+El Sonó también funciona con el hotspot del celular (compartir internet): consume muy
+pocos datos, solo recibe el aviso de cada pago. Con su batería recargable + los datos del
+celular sirve para puestos callejeros o lugares sin WiFi propio.
+
+# ¿SIRVE PARA MÁQUINAS VENDING?
+Se puede usar JUNTO a una máquina vending para anunciar y registrar en “La Libreta” los
+pagos del QR (útil para verificar pagos sin estar ahí), pero NO se integra con la máquina:
+no activa ni entrega el producto. Ser honesto con ese alcance.
+
+# CONFIANZA (¿es real esto? ¿por qué hay dos páginas / dos Instagram?)
+- sono.lat es el dominio oficial; sonoback.com es nuestro dominio de respaldo técnico —
+  el mismo sitio y el mismo equipo, para que la página nunca se caiga. Ambos son nuestros.
+- El Instagram oficial es @sono.lat. Otras cuentas pueden ser de proveedores o
+  revendedores con sus propios perfiles.
+- Por privacidad no publicamos datos ni negocios de nuestros clientes. La mejor prueba es
+  probarlo uno mismo sin riesgo: pedirlo contraentrega (se paga al recibir) y usar la
+  garantía de reembolso de 10 días.
+- El anuncio nace del CORREO oficial del banco (con firma verificada), no del SMS ni de la
+  notificación del celular: no depende del teléfono del cliente para nada — puede estar
+  apagado o lejos y el Sonó canta igual.
+
+# "AÑO GRATIS" (aclaración frecuente)
+El año de servicio gratis es UNO: el primero, incluido con la compra. La frase "a partir
+del 2.º año" de la web se refiere a cuándo EMPIEZA el cobro de la renovación ($17.000/mes
+o $199.000/año), no a que el segundo año sea gratis.
 
 # CONTACTO Y SOPORTE
 - Escribiéndonos por este chat un humano del equipo puede ayudarte.
