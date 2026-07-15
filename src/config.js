@@ -73,6 +73,8 @@ const ConfigSchema = z.object({
   // Sonó (Nequi Negocios "Eam Ideas"). Cuando un correo de pago llega a este alias,
   // se matchea por monto contra los intents pendientes del checkout. Vacío = el
   // checkout Bre-B propio queda apagado (el front cae al Bre-B de EfiPay).
+  // ⚠️ El valor real va SOLO en el .env del VM: este repo es PÚBLICO y el alias es
+  // el ancla de confianza del matching — no publicarlo acá.
   SONO_PAGOS_ALIAS: z.string().default(''),
   // Payload EMVCo del QR estático de la cuenta (decodificado de "QR SONO PAGOS.jpeg",
   // jul-2026). Es un QR SIN monto: el cliente digita el valor exacto que le mostramos.
