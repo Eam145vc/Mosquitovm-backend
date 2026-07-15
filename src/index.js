@@ -23,6 +23,7 @@ import { updateAccountHistory, updateAccountWatch, recordPayment, upsertDeviceFr
 import { onIncident as onBankIncident } from './bank-status.js';
 import { filterOnline } from './speaker-online.js';
 import { fetchEfiStatus } from './efipay.js';
+import { reportPurchasesToMeta } from './meta-capi.js';
 import { sendActivationEmail } from './activation-email.js';
 import { enqueueWhatsApp, enqueueGuiaCreadaIfReady, GUIA_CREADA_SINCE } from './wa-enqueue.js';
 import { getShipment, extractLabel } from './skydropx.js';
@@ -298,6 +299,17 @@ async function main() {
   };
   reconcileEfipayJob();                              // corre una vez al arrancar (recupera lo pendiente)
   setInterval(reconcileEfipayJob, 5 * 60 * 1000);   // y cada 5 minutos
+
+  // ── Meta CAPI: Purchase servidor→Meta (ventas que el píxel del navegador no ve:
+  // pestaña cerrada tras pagar, QR subido por el admin). Dedupe por event_id=orderId.
+  if (config.hasMetaCapi) {
+    const metaCapiJob = () => reportPurchasesToMeta().catch((e) =>
+      logger.error({ err: e.message }, 'meta-capi job error'));
+    metaCapiJob();
+    setInterval(metaCapiJob, 5 * 60 * 1000);
+  } else {
+    logger.info('Meta CAPI apagada (sin META_CAPI_TOKEN en el .env)');
+  }
 
   // ── Recordatorios de onboarding por WhatsApp (3h / 24h) ────────────────────────
   // stepOf: 3 = onboarding completo. confirmedAt: momento del pago, ESTABLE (no usar

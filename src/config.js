@@ -68,6 +68,18 @@ const ConfigSchema = z.object({
   // Token Webhooks del panel, para validar las notificaciones entrantes.
   EFIPAY_WEBHOOK_TOKEN: z.string().default(''),
 
+  // ---- Meta Conversions API (píxel 847770251313672) ----
+  // El Purchase del navegador solo dispara si el cliente abre /activar-pro (pestaña
+  // cerrada tras pagar o QR subido por el admin = venta invisible para Meta). La CAPI
+  // reporta esas ventas desde el servidor con event_id = orderId, que dedupea contra
+  // el fbq del front. Token: Events Manager → Configuración → Conversions API →
+  // "Generar token de acceso". Vacío = CAPI apagada. Va SOLO en el .env del VM.
+  META_PIXEL_ID: z.string().default('847770251313672'),
+  META_CAPI_TOKEN: z.string().default(''),
+  // Código de "Probar eventos" del Events Manager (TEST12345). Solo para validar en
+  // la pestaña Test Events; vacío en producción.
+  META_CAPI_TEST_CODE: z.string().default(''),
+
   // ---- Checkout Bre-B PROPIO (sin pasarela, cuenta Nequi Negocios de Sonó) ----
   // Alias (local-part, sin @sono.lat) del correo redirigido de la CUENTA DE PAGOS de
   // Sonó (Nequi Negocios "Eam Ideas"). Cuando un correo de pago llega a este alias,
@@ -181,6 +193,7 @@ parsed.hasMsOAuth = Boolean(parsed.MICROSOFT_CLIENT_ID && parsed.MICROSOFT_CLIEN
 parsed.hasMp = Boolean(parsed.MP_ACCESS_TOKEN);
 parsed.hasStripe = Boolean(parsed.STRIPE_SECRET_KEY);
 parsed.hasEfipay = Boolean(parsed.EFIPAY_TOKEN);
+parsed.hasMetaCapi = Boolean(parsed.META_CAPI_TOKEN);
 // Checkout Bre-B propio: necesita el alias de la cuenta de pagos de Sonó y el EMVCo
 // del QR (este último tiene default). Sin alias, el match jamás correría → apagado.
 parsed.hasOwnBreb = Boolean(parsed.SONO_PAGOS_ALIAS && parsed.SONO_BREB_EMVCO);

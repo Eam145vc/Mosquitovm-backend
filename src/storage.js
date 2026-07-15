@@ -236,6 +236,9 @@ export function openDb() {
     // que tenía antes de archivar, para poder restaurarla a su estado original.
     ['archived_at', 'INTEGER'],
     ['prev_status', 'TEXT'],
+    // Epoch ms de cuándo se reportó el Purchase de esta orden a la Meta CAPI
+    // (NULL = sin reportar). Lo marca el job de meta-capi.js; idempotencia del envío.
+    ['meta_capi_at', 'INTEGER'],
   ]);
   db.exec('CREATE INDEX IF NOT EXISTS idx_orders_plan ON orders(mp_plan_id)');
   // Índice para que el job de cobro encuentre rápido las cuotas vencidas.
@@ -718,6 +721,14 @@ export function updateOrder(id, patch) {
   for (const k of keys) params[k] = patch[k];
   return db.prepare(`UPDATE orders SET ${setSql}, updated_at = @updated_at WHERE id = @id`)
     .run(params).changes > 0;
+}
+
+// Marca la orden como reportada a la Meta CAPI. Statement dedicado (no updateOrder):
+// no debe pisar updated_at, que en otras partes se lee como "último avance del cliente".
+export function markOrderMetaCapi(id) {
+  openDb();
+  return db.prepare('UPDATE orders SET meta_capi_at = ? WHERE id = ?')
+    .run(Date.now(), id).changes > 0;
 }
 
 export function listOrders() {
