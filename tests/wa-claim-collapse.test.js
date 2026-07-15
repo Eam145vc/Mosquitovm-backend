@@ -4,7 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), 'waclm-')), 'db.sqlite');
-process.env.ENCRYPTION_KEY = 'GbIok8pliFrsQG7sKbCEpbN39/waCLO61IWAgWNIFk8=';
+process.env.ENCRYPTION_KEY = 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
 process.env.MQTT_URL = 'mqtt://d'; process.env.MQTT_USERNAME = 'd'; process.env.MQTT_PASSWORD = 'd';
 const { openDb, enqueueWa, claimWaPending, listWaOutbox } = await import('../src/storage.js');
 openDb();

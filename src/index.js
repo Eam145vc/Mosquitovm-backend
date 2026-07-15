@@ -21,6 +21,7 @@ import { updateAccountHistory, updateAccountWatch, recordPayment, upsertDeviceFr
   listShipments, cancelPendingWaByKinds, cancelAllPendingWa, getShipmentByOrder,
   speakersForBank } from './storage.js';
 import { onIncident as onBankIncident } from './bank-status.js';
+import { filterOnline } from './speaker-online.js';
 import { fetchEfiStatus } from './efipay.js';
 import { sendActivationEmail } from './activation-email.js';
 import { enqueueWhatsApp, enqueueGuiaCreadaIfReady, GUIA_CREADA_SINCE } from './wa-enqueue.js';
@@ -341,16 +342,25 @@ async function main() {
   const AVISO_DEMORA_WAV = '120-120';
   const BANK_CLIENTS_WINDOW_MS = 30 * 24 * 3600 * 1000;
   onBankIncident(async (bank) => {
-    const speakers = speakersForBank(bank, Date.now() - BANK_CLIENTS_WINDOW_MS);
-    if (!speakers.length) {
+    const candidatos = speakersForBank(bank, Date.now() - BANK_CLIENTS_WINDOW_MS);
+    if (!candidatos.length) {
       logger.warn({ bank }, 'demoras del banco: sin speakers afectados, no se envía aviso');
       return;
     }
+    // SOLO a los que están online AHORA (ping getinfo). Y qos 0: si uno está offline
+    // (o se cae justo), el broker NO le guarda el aviso — un "demoras del banco" viejo
+    // sonando al reconectar horas después confunde al comerciante.
+    const speakers = await filterOnline(candidatos);
+    const offline = candidatos.length - speakers.length;
+    if (!speakers.length) {
+      logger.warn({ bank, offline }, 'demoras del banco: ningún speaker online, aviso no enviado');
+      return;
+    }
     const results = await Promise.allSettled(
-      speakers.map((s) => publishCommand(s, { cmd: 'voice', playAudibleMsg: AVISO_DEMORA_WAV })),
+      speakers.map((s) => publishCommand(s, { cmd: 'voice', playAudibleMsg: AVISO_DEMORA_WAV }, { qos: 0 })),
     );
     const enviados = results.filter((r) => r.status === 'fulfilled').length;
-    logger.warn({ bank, enviados, total: speakers.length, speakers }, 'demoras del banco: aviso 120 enviado');
+    logger.warn({ bank, enviados, offline, total: candidatos.length, speakers }, 'demoras del banco: aviso 120 enviado');
   });
 
   // ── WhatsApp de guía de envío ────────────────────────────────────────────────

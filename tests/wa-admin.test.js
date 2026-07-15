@@ -8,7 +8,7 @@ import { join } from 'node:path';
 process.env.MQTT_URL ||= 'mqtt://x';
 process.env.MQTT_USERNAME ||= 'u';
 process.env.MQTT_PASSWORD ||= 'p';
-process.env.ENCRYPTION_KEY = 'GbIok8pliFrsQG7sKbCEpbN39/waCLO61IWAgWNIFk8=';
+process.env.ENCRYPTION_KEY = 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), 'waadm-')), 'db.sqlite');
 
 const { openDb, enqueueWa, claimWaPending, markWaSent, requeueWa, cancelWa, listWaOutbox } =

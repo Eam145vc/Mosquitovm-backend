@@ -135,13 +135,16 @@ export async function publishVoice(playAudibleMsg, opts = {}) {
   });
 }
 
-/** Publica un comando arbitrario al speaker (ej. {cmd:'getinfo'}). */
-export async function publishCommand(speakerId, payload) {
+/** Publica un comando arbitrario al speaker (ej. {cmd:'getinfo'}).
+ *  opts.qos=0 para mensajes que NO deben quedar encolados en el broker si el
+ *  speaker está offline (ej. el aviso de demora: sonarlo al reconectar confunde). */
+export async function publishCommand(speakerId, payload, opts = {}) {
   const c = connect();
   if (!c.connected) await waitForConnect(c);
   const topic = `speakers/${speakerId}/cmd`;
+  const qos = opts.qos ?? 1;
   return new Promise((res, rej) => {
-    c.publish(topic, JSON.stringify(payload), { qos: 1 }, (err) => err ? rej(err) : res());
+    c.publish(topic, JSON.stringify(payload), { qos }, (err) => err ? rej(err) : res());
   });
 }
 

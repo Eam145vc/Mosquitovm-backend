@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 process.env.MQTT_URL ||= 'mqtt://x';
 process.env.MQTT_USERNAME ||= 'u';
 process.env.MQTT_PASSWORD ||= 'p';
-process.env.ENCRYPTION_KEY ||= 'GbIok8pliFrsQG7sKbCEpbN39/waCLO61IWAgWNIFk8=';
+process.env.ENCRYPTION_KEY ||= 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
 process.env.DB_PATH ||= './_data/test.sqlite';
 process.env.WOMPI_PUBLIC_KEY ||= 'pub_test_abc';
 process.env.WOMPI_INTEGRITY_SECRET ||= 'integ_secret';

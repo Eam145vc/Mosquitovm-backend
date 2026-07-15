@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 process.env.MQTT_URL ||= 'mqtt://x';
 process.env.MQTT_USERNAME ||= 'u';
 process.env.MQTT_PASSWORD ||= 'p';
-process.env.ENCRYPTION_KEY ||= 'GbIok8pliFrsQG7sKbCEpbN39/waCLO61IWAgWNIFk8=';
+process.env.ENCRYPTION_KEY ||= 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
 
 const { recordBankSample, onIncident, snapshot, _reset,
   SLOW_PRECISE_MS, WINDOW_MS, CLEAR_MS, MIN_GAP_MS } =

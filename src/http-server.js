@@ -80,6 +80,7 @@ import { buildVoiceMessage } from './amount-to-wavs.js';
 import { startLatency, markVoicePublished } from './latency.js';
 import { getStats as getLatencyStats } from './latency-store.js';
 import { snapshot as bankStatusSnapshot } from './bank-status.js';
+import { filterOnline } from './speaker-online.js';
 import { handlePubSubPush } from './pubsub-handler.js';
 import { watchInbox } from './gmail-api.js';
 import { registerSupportRoutes } from './support/support-routes.js';
@@ -2025,22 +2026,32 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     }
     const filtro = (req.body && req.body.filtro) || null;
     const banco = String((filtro && filtro.banco) || '').trim().toLowerCase() || null;
-    const speakers = resolverSpeakers(filtro);
-    if (speakers.length === 0) {
+    const candidatos = resolverSpeakers(filtro);
+    if (candidatos.length === 0) {
       return reply.code(400).send({
         error: banco
           ? `ningún speaker recibió pagos de "${banco}" en los últimos 30 días`
           : 'no hay speakers a los que enviar',
       });
     }
+    // SOLO online (ping getinfo, ~3s) y qos 0: a un speaker offline el broker NO
+    // le guarda el aviso — que suene al reconectar, fuera de contexto, confunde.
+    const speakers = await filterOnline(candidatos);
+    const offline = candidatos.filter((s) => !speakers.includes(s));
+    if (speakers.length === 0) {
+      return reply.code(400).send({
+        error: `ningún speaker online (${candidatos.length} candidatos, todos offline)`,
+        offline,
+      });
+    }
     const cmd = { cmd: 'voice', playAudibleMsg: audioId };
     const results = await Promise.allSettled(
-      speakers.map((spkr) => publishCommand(spkr, cmd)),
+      speakers.map((spkr) => publishCommand(spkr, cmd, { qos: 0 })),
     );
     const enviados = results.filter((r) => r.status === 'fulfilled').length;
     const fallidos = speakers.length - enviados;
-    logger.info({ audioId, banco, enviados, fallidos }, 'admin broadcast');
-    return { ok: true, audioId, banco, enviados, fallidos, speakers };
+    logger.info({ audioId, banco, enviados, fallidos, offline: offline.length }, 'admin broadcast');
+    return { ok: true, audioId, banco, enviados, fallidos, offline, speakers };
   });
 
   // -------------------------------------------------------------------------
