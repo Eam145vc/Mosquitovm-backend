@@ -383,7 +383,47 @@ export function openDb() {
     CREATE INDEX IF NOT EXISTS idx_intents_order ON payment_intents(order_id, created_at DESC);
   `);
 
+  // OTP de confirmación del banco (cambio de correo). Persistido CIFRADO con TTL de
+  // 10 min para sobrevivir reinicios de pm2 (antes vivía solo en RAM y cada deploy lo
+  // borraba: el cliente nunca veía su código). code_enc = AES-256-GCM, igual que los
+  // refresh tokens. Se borra al confirmar o al expirar; nunca queda más de 10 min.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS otp_codes (
+      account_id TEXT PRIMARY KEY,
+      code_enc BLOB NOT NULL,
+      at INTEGER NOT NULL
+    );
+  `);
+
   return db;
+}
+
+// ---------------------------------------------------------------------------
+// OTP de confirmación (efímero, cifrado). Lo usa otp-capture.js.
+// ---------------------------------------------------------------------------
+
+export function saveOtpCode(accountId, code) {
+  db.prepare('INSERT INTO otp_codes (account_id, code_enc, at) VALUES (?, ?, ?) ON CONFLICT(account_id) DO UPDATE SET code_enc = excluded.code_enc, at = excluded.at')
+    .run(accountId, encrypt(code), Date.now());
+}
+
+export function loadOtpCode(accountId) {
+  const r = db.prepare('SELECT code_enc, at FROM otp_codes WHERE account_id = ?').get(accountId);
+  if (!r) return null;
+  try {
+    return { code: decrypt(r.code_enc), at: r.at };
+  } catch {
+    return null;
+  }
+}
+
+export function deleteOtpCode(accountId) {
+  db.prepare('DELETE FROM otp_codes WHERE account_id = ?').run(accountId);
+}
+
+/** Barre los OTP vencidos (los llama otp-capture con el TTL). */
+export function purgeOtpCodes(olderThanMs) {
+  db.prepare('DELETE FROM otp_codes WHERE at < ?').run(Date.now() - olderThanMs);
 }
 
 // ---------------------------------------------------------------------------

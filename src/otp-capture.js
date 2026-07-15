@@ -1,11 +1,15 @@
 // Captura efímera de OTP / códigos de confirmación que el banco manda al alias
 // cuando el cliente cambia su correo de notificaciones.
 //
-// SEGURIDAD (regla "no persisto nada"): el OTP vive SOLO en memoria, expira a los
-// ~10 min, y se borra apenas el frontend lo lee. NUNCA toca disco ni la DB.
+// SEGURIDAD: el OTP expira a los ~10 min y se borra cuando el cliente confirma.
+// Se persiste CIFRADO (AES-256-GCM, misma llave que los refresh tokens) para
+// sobrevivir reinicios de pm2 — antes vivía solo en RAM y cada deploy lo borraba
+// justo cuando el cliente lo esperaba (incidente Ricardo jul-2026). Nunca queda
+// en la DB más de 10 minutos.
+
+import { saveOtpCode, loadOtpCode, deleteOtpCode, purgeOtpCodes } from './storage.js';
 
 const TTL_MS = 10 * 60 * 1000;          // 10 minutos
-const store = new Map();                // accountId -> { code, raw, at }
 
 // Patrones de "esto es un correo con un código de verificación" (banco confirmando
 // el cambio de correo). En español colombiano.
@@ -31,21 +35,17 @@ export function maybeCaptureOtp(accountId, { subject = '', text = '', html = '' 
   if (!OTP_CONTEXT.test(body)) return false;
   const code = extractCode(body);
   if (!code) return false;
-  store.set(accountId, { code, at: Date.now() });
-  // auto-limpieza por TTL
-  setTimeout(() => {
-    const e = store.get(accountId);
-    if (e && Date.now() - e.at >= TTL_MS) store.delete(accountId);
-  }, TTL_MS + 1000).unref?.();
+  saveOtpCode(accountId, code);
+  purgeOtpCodes(TTL_MS); // barrer vencidos de paso (baratísimo, tabla diminuta)
   return true;
 }
 
-/** Lee (y consume) el OTP de una cuenta, si hay uno vigente. Una sola lectura. */
+/** Lee el OTP de una cuenta, si hay uno vigente. */
 export function readOtp(accountId) {
-  const e = store.get(accountId);
+  const e = loadOtpCode(accountId);
   if (!e) return null;
   if (Date.now() - e.at >= TTL_MS) {
-    store.delete(accountId);
+    deleteOtpCode(accountId);
     return null;
   }
   return { code: e.code, at: e.at };
@@ -53,7 +53,7 @@ export function readOtp(accountId) {
 
 /** Limpia el OTP tras usarlo (el cliente confirmó). */
 export function clearOtp(accountId) {
-  store.delete(accountId);
+  deleteOtpCode(accountId);
 }
 
 function stripTags(html) {
