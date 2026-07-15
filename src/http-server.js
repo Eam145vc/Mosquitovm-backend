@@ -56,6 +56,7 @@ import {
   getShipmentByOrder, updateShipmentRow, renameDeviceLocal,
   insertUgcApplication, listUgcApplications, countUgcNuevo, setUgcStatus, deleteUgcApplication,
   createPaymentIntent, getPaymentIntent, matchPaymentIntent,
+  speakersForBank,
 } from './storage.js';
 import { bogotaDayStart, bogotaDayStartFromKey, bogotaMonthStart, bogotaPrevMonthStart, DAY_MS } from './libreta-time.js';
 import { getShipment, extractLabel, fetchLabelPdf } from './skydropx.js';
@@ -2006,11 +2007,14 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
   });
 
   // BROADCAST: reproducir un audio (por ID de WAV) en varios speakers a la vez.
-  // Hoy va a TODOS los registrados; el `filtro` queda para segmentar después
-  // (por banco/grupo) sin reescribir el endpoint.
-  // body: { audioId: "120", filtro?: {} }
-  function resolverSpeakers(_filtro) {
-    // Futuro: interpretar _filtro.banco / _filtro.grupo. Hoy: todos los registrados.
+  // Sin filtro va a TODOS los registrados; con `filtro.banco` va SOLO a los speakers
+  // de clientes que reciben pagos de ese banco (misma segmentación que el auto-aviso
+  // de demoras: pagos de los últimos 30 días, cuentas suspendidas excluidas).
+  // body: { audioId: "120", filtro?: { banco?: "nequi" } }
+  const BROADCAST_BANK_WINDOW_MS = 30 * 24 * 3600 * 1000; // igual que el auto-aviso 120
+  function resolverSpeakers(filtro) {
+    const banco = String((filtro && filtro.banco) || '').trim().toLowerCase();
+    if (banco) return speakersForBank(banco, Date.now() - BROADCAST_BANK_WINDOW_MS);
     return listDevices().map((d) => d.spkr_id);
   }
   app.post('/admin/broadcast', async (req, reply) => {
@@ -2020,9 +2024,14 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       return reply.code(400).send({ error: 'audioId inválido (IDs de WAV, ej "120")' });
     }
     const filtro = (req.body && req.body.filtro) || null;
+    const banco = String((filtro && filtro.banco) || '').trim().toLowerCase() || null;
     const speakers = resolverSpeakers(filtro);
     if (speakers.length === 0) {
-      return reply.code(400).send({ error: 'no hay speakers a los que enviar' });
+      return reply.code(400).send({
+        error: banco
+          ? `ningún speaker recibió pagos de "${banco}" en los últimos 30 días`
+          : 'no hay speakers a los que enviar',
+      });
     }
     const cmd = { cmd: 'voice', playAudibleMsg: audioId };
     const results = await Promise.allSettled(
@@ -2030,8 +2039,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     );
     const enviados = results.filter((r) => r.status === 'fulfilled').length;
     const fallidos = speakers.length - enviados;
-    logger.info({ audioId, enviados, fallidos }, 'admin broadcast');
-    return { ok: true, audioId, enviados, fallidos, speakers };
+    logger.info({ audioId, banco, enviados, fallidos }, 'admin broadcast');
+    return { ok: true, audioId, banco, enviados, fallidos, speakers };
   });
 
   // -------------------------------------------------------------------------
