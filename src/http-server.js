@@ -55,6 +55,7 @@ import {
   listWaOutbox, requeueWa, cancelWa, cancelPendingWaByKinds, cancelAllPendingWa,
   getShipmentByOrder, updateShipmentRow, renameDeviceLocal,
   insertUgcApplication, listUgcApplications, countUgcNuevo, setUgcStatus, deleteUgcApplication,
+  createPaymentIntent, getPaymentIntent, matchPaymentIntent,
 } from './storage.js';
 import { bogotaDayStart, bogotaDayStartFromKey, bogotaMonthStart, bogotaPrevMonthStart, DAY_MS } from './libreta-time.js';
 import { getShipment, extractLabel, fetchLabelPdf } from './skydropx.js';
@@ -230,6 +231,36 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     }
     // sin llave parseable o llave que no coincide con ningún local → NO suena + aviso.
     return { speakerId: null, unrouted: true, key };
+  };
+
+  // CHECKOUT BRE-B PROPIO: los pagos que entran a la cuenta de pagos de Sonó
+  // (SONO_PAGOS_ALIAS) se matchean por MONTO contra los intents pendientes del
+  // checkout (ventana de 2 min + gracia). Match → la orden queda pagada, igual
+  // que con el webhook de EfiPay. Sin match → warn para conciliar a mano.
+  // Corre DESPUÉS de despachar el anuncio (el speaker no espera al checkout).
+  const settleOwnBrebPayment = (alias, result) => {
+    if (!config.hasOwnBreb || alias !== config.SONO_PAGOS_ALIAS) return;
+    if (!result || result.direction === 'out' || !result.amount) return;
+    try {
+      const intent = matchPaymentIntent(result.amount, { bank: result.bank || null });
+      if (!intent) {
+        logger.warn({ alias, amount: result.amount, bank: result.bank },
+          'breb propio: pago a la cuenta Sonó sin intent que matchee (conciliar a mano)');
+        return;
+      }
+      const order = getOrder(intent.order_id);
+      if (!order) { logger.error({ intentId: intent.id, orderId: intent.order_id }, 'breb propio: intent sin orden'); return; }
+      if (isPaid(order)) { logger.info({ orderId: order.id, intentId: intent.id }, 'breb propio: la orden ya estaba pagada'); return; }
+      updateOrder(order.id, { status: 'pendiente_qr', wompi_txn_id: `breb-own-${intent.id}` });
+      logger.info({ orderId: order.id, intentId: intent.id, amount: result.amount, bank: result.bank },
+        'pago aprobado (breb propio, match por monto)');
+      sendActivationEmail(getOrder(order.id)).catch(() => {});
+      try { enqueueWhatsApp(getOrder(order.id), 'activacion'); } catch (e) {
+        logger.error({ orderId: order.id, err: e.message }, 'wa: no se pudo encolar activación (breb propio)');
+      }
+    } catch (e) {
+      logger.error({ alias, err: e.message }, 'breb propio: error en el match');
+    }
   };
 
   // Login del panel: usuario + contraseña → devuelve el token Bearer que usan los /admin/*.
@@ -600,6 +631,46 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       logger.error({ orderId, method, err: e.message }, 'efipay alt failed');
       return reply.code(502).send({ error: 'No pudimos iniciar el pago. Probá de nuevo.', detail: e.message });
     }
+  });
+
+  // ── Checkout Bre-B PROPIO (sin pasarela, sin comisión) ──────────────────────
+  // El cliente ve el QR Nequi ESTÁTICO de Sonó + el monto EXACTO a digitar + un
+  // contador de 2 min. La confirmación llega por el correo de Nequi a la cuenta
+  // de pagos (settleOwnBrebPayment matchea por monto). Reemplaza el Bre-B de
+  // EfiPay en el front; el de EfiPay queda solo como fallback si esto está apagado.
+  const BREB_INTENT_TTL_MS = 2 * 60 * 1000;
+  app.post('/checkout/breb-intent', async (req, reply) => {
+    if (!config.hasOwnBreb) return reply.code(503).send({ error: 'checkout Bre-B propio no configurado' });
+    const order = getOrder((req.body || {}).orderId);
+    if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
+    if (isPaid(order)) return { paid: true };
+    const amount = Math.round(order.amount_cents / 100);
+    const intent = createPaymentIntent({ orderId: order.id, amount, ttlMs: BREB_INTENT_TTL_MS });
+    logger.info({ orderId: order.id, intentId: intent.id, amount }, 'breb propio: intent creado');
+    return {
+      intentId: intent.id,
+      amount,
+      expiresAt: intent.expires_at,
+      // Para el contador del front: ms restantes según el RELOJ DEL SERVER (el del
+      // cliente puede estar corrido; con esto el front arma su deadline local).
+      remainingMs: Math.max(0, intent.expires_at - Date.now()),
+      qrData: config.SONO_BREB_EMVCO,
+      key: config.SONO_BREB_KEY || null,
+    };
+  });
+
+  // Estado del intent (para el contador/polling del front). `paid` también cubre
+  // el caso en que la orden quedó paga por otro camino (otro método, admin).
+  app.get('/checkout/breb-intent/:id', async (req, reply) => {
+    const intent = getPaymentIntent(req.params.id);
+    if (!intent) return reply.code(404).send({ error: 'intent no encontrado' });
+    const order = getOrder(intent.order_id);
+    const paid = intent.status === 'paid' || isPaid(order);
+    const remainingMs = Math.max(0, intent.expires_at - Date.now());
+    return {
+      status: paid ? 'paid' : (remainingMs > 0 ? 'pending' : 'expired'),
+      paid, remainingMs, amount: intent.amount,
+    };
   });
 
   // Webhook de MercadoPago: notifica cambios de la suscripción y los cobros recurrentes.
@@ -2253,6 +2324,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
           });
         }
       }
+      // Checkout Bre-B propio: si este pago entró a la cuenta de pagos de Sonó,
+      // matchear contra los intents (después del anuncio, no le agrega latencia).
+      if (result) settleOwnBrebPayment(alias, result);
     } catch (e) {
       logger.error({ alias, err: e.message }, 'email webhook parse error');
     }
@@ -2571,6 +2645,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
             });
           }
         }
+        // Checkout Bre-B propio: match por monto si el pago entró a la cuenta de Sonó.
+        if (result) settleOwnBrebPayment(alias, result);
       } else {
         logger.info({ alias, from, knownBank: isKnownBankSender(from) }, 'fe webhook: remitente no confiable, no se procesa como pago');
       }

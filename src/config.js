@@ -68,6 +68,19 @@ const ConfigSchema = z.object({
   // Token Webhooks del panel, para validar las notificaciones entrantes.
   EFIPAY_WEBHOOK_TOKEN: z.string().default(''),
 
+  // ---- Checkout Bre-B PROPIO (sin pasarela, cuenta Nequi Negocios de Sonó) ----
+  // Alias (local-part, sin @sono.lat) del correo redirigido de la CUENTA DE PAGOS de
+  // Sonó (Nequi Negocios "Eam Ideas"). Cuando un correo de pago llega a este alias,
+  // se matchea por monto contra los intents pendientes del checkout. Vacío = el
+  // checkout Bre-B propio queda apagado (el front cae al Bre-B de EfiPay).
+  SONO_PAGOS_ALIAS: z.string().default(''),
+  // Payload EMVCo del QR estático de la cuenta (decodificado de "QR SONO PAGOS.jpeg",
+  // jul-2026). Es un QR SIN monto: el cliente digita el valor exacto que le mostramos.
+  SONO_BREB_EMVCO: z.string().default('00020101021126320014CO.COM.RBM.LLA0510009178746049250014CO.COM.RBM.RED0103RBM50310013CO.COM.RBM.CU0110009178746051250013CO.COM.RBM.CA010482995204829953031705502015802CO5922Eam Ideas Emmanuel Alv600505001610505001622703030010703000080200110363180270016CO.COM.RBM.CANAL0103APP81250015CO.COM.RBM.CIVA01020382260014CO.COM.RBM.IVA01040.0083270015CO.COM.RBM.BASE01040.0084250015CO.COM.RBM.CINC01020385260014CO.COM.RBM.INC01040.0090430016CO.COM.RBM.TRXID0119000000GpC7df1TZ6C6S91460014CO.COM.RBM.SEC0124M9DUsMpeBNLKFC4Tj+JuxZZj93240015CO.COM.RBM.PREF0101163043148'),
+  // Llave Bre-B visible ("paga con la llave") de esa cuenta. Numérica → no se puede
+  // extraer con la heurística del front (busca "@"), por eso va explícita.
+  SONO_BREB_KEY: z.string().default('0091787460'),
+
   // ---- Frontend (sono-web) para redirects del wizard ----
   FRONTEND_BASE_URL: z.string().url().default('http://localhost:3000'),
 
@@ -166,6 +179,9 @@ parsed.hasMsOAuth = Boolean(parsed.MICROSOFT_CLIENT_ID && parsed.MICROSOFT_CLIEN
 parsed.hasMp = Boolean(parsed.MP_ACCESS_TOKEN);
 parsed.hasStripe = Boolean(parsed.STRIPE_SECRET_KEY);
 parsed.hasEfipay = Boolean(parsed.EFIPAY_TOKEN);
+// Checkout Bre-B propio: necesita el alias de la cuenta de pagos de Sonó y el EMVCo
+// del QR (este último tiene default). Sin alias, el match jamás correría → apagado.
+parsed.hasOwnBreb = Boolean(parsed.SONO_PAGOS_ALIAS && parsed.SONO_BREB_EMVCO);
 parsed.hasAdminLogin = Boolean(parsed.ADMIN_USER && parsed.ADMIN_PASS && parsed.ADMIN_TOKEN);
 parsed.hasInstagram = Boolean(parsed.IG_ACCESS_TOKEN && parsed.IG_USER_ID);
 parsed.hasSkydropx = Boolean(parsed.SKYDROPX_CLIENT_ID && parsed.SKYDROPX_CLIENT_SECRET);

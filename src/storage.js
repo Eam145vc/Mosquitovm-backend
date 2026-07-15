@@ -363,6 +363,26 @@ export function openDb() {
     CREATE INDEX IF NOT EXISTS idx_ugc_created ON ugc_applications(created_at DESC);
   `);
 
+  // Intents del checkout Bre-B PROPIO (sin pasarela): el cliente ve el QR estático
+  // de la cuenta Nequi de Sonó + un monto exacto + ventana de 2 min. Cuando el correo
+  // de Nequi llega a la cuenta de pagos de Sonó con ese monto, el intent pendiente
+  // más viejo con ese monto (FIFO) se marca 'paid' y su orden queda pagada.
+  // amount en PESOS (igual que payments.amount, lo que parsea el correo del banco).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS payment_intents (
+      id TEXT PRIMARY KEY,
+      order_id TEXT NOT NULL,
+      amount INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      bank TEXT,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      paid_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_intents_match ON payment_intents(status, amount, created_at);
+    CREATE INDEX IF NOT EXISTS idx_intents_order ON payment_intents(order_id, created_at DESC);
+  `);
+
   return db;
 }
 
@@ -1284,6 +1304,67 @@ export function cancelPendingWaByKinds(orderId, kinds) {
      WHERE order_id = ? AND kind IN (${marks}) AND status IN ('queued','sending')`
   ).run(orderId, ...kinds);
   return info.changes;
+}
+
+// ── Intents del checkout Bre-B propio (QR Nequi de Sonó + match por monto) ────
+
+/**
+ * Crea un intent de pago Bre-B para una orden, o REUSA el pendiente vigente de la
+ * misma orden (idempotente: si el cliente recarga la página no se duplican intents
+ * ni se reinicia la ventana). amount en pesos, ttlMs = ventana de matching.
+ */
+export function createPaymentIntent({ orderId, amount, ttlMs }) {
+  openDb();
+  const now = Date.now();
+  const existing = db.prepare(
+    `SELECT * FROM payment_intents
+     WHERE order_id = ? AND status = 'pending' AND expires_at > ?
+     ORDER BY created_at DESC LIMIT 1`
+  ).get(orderId, now);
+  if (existing) return existing;
+  const intent = {
+    id: randomBytes(16).toString('hex'),
+    order_id: orderId,
+    amount: Math.round(amount),
+    status: 'pending',
+    bank: null,
+    created_at: now,
+    expires_at: now + ttlMs,
+    paid_at: null,
+  };
+  db.prepare(
+    `INSERT INTO payment_intents (id, order_id, amount, status, created_at, expires_at)
+     VALUES (@id, @order_id, @amount, @status, @created_at, @expires_at)`
+  ).run(intent);
+  return intent;
+}
+
+export function getPaymentIntent(id) {
+  openDb();
+  return db.prepare('SELECT * FROM payment_intents WHERE id = ?').get(id);
+}
+
+/**
+ * Matchea un pago entrante (a la cuenta de pagos de Sonó) contra los intents
+ * pendientes: mismo monto, dentro de la ventana + gracia (el correo del banco
+ * tarda unos segundos en llegar). FIFO: si dos intents esperan el mismo monto,
+ * gana el más viejo (colisión aceptada: volumen bajo, decisión del dueño jul-2026).
+ * Marca el intent 'paid' y lo devuelve, o null si no hay match. better-sqlite3 es
+ * sincrónico single-thread → select+update no corre carreras.
+ */
+export function matchPaymentIntent(amount, { graceMs = 45_000, bank = null } = {}) {
+  openDb();
+  const now = Date.now();
+  const hit = db.prepare(
+    `SELECT * FROM payment_intents
+     WHERE status = 'pending' AND amount = ? AND expires_at + ? > ?
+     ORDER BY created_at ASC LIMIT 1`
+  ).get(Math.round(amount), graceMs, now);
+  if (!hit) return null;
+  db.prepare(
+    `UPDATE payment_intents SET status = 'paid', paid_at = ?, bank = ? WHERE id = ?`
+  ).run(now, bank, hit.id);
+  return { ...hit, status: 'paid', paid_at: now, bank };
 }
 
 // ── Settings + heartbeat del agente de WhatsApp (tabla key-value wa_meta) ─────
