@@ -199,6 +199,16 @@ export function openDb() {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS wa_inbound (
+      id TEXT PRIMARY KEY,
+      phone TEXT NOT NULL,
+      name TEXT,
+      type TEXT NOT NULL,
+      body TEXT,
+      received_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_wa_inbound_at ON wa_inbound(received_at DESC);
   `);
 
   // Migraciones: agregar columnas si las tablas ya existian de una version vieja.
@@ -240,6 +250,13 @@ export function openDb() {
     // (NULL = sin reportar). Lo marca el job de meta-capi.js; idempotencia del envío.
     ['meta_capi_at', 'INTEGER'],
   ]);
+  // Cloud API oficial: wamid = id del mensaje en Meta (mapea los statuses del webhook
+  // a la fila) y delivery = último estado real reportado (sent/delivered/read/failed).
+  ensureColumns('wa_outbox', [
+    ['wamid', 'TEXT'],
+    ['delivery', 'TEXT'],
+  ]);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_wa_outbox_wamid ON wa_outbox(wamid)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_orders_plan ON orders(mp_plan_id)');
   // Índice para que el job de cobro encuentre rápido las cuotas vencidas.
   db.exec('CREATE INDEX IF NOT EXISTS idx_orders_installment_due ON orders(installment_next_at)');
@@ -1290,11 +1307,13 @@ export function claimWaPending(limit = 5) {
   return claimed;
 }
 
-export function markWaSent(id, ok, error = null) {
+export function markWaSent(id, ok, error = null, wamid = null) {
   openDb();
   if (ok) {
-    db.prepare(`UPDATE wa_outbox SET status = 'sent', sent_at = ?, attempts = attempts + 1 WHERE id = ?`)
-      .run(Date.now(), id);
+    // wamid en el MISMO UPDATE: el webhook de statuses de Meta puede llegar en
+    // milisegundos y busca la fila por wamid — dos escrituras dejarían ventana.
+    db.prepare(`UPDATE wa_outbox SET status = 'sent', sent_at = ?, wamid = COALESCE(?, wamid), attempts = attempts + 1 WHERE id = ?`)
+      .run(Date.now(), wamid, id);
   } else {
     db.prepare(`UPDATE wa_outbox SET status = 'failed', last_error = ?, attempts = attempts + 1 WHERE id = ?`)
       .run(error ? String(error).slice(0, 500) : null, id);
@@ -1474,12 +1493,49 @@ export function getWaAgentLastSeen() {
   return row ? Number(row.value) : null;
 }
 
-/** Enviados desde un instante (ms). Lo usa el wa-sender de la VM para el tope
- *  diario contra la DB (sobrevive reinicios, a diferencia del contador en RAM). */
+/** Actualiza el estado REAL de entrega que reporta el webhook de Meta (statuses).
+ *  'failed' además marca la fila como failed con el error, para que el panel no
+ *  muestre "Enviado" en mensajes que Meta aceptó pero nunca entregó. */
+export function updateWaDeliveryByWamid(wamid, delivery, error = null) {
+  openDb();
+  if (delivery === 'failed') {
+    return db.prepare(
+      `UPDATE wa_outbox SET delivery = ?, status = 'failed', last_error = ? WHERE wamid = ?`
+    ).run(delivery, error ? String(error).slice(0, 500) : 'meta: failed', wamid).changes;
+  }
+  // No degradar: read > delivered > sent (los statuses pueden llegar desordenados).
+  return db.prepare(
+    `UPDATE wa_outbox SET delivery = ? WHERE wamid = ?
+     AND (delivery IS NULL
+          OR (delivery = 'sent' AND ? IN ('delivered','read'))
+          OR (delivery = 'delivered' AND ? = 'read'))`
+  ).run(delivery, wamid, delivery, delivery).changes;
+}
+
+/** Mensaje entrante del webhook de Meta (respuestas de clientes). Idempotente por id. */
+export function insertWaInbound({ id, phone, name, type, body }) {
+  openDb();
+  const info = db.prepare(
+    `INSERT OR IGNORE INTO wa_inbound (id, phone, name, type, body, received_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(id, phone, name || null, type, body || null, Date.now());
+  return info.changes > 0;
+}
+
+export function listWaInbound(limit = 100) {
+  openDb();
+  return db.prepare(`SELECT * FROM wa_inbound ORDER BY received_at DESC LIMIT ?`).all(limit);
+}
+
+/** Enviados desde un instante (ms). Lo usan los enviadores de la VM para el tope
+ *  diario contra la DB (sobrevive reinicios, a diferencia del contador en RAM).
+ *  Cuenta por sent_at y NO por status: un mensaje que el webhook de Meta degradó
+ *  a 'failed' IGUAL consumió cupo del día (si contara status='sent', cada fallo
+ *  reportado liberaría cupo y el cap se superaría justo cuando Meta rechaza). */
 export function countWaSentSince(sinceMs) {
   openDb();
   return db
-    .prepare(`SELECT COUNT(*) n FROM wa_outbox WHERE status = 'sent' AND sent_at >= ?`)
+    .prepare(`SELECT COUNT(*) n FROM wa_outbox WHERE sent_at IS NOT NULL AND sent_at >= ?`)
     .get(sinceMs).n;
 }
 

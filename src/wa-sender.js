@@ -14,30 +14,10 @@ import {
 } from './storage.js';
 import { getShipment, extractLabel, fetchLabelPdf } from './skydropx.js';
 
+import { bogotaHour, startOfBogotaDay, withinActiveHours, randDelay, sleep } from './wa-shared.js';
+
 const TICK_MS = 20 * 1000;
 const BATCH = 5; // igual que el agente: máx 5 mensajes por pasada
-
-// Colombia es UTC-5 fijo (sin DST): la hora local sale con offset plano, sin Intl.
-const BOGOTA_OFFSET_MS = 5 * 3600 * 1000;
-const DAY_MS = 24 * 3600 * 1000;
-
-export function bogotaHour(now = Date.now()) {
-  return Math.floor(((now - BOGOTA_OFFSET_MS) % DAY_MS) / (3600 * 1000));
-}
-
-export function startOfBogotaDay(now = Date.now()) {
-  return Math.floor((now - BOGOTA_OFFSET_MS) / DAY_MS) * DAY_MS + BOGOTA_OFFSET_MS;
-}
-
-export function withinActiveHours(hour, start, end) {
-  return hour >= start && hour < end; // fin exclusivo, igual que el agente
-}
-
-export function randDelay(min, max, rnd = Math.random) {
-  return Math.floor(min + (max - min) * rnd());
-}
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function evo(path, { method = 'GET', body } = {}) {
   const r = await fetch(`${config.EVOLUTION_API_URL}${path}`, {
@@ -141,6 +121,12 @@ async function tick() {
 
 export function startWaSender() {
   if (!config.hasEvolution) return false;
+  // Exclusión mutua REAL con el enviador oficial: si ambos sets de env vars están
+  // presentes, gana la Cloud API y este NO arranca (evita drenar la cola a dos manos).
+  if (config.hasWaCloud) {
+    logger.error('wa-sender: WA_CLOUD_* también configurado — Evolution NO arranca (gana la Cloud API)');
+    return false;
+  }
   setInterval(tick, TICK_MS);
   logger.info({ url: config.EVOLUTION_API_URL, instance: config.EVOLUTION_INSTANCE }, 'wa-sender: activo (Evolution API en la VM)');
   return true;

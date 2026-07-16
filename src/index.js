@@ -29,6 +29,7 @@ import { enqueueWhatsApp, enqueueGuiaCreadaIfReady, GUIA_CREADA_SINCE } from './
 import { getShipment, extractLabel } from './skydropx.js';
 import { runWaReminderJob } from './wa-reminders.js';
 import { startWaSender } from './wa-sender.js';
+import { startWaCloudSender } from './wa-cloud.js';
 import * as announceLog from './announce-log.js';
 
 const watchers = new Map();   // id -> ImapWatcher (modo IMAP)
@@ -432,9 +433,12 @@ async function main() {
     if (n) logger.info({ n }, 'wa: mensajes colgados re-encolados');
   }, 10 * 60 * 1000);
 
-  // Enviador de WhatsApp en la VM (Evolution API). Si EVOLUTION_* no está en el
-  // .env no hace nada y el agente de la PC sigue drenando la cola por polling.
+  // Enviadores de WhatsApp en la VM. Cada uno se activa solo con sus env vars
+  // (EVOLUTION_* / WA_CLOUD_*); sin ellas no hacen nada y el agente de la PC
+  // sigue drenando la cola por polling. Exclusión mutua REAL: si ambos sets están
+  // configurados, startWaSender se niega a arrancar (gana la Cloud API).
   startWaSender();
+  startWaCloudSender();
 
   // Barrida de mensajes obsoletos en cola (al arrancar y cada 15 min):
   // - orden ARCHIVADA → se cancela TODO lo pendiente (no se le manda nada);

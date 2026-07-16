@@ -32,18 +32,30 @@ function emailLinkFor(order) {
   return `${linkFor(order)}&correo=1`;
 }
 
-const moneyCo = (cents) => `$${Math.round(cents / 100).toLocaleString('es-CO')}`;
+// Formato de plata COP y regla COD: exportados porque wa-cloud.js (plantillas
+// oficiales) muestra los mismos montos — si esto diverge, el cliente ve cifras
+// distintas según el canal que drenó la cola.
+export const moneyCo = (cents) => `$${Math.round(cents / 100).toLocaleString('es-CO')}`;
 
 // Recargo de pago contraentrega (espejo de RECARGO_CONTRAENTREGA_CENTS en http-server.js).
 // En órdenes COD el amount_cents YA lo incluye, así que acá solo se discrimina.
 const RECARGO_COD_CENTS = 500_000;
 
+/** ¿La orden cobra en efectivo al recibir? (contraentrega SIN pago online previo). */
+export function esCodPendiente(order) {
+  return Boolean(order.delivery === 'contraentrega' && !order.wompi_txn_id && order.amount_cents);
+}
+
+/** Primer nombre del negocio para el saludo (misma regla en todos los enviadores). */
+export function firstNameOf(order, fallback = '') {
+  return order.business_name ? order.business_name.split(' ')[0] : fallback;
+}
+
 // Bloque "cuánto pagas al recibir" para el WhatsApp de envío de órdenes contraentrega.
 // wompi_txn_id presente = ya se cobró online (aunque la orden sea delivery contraentrega),
 // en ese caso no se pide plata. Devuelve '' si no aplica.
 function codBlockFor(order) {
-  const esCodSinPagar = order.delivery === 'contraentrega' && !order.wompi_txn_id;
-  if (!esCodSinPagar || !order.amount_cents) return '';
+  if (!esCodPendiente(order)) return '';
   const producto = order.amount_cents - RECARGO_COD_CENTS;
   // En cuotas lo que se recauda al recibir es la 1ª cuota + el envío (no el producto entero).
   const etiqueta = order.plan === 'cuotas' ? '1ª cuota + envío' : 'Producto';
@@ -64,7 +76,7 @@ function pickVariant(orderId, variants) {
 
 export function buildWaBody(order, kind) {
   const link = linkFor(order);
-  const nombre = order.business_name ? order.business_name.split(' ')[0] : '';
+  const nombre = firstNameOf(order);
   const hola = nombre ? `Hola ${nombre}` : 'Hola';
   if (kind === 'activacion') {
     return pickVariant(order.id, [

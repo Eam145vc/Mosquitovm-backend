@@ -136,6 +136,18 @@ const ConfigSchema = z.object({
   EVOLUTION_API_KEY: z.string().default(''),
   EVOLUTION_INSTANCE: z.string().default('sono'),
 
+  // ---- WhatsApp Cloud API OFICIAL (Meta Graph; enviador definitivo en la VM) ----
+  // Token permanente de system user + Phone Number ID del número registrado.
+  WA_CLOUD_ACCESS_TOKEN: z.string().default(''),
+  WA_CLOUD_PHONE_NUMBER_ID: z.string().default(''),
+  // WABA ID: solo para crear/gestionar plantillas (scripts/create-wa-templates.js).
+  WA_CLOUD_WABA_ID: z.string().default(''),
+  // Verify token del webhook: autentica el GET de suscripción Y el POST de eventos
+  // (va como ?key= en la URL del callback; no hay validación de firma HMAC porque
+  // Fastify no conserva el raw body).
+  WA_CLOUD_WEBHOOK_VERIFY_TOKEN: z.string().default(''),
+  WA_CLOUD_GRAPH_VERSION: z.string().default('v25.0'),
+
   // ---- Skydropx (envíos / guías de paquetería, host api-pro) ----
   // OAuth2 client_credentials. Credenciales del panel pro.skydropx.com.
   SKYDROPX_CLIENT_ID: z.string().default(''),
@@ -209,5 +221,7 @@ parsed.hasSkydropx = Boolean(parsed.SKYDROPX_CLIENT_ID && parsed.SKYDROPX_CLIENT
 // Evolution API configurada → el WhatsApp sale desde la VM (wa-sender) y el
 // agente de la PC deja de recibir mensajes por /wa/pending (anti doble envío).
 parsed.hasEvolution = Boolean(parsed.EVOLUTION_API_URL && parsed.EVOLUTION_API_KEY);
+// Cloud API oficial configurada → wa-cloud envía desde la VM; misma exclusión.
+parsed.hasWaCloud = Boolean(parsed.WA_CLOUD_ACCESS_TOKEN && parsed.WA_CLOUD_PHONE_NUMBER_ID);
 
 export const config = parsed;

@@ -53,6 +53,7 @@ import {
   claimWaPending, markWaSent,
   touchWaAgent, getWaSettings, setWaSettings, getWaAgentLastSeen, countWaByStatus,
   listWaOutbox, requeueWa, cancelWa, cancelPendingWaByKinds, cancelAllPendingWa,
+  insertWaInbound, listWaInbound, updateWaDeliveryByWamid,
   getShipmentByOrder, updateShipmentRow, renameDeviceLocal,
   insertUgcApplication, listUgcApplications, countUgcNuevo, setUgcStatus, deleteUgcApplication,
   createPaymentIntent, getPaymentIntent, matchPaymentIntent,
@@ -74,6 +75,7 @@ import { generatePaymentLink, chargeCard, chargePse, chargeBreb, chargeCash, get
 import * as announceLog from './announce-log.js';
 import { sendActivationEmail } from './activation-email.js';
 import { enqueueWhatsApp, enqueueWhatsAppForce, normalizePhoneCO } from './wa-enqueue.js';
+import { isWaCloudActive } from './wa-cloud.js';
 import { CUOTA_2_3_CENTS } from './installments-scheduler.js';
 import { publishVoice, publishCommand } from './mqtt-publisher.js';
 import { buildVoiceMessage } from './amount-to-wavs.js';
@@ -2392,9 +2394,11 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
 
   app.get('/wa/pending', async (req, reply) => {
     if (!waAuth(req, reply)) return;
-    // El enviador ahora vive en la VM (wa-sender + Evolution API): si está activo,
-    // el agente de la PC no recibe nada — evita doble envío si alguien abre el .bat viejo.
-    if (config.hasEvolution) return { messages: [], settings: getWaSettings() };
+    // Si un enviador vive en la VM, el agente de la PC no recibe nada (evita doble
+    // envío si alguien abre el .bat viejo). OJO: para la Cloud API se consulta el
+    // estado RUNTIME (isWaCloudActive), no la config — con plantillas sin aprobar
+    // el agente PC sigue siendo el enviador y la cola nunca se queda huérfana.
+    if (config.hasEvolution || isWaCloudActive()) return { messages: [], settings: getWaSettings() };
     touchWaAgent(); // heartbeat: el agente está vivo
     const settings = getWaSettings();
     if (!settings.enabled) return { messages: [], settings }; // OFF global
@@ -2439,6 +2443,67 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     return { ok: true };
   });
 
+  // ── WhatsApp Cloud API oficial: webhook de Meta (statuses reales + entrantes) ──
+  // GET = verificación de suscripción (echo de hub.challenge). POST = eventos; se
+  // autentica con ?key=<verify token> embebido en la URL del callback (Fastify no
+  // conserva el raw body para validar X-Hub-Signature-256; la key por query es el
+  // mismo patrón que ya usa /admin con EMAIL_WEBHOOK_SECRET).
+  app.get('/webhook/wacloud', async (req, reply) => {
+    const q = req.query || {};
+    if (
+      q['hub.mode'] === 'subscribe' &&
+      config.WA_CLOUD_WEBHOOK_VERIFY_TOKEN &&
+      q['hub.verify_token'] === config.WA_CLOUD_WEBHOOK_VERIFY_TOKEN
+    ) {
+      return reply.send(q['hub.challenge']);
+    }
+    return reply.code(403).send('forbidden');
+  });
+
+  app.post('/webhook/wacloud', async (req, reply) => {
+    if (!config.WA_CLOUD_WEBHOOK_VERIFY_TOKEN || req.query?.key !== config.WA_CLOUD_WEBHOOK_VERIFY_TOKEN) {
+      return reply.code(401).send({ error: 'unauthorized' });
+    }
+    // Procesar sin lanzar y responder 200 SIEMPRE: ante errores repetidos Meta
+    // reintenta con backoff y puede terminar desuscribiendo el webhook.
+    try {
+      for (const entry of req.body?.entry || []) {
+        for (const change of entry.changes || []) {
+          const v = change.value || {};
+          // Estado REAL de cada mensaje enviado (por wamid): la verdad de entrega.
+          // Solo estados conocidos: un valor nuevo de Meta no debe quedar grabado
+          // como delivery inicial (bloquearía los upgrades sent→delivered→read).
+          for (const st of v.statuses || []) {
+            if (!['sent', 'delivered', 'read', 'failed'].includes(st.status)) continue;
+            const err = st.errors?.[0]
+              ? `${st.errors[0].code}: ${st.errors[0].title || st.errors[0].message || ''}`
+              : null;
+            // 0 filas = el status llegó ANTES de que markWaSent persistiera el wamid
+            // (carrera real: Meta dispara el webhook en ms). Un reintento diferido
+            // de 3s cubre la ventana sin bloquear la respuesta a Meta.
+            if (updateWaDeliveryByWamid(st.id, st.status, err) === 0) {
+              setTimeout(() => {
+                try { updateWaDeliveryByWamid(st.id, st.status, err); } catch { /* best effort */ }
+              }, 3000);
+            }
+            if (st.status === 'failed') req.log?.warn?.({ wamid: st.id, err }, 'wa-cloud: entrega FALLÓ');
+          }
+          // Respuestas de clientes ("escríbenos por aquí"): quedan en wa_inbound.
+          for (const msg of v.messages || []) {
+            const name = v.contacts?.[0]?.profile?.name || null;
+            const body = msg.text?.body || msg.button?.text || msg.interactive?.button_reply?.title || `[${msg.type}]`;
+            if (insertWaInbound({ id: msg.id, phone: msg.from, name, type: msg.type, body })) {
+              req.log?.info?.({ from: msg.from }, 'wa-cloud: mensaje entrante');
+            }
+          }
+        }
+      }
+    } catch (e) {
+      req.log?.error?.({ err: e.message }, 'wa-cloud: webhook error');
+    }
+    return { ok: true };
+  });
+
   // ── Panel admin de WhatsApp: cola, heartbeat del agente, config anti-ban ────
   app.get('/admin/wa', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
@@ -2449,6 +2514,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       agent: { lastSeen: agentLastSeen, online },
       settings: getWaSettings(),
       messages: listWaOutbox().slice(-200).reverse(),
+      // Cloud API: canal activo + respuestas de clientes (wa_inbound del webhook).
+      cloud: { active: isWaCloudActive() },
+      inbound: listWaInbound(50),
     };
   });
 
