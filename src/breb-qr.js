@@ -74,40 +74,55 @@ export function normalizeKey(k) {
  */
 export function extractBrebKey(emvco) {
   const tlv = parseEmvco(emvco);
-  const t26 = tlv['26'];
-  if (!t26 || !t26.children) return null;
-  const c = t26.children;
 
-  const t50 = tlv['50'];
-  // 50.01 puede venir como string o como template anidado {val,children} (igual que los
-  // subtags de 26): tomar el valor crudo. Sin esto, la rama de llave numérica hacía
-  // normalizeKey de un objeto → "[object object]" guardado como llave (caso spkr-012).
-  const t50c = t50 && t50.children ? t50.children['01'] : null;
-  const account = typeof t50c === 'string' ? t50c : (t50c && t50c.val) || null;
+  // Un subtag puede venir como string o como template anidado {val,children}: tomar
+  // siempre el valor crudo. Sin esto, normalizeKey de un objeto producía
+  // "[object object]" guardado como llave (caso spkr-012).
+  const rawVal = (x) => (typeof x === 'string' ? x : (x && x.val) || null);
+
+  // Los namespaces Bre-B (subtag 00 = "CO.COM.RBM.XXX") NO van siempre en el mismo tag:
+  // el formato clásico de Bancolombia trae la llave en tag 26 (LLA) y la cuenta en 50 (CU),
+  // pero hay una variante nueva (vista jul-2026, orden 434c25cd "Como en Casa") SIN tag 26,
+  // con la llave en tag 50 namespace CU. Por eso se busca cada namespace por contenido en
+  // todos los templates de primer nivel, no por número de tag.
+  const findNs = (ns) => {
+    for (const t of Object.values(tlv)) {
+      if (t && t.children && rawVal(t.children['00']) === ns) return t.children;
+    }
+    return null;
+  };
+
+  const c = findNs('CO.COM.RBM.LLA');
+  const cu = findNs('CO.COM.RBM.CU');
+  const account = cu ? rawVal(cu['01']) : null;
   const merchantName = (typeof tlv['59'] === 'string' ? tlv['59'] : null);
 
-  // El tipo de llave Bre-B va en el SUBTAG del tag 26 (verificado con QR reales):
-  //   26.01 = correo · 26.02 = celular · 26.03 = cédula · 26.04 = alfanumérica @ ·
-  //   26.05 = numérica (en este caso la llave es el nº de cuenta, tag 50.01).
+  // Variante sin template LLA: la llave es el número del namespace CU (coincide con lo
+  // que Bancolombia imprime como "Llave: NNNN" bajo el QR).
+  if (!c) {
+    if (account) {
+      return { key: normalizeKey(account), keyType: 'numerica', account, merchantName, routable: true };
+    }
+    return null;
+  }
+
+  // El tipo de llave Bre-B va en el SUBTAG del template LLA (verificado con QR reales):
+  //   .01 = correo · .02 = celular · .03 = cédula · .04 = alfanumérica @ ·
+  //   .05 = numérica (en este caso la llave es el nº de cuenta, namespace CU).
   // Las 4 son LLAVES únicas por local → todas rutean. Tomamos el primer subtag con valor
   // (saltando 00, que es el namespace "CO.COM.RBM.LLA").
   for (const sub of ['04', '02', '03', '01']) {
-    if (c[sub]) {
-      // El subtag puede venir como string ("3203043887") o, si el firmware lo emite como
-      // template anidado, como objeto { val, children }. Tomamos el valor crudo en ambos casos
-      // (sin esto, normalizeKey de un objeto producía "[object object]" y el ruteo fallaba).
-      const v = typeof c[sub] === 'string' ? c[sub] : c[sub].val;
-      if (!v) continue;
-      const keyType = /@/.test(v) ? 'alias' : 'numerica';
-      return { key: normalizeKey(v), keyType, account, merchantName, routable: true };
-    }
+    const v = rawVal(c[sub]);
+    if (!v) continue;
+    const keyType = /@/.test(v) ? 'alias' : 'numerica';
+    return { key: normalizeKey(v), keyType, account, merchantName, routable: true };
   }
-  // 26.05 = llave NUMÉRICA cuyo valor es el nº de cuenta (Bancolombia lo muestra como
+  // LLA.05 = llave NUMÉRICA cuyo valor es el nº de cuenta (Bancolombia lo muestra como
   // "Llave: 0029353497"). Es una LLAVE, sí rutea.
   if (c['05'] && account) {
     return { key: normalizeKey(account), keyType: 'numerica', account, merchantName, routable: true };
   }
-  // Último recurso: cualquier otro subtag de 26 (distinto de 00) con valor.
+  // Último recurso: cualquier otro subtag del template LLA (distinto de 00) con valor.
   for (const k of Object.keys(c)) {
     if (k !== '00' && c[k] && typeof c[k] === 'string') {
       return { key: normalizeKey(c[k]), keyType: /@/.test(c[k]) ? 'alias' : 'numerica', account, merchantName, routable: true };

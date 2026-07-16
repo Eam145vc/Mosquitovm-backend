@@ -57,6 +57,16 @@ describe('extractBrebKey', () => {
   test('string sin tag 26 → null', () => {
     assert.equal(extractBrebKey('00020101'), null);
   });
+
+  test('variante nueva SIN tag 26: llave en tag 50 namespace CU (orden 434c25cd, jul-2026)', () => {
+    // String EMVCo real del QR de "Como en Casa" (Bancolombia rotula "Llave: 0090387471").
+    const QR_SIN_26 = '0002015502010102115802CO5912Como en Casa49250103RBM0014CO.COM.RBM.RED903001060000010016CO.COM.RBM.TRXID80270103APP0016CO.COM.RBM.CANAL91460124uDgCGXcFtnLy/vw8VJrCpwKZ0014CO.COM.RBM.SEC81250102010015CO.COM.RBM.CIVA601211001 BOGOTA8223010100014CO.COM.RBM.IVA5031011000903874710013CO.COM.RBM.CU6105110018324010100015CO.COM.RBM.BASE624602103046481003030300007030000802000901A110363184250102010015CO.COM.RBM.CINC520400008523010100014CO.COM.RBM.INC530317064220002ES0112Como en Casa63040377';
+    const r = extractBrebKey(QR_SIN_26);
+    assert.equal(r.key, '0090387471');
+    assert.equal(r.keyType, 'numerica');
+    assert.equal(r.routable, true);
+    assert.equal(r.merchantName, 'Como en Casa');
+  });
 });
 
 describe('decodeBrebString', () => {
