@@ -53,18 +53,20 @@ async function sendPurchase(o, now) {
   const phone = normPhone(o.phone);
   if (phone) userData.ph = [sha256(phone)];
 
-  const body = {
-    data: [{
-      event_name: 'Purchase',
-      event_time: Math.floor(eventTimeMs(o, now) / 1000),
-      event_id: o.id, // = eventID del fbq del front → dedupe navegador/servidor
-      action_source: 'website',
-      event_source_url: 'https://sonoback.com/activar-pro',
-      user_data: userData,
-      custom_data: { currency: 'COP', value: Math.round((o.amount_cents || 0) / 100) },
-    }],
-    access_token: config.META_CAPI_TOKEN,
+  const event = {
+    event_name: 'Purchase',
+    event_time: Math.floor(eventTimeMs(o, now) / 1000),
+    event_id: o.id, // = eventID del fbq del front → dedupe navegador/servidor
+    action_source: 'website',
+    event_source_url: 'https://sonoback.com/activar-pro',
+    user_data: userData,
   };
+  // Meta exige value > 0; una orden sin monto (anómala) va sin custom_data antes
+  // que ensuciar la calidad del evento con value=0.
+  const value = Math.round((o.amount_cents || 0) / 100);
+  if (value > 0) event.custom_data = { currency: 'COP', value };
+
+  const body = { data: [event], access_token: config.META_CAPI_TOKEN };
   if (config.META_CAPI_TEST_CODE) body.test_event_code = config.META_CAPI_TEST_CODE;
 
   const res = await fetch(GRAPH_URL, {

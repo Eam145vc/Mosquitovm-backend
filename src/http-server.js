@@ -157,6 +157,10 @@ function orderView(o) {
     // (incidente Ricardo jul-2026: el link mostraba el de la orden y pisaba el corregido).
     forwardTo: acc?.forwardTo || null,
     delivery: o.delivery || 'online', // 'online' | 'contraentrega' → el front decide cuándo reportar el Purchase a los pixels
+    // Monto en pesos, para el value del Purchase de los pixels. El front antes lo sacaba
+    // de localStorage (se pierde si el cliente abre el link en OTRO dispositivo → 24% de
+    // Purchases sin value según Meta); la DB es la fuente real.
+    amount: Math.round((o.amount_cents || 0) / 100),
   };
 }
 
