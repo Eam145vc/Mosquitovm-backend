@@ -28,6 +28,7 @@ import { sendActivationEmail } from './activation-email.js';
 import { enqueueWhatsApp, enqueueGuiaCreadaIfReady, GUIA_CREADA_SINCE } from './wa-enqueue.js';
 import { getShipment, extractLabel } from './skydropx.js';
 import { runWaReminderJob } from './wa-reminders.js';
+import { startWaSender } from './wa-sender.js';
 import * as announceLog from './announce-log.js';
 
 const watchers = new Map();   // id -> ImapWatcher (modo IMAP)
@@ -430,6 +431,10 @@ async function main() {
     const n = requeueStaleWa(30 * 60 * 1000);
     if (n) logger.info({ n }, 'wa: mensajes colgados re-encolados');
   }, 10 * 60 * 1000);
+
+  // Enviador de WhatsApp en la VM (Evolution API). Si EVOLUTION_* no está en el
+  // .env no hace nada y el agente de la PC sigue drenando la cola por polling.
+  startWaSender();
 
   // Barrida de mensajes obsoletos en cola (al arrancar y cada 15 min):
   // - orden ARCHIVADA → se cancela TODO lo pendiente (no se le manda nada);

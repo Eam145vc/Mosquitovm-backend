@@ -2388,6 +2388,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
 
   app.get('/wa/pending', async (req, reply) => {
     if (!waAuth(req, reply)) return;
+    // El enviador ahora vive en la VM (wa-sender + Evolution API): si está activo,
+    // el agente de la PC no recibe nada — evita doble envío si alguien abre el .bat viejo.
+    if (config.hasEvolution) return { messages: [], settings: getWaSettings() };
     touchWaAgent(); // heartbeat: el agente está vivo
     const settings = getWaSettings();
     if (!settings.enabled) return { messages: [], settings }; // OFF global

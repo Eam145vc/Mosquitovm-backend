@@ -1474,6 +1474,15 @@ export function getWaAgentLastSeen() {
   return row ? Number(row.value) : null;
 }
 
+/** Enviados desde un instante (ms). Lo usa el wa-sender de la VM para el tope
+ *  diario contra la DB (sobrevive reinicios, a diferencia del contador en RAM). */
+export function countWaSentSince(sinceMs) {
+  openDb();
+  return db
+    .prepare(`SELECT COUNT(*) n FROM wa_outbox WHERE status = 'sent' AND sent_at >= ?`)
+    .get(sinceMs).n;
+}
+
 export function countWaByStatus() {
   const rows = db.prepare(`SELECT status, COUNT(*) n FROM wa_outbox GROUP BY status`).all();
   const out = { queued: 0, sending: 0, sent: 0, failed: 0, canceled: 0 };

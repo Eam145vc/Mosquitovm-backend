@@ -130,6 +130,12 @@ const ConfigSchema = z.object({
   IG_USER_ID: z.string().default(''),
   IG_GRAPH_VERSION: z.string().default('v25.0'),
 
+  // ---- Evolution API (WhatsApp saliente desde la VM, reemplaza al agente PC) ----
+  // URL local del contenedor (ej. http://127.0.0.1:8091) y apikey global.
+  EVOLUTION_API_URL: z.string().default(''),
+  EVOLUTION_API_KEY: z.string().default(''),
+  EVOLUTION_INSTANCE: z.string().default('sono'),
+
   // ---- Skydropx (envíos / guías de paquetería, host api-pro) ----
   // OAuth2 client_credentials. Credenciales del panel pro.skydropx.com.
   SKYDROPX_CLIENT_ID: z.string().default(''),
@@ -200,5 +206,8 @@ parsed.hasOwnBreb = Boolean(parsed.SONO_PAGOS_ALIAS && parsed.SONO_BREB_EMVCO);
 parsed.hasAdminLogin = Boolean(parsed.ADMIN_USER && parsed.ADMIN_PASS && parsed.ADMIN_TOKEN);
 parsed.hasInstagram = Boolean(parsed.IG_ACCESS_TOKEN && parsed.IG_USER_ID);
 parsed.hasSkydropx = Boolean(parsed.SKYDROPX_CLIENT_ID && parsed.SKYDROPX_CLIENT_SECRET);
+// Evolution API configurada → el WhatsApp sale desde la VM (wa-sender) y el
+// agente de la PC deja de recibir mensajes por /wa/pending (anti doble envío).
+parsed.hasEvolution = Boolean(parsed.EVOLUTION_API_URL && parsed.EVOLUTION_API_KEY);
 
 export const config = parsed;
