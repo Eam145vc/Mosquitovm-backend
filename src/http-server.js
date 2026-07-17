@@ -2638,6 +2638,27 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     return { ok: true, confirmed: true };
   });
 
+  // Reset PÚBLICO del paso de correo: el propio cliente "empieza de nuevo". Existe
+  // porque la confirmación del banco ya no es confiable y, en el apuro, el cliente
+  // marca "ya lo cambié" cuando no fue así → el wizard dice "conectado" pero nunca
+  // suena un pago (incidente jul-2026). Reusa resetEmailStep (mismo que el admin):
+  // limpia change_confirmed + OTP y desliga account_id, así el wizard vuelve a pedir
+  // el correo desde 0. NO destruye nada: la cuenta/alias/pagos se reencuentran por
+  // order.id al rehacer (alias inmutable por orden). Auth = el order id secreto (32-hex)
+  // + canOnboard, igual que el resto de /activar/:order/*.
+  app.post('/activar/:order/email-reset', async (req, reply) => {
+    reply.header('cache-control', 'no-store');
+    const order = getOrder(req.params.order);
+    if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
+    if (!canOnboard(order)) return reply.code(402).send({ error: 'orden no pagada' });
+    if (rlHit(`corrreset:${order.id}`, 60 * 60_000, 10)) {
+      return reply.code(429).send({ error: 'demasiados intentos' });
+    }
+    const accId = resetEmailStep(order);
+    logger.info({ orderId: order.id, accountId: accId }, 'paso de correo reseteado por el CLIENTE (empezar de nuevo)');
+    return { ok: true, hadAccount: Boolean(accId) };
+  });
+
   // Webhook de ForwardEmail. Distinto a Cloudflare: ForwardEmail manda el correo (parseado
   // y/o raw) y el alias va en el destinatario (recipients/to), no en un campo "alias".
   // Mismo modelo stateless: pago → speaker; OTP → captura efímera. El reenvío al cliente
@@ -3037,6 +3058,49 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       }
     }
     return { ok: true }; // mismo body haya o no match (sin oráculo)
+  });
+
+  // "Conectar mi correo" (paso 1 del manual, autogestión): el cliente escribe su
+  // celular y, si hay una orden suya SIN correo conectado, el enlace del wizard
+  // (&correo=1) se MUESTRA en pantalla. A diferencia de /libreta-acceso acá no se
+  // reenvía por WhatsApp: ese canal depende del agente de la PC / del webhook de la
+  // transportadora, y este flujo existe justamente para cuando fallan (decisión
+  // 17-jul-2026). Exposición acotada: el enlace solo se revela mientras el correo
+  // NO está conectado (la Libreta de una orden sin cuenta está vacía); una vez
+  // conectado responde connected:true SIN URL. Rate limits por IP y por teléfono.
+  app.post('/correo-acceso', async (req, reply) => {
+    reply.header('cache-control', 'no-store');
+    const ip = req.ip;
+    if (rlHit(`corracc:${ip}`, 10 * 60_000, 30)) {
+      return reply.code(429).send({ error: 'demasiadas solicitudes' });
+    }
+    const phone = normalizePhoneCO((req.body || {}).phone);
+    if (!phone) return { ok: true, found: false };
+    if (rlHit(`corraccph:${phone}`, 60 * 60_000, 10)) {
+      return reply.code(429).send({ error: 'demasiadas solicitudes' });
+    }
+    // Órdenes del teléfono que pueden onboardear (canOnboard: pagadas Y contraentrega
+    // — el cliente COD ya tiene el speaker en la mano). Archivadas jamás (kill-switch).
+    const propias = listOrders().filter((o) => !o.archived_at && canOnboard(o)
+      && normalizePhoneCO(o.phone) === phone);
+    if (!propias.length) {
+      logger.info({ phone: phone.slice(-4) }, 'correo-acceso: teléfono sin orden');
+      return { ok: true, found: false };
+    }
+    // El onboarding es por CLIENTE, no por orden: si CUALQUIER orden del número ya
+    // tiene cuenta, el correo está conectado (evita mandar a "conectar" una orden
+    // gemela duplicada por checkout reintentado — patrón qrPhonesSet).
+    const conectada = propias.find((o) => o.account_id && getAccount(o.account_id));
+    if (conectada) {
+      logger.info({ orderId: conectada.id }, 'correo-acceso: correo ya conectado, sin enlace');
+      return { ok: true, found: true, connected: true,
+               businessName: conectada.business_name || null };
+    }
+    const match = propias.sort((a, b) => (b.created_at || 0) - (a.created_at || 0))[0];
+    logger.info({ orderId: match.id }, 'correo-acceso: enlace de conexión mostrado');
+    return { ok: true, found: true, connected: false,
+             businessName: match.business_name || null,
+             connectUrl: `${config.FRONTEND_BASE_URL}/activar-pro/?order=${match.id}&correo=1` };
   });
 
   // Bot de soporte (chat público + admin + web push).
