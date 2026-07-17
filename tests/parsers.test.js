@@ -113,6 +113,63 @@ describe('HTML fallback', () => {
   });
 });
 
+describe('Nequi egresos/no-venta (correos reales jul-2026, bug: sonaban como ingreso)', () => {
+  test('"¡Enviaste plata por Bre-B!" (envío del dueño) → out, no anuncia', () => {
+    const r = parseEmail({
+      from: 'notificaciones@nequi.com.co',
+      subject: '¡Enviaste plata por Bre-B!',
+      text: '¡Realizaste un envío por Bre-B y todo salió bien! ¡Hola, EMMANUEL ALVAREZ MARTINEZ! ' +
+        'Enviaste de manera exitosa 60.000 a la llave @bbvaeam086 de EMANUEL ALVAREZ MARTINEZ ' +
+        'el 16 de julio de 2026 a las 5:58 p.m. Revisa el detalle en los movimientos de tu app.',
+    });
+    assert.equal(r.direction, 'out');
+    assert.equal(r.amount, 60000);
+    assert.equal(r.bank, 'nequi');
+  });
+
+  test('"¡Pago exitoso!" (Hiciste un pago en Mercadopago por $200.000) → out', () => {
+    const r = parseEmail({
+      from: 'somos@nequi.com.co',
+      subject: '¡Pago exitoso!',
+      text: '¡Pago exitoso! Hiciste un pago en Mercadopago Colombia S.A. por $200.000 ' +
+        'Fecha: El 16 de julio de 2026 Hora: 1:30 p. m. CUS: 486099450 ' +
+        'Puedes ingresar a tu app Nequi en la opción de Movimientos y revisar el detalle de este pago.',
+    });
+    assert.equal(r.direction, 'out');
+    assert.equal(r.amount, 200000);
+  });
+
+  test('"Te hicimos un reverso." (devolución) → out, no es venta', () => {
+    const r = parseEmail({
+      from: 'notificaciones@nequi.com.co',
+      subject: 'Te hicimos un reverso.',
+      text: 'Tu dinero ya está devuelta Recibiste un reverso por $ 27.119,66. ' +
+        'Ya lo puedes ver reflejado en tu saldo disponible en Nequi.',
+    });
+    assert.equal(r.direction, 'out');
+    assert.equal(r.amount, 27119);
+  });
+
+  test('"Cambiaste los montos en tu Nequi" (config con cifras) → jamás in', () => {
+    const r = parseEmail({
+      from: 'notificaciones@nequi.com.co',
+      subject: 'Cambiaste los montos en tu Nequi',
+      text: 'Actualizaste tus topes: ahora puedes enviar hasta $2.000.000 por día.',
+    });
+    assert.notEqual(r?.direction, 'in');
+  });
+
+  test('regresión: "¡Recibiste plata por Bre-B!" sigue siendo ingreso', () => {
+    const r = parseEmail({
+      from: 'notificaciones@nequi.com.co',
+      subject: '¡Recibiste plata por Bre-B!',
+      text: 'Recibiste $10.000 de PEDRO PEREZ.',
+    });
+    assert.equal(r.direction, 'in');
+    assert.equal(r.amount, 10000);
+  });
+});
+
 describe('Bancolombia Bre-B (llave + cuenta para ruteo multipunto)', () => {
   // Texto real de un email de pago Bre-B de Bancolombia (jun-2026).
   const textBreB =

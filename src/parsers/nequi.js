@@ -5,7 +5,7 @@
 //   Subject: Te enviaron plata / Recibiste / Te transfirieron
 //   Body: "Te enviaron $30.000" / "Recibiste $12.500 de Pedro"
 
-import { parseAmount, hasOutgoingVerb, parseOutgoingAmount } from './parse-amount.js';
+import { parseAmount, hasOutgoingVerb, parseOutgoingAmount, isNonIncomingSubject } from './parse-amount.js';
 
 export const name = 'nequi';
 
@@ -17,8 +17,20 @@ export function matches(from, subject = '') {
   );
 }
 
-export function parse(text) {
+export function parse(text, subject = '') {
   if (!text) return null;
+
+  // 0) El asunto manda: "¡Enviaste plata por Bre-B!", "¡Pago exitoso!",
+  //    "Te hicimos un reverso.", etc. NUNCA son venta entrante — clasificar
+  //    como egreso (no se anuncia) sin importar qué diga el cuerpo.
+  if (isNonIncomingSubject(subject)) {
+    const amount = parseOutgoingAmount(text)
+      || parseAmount((text.match(/\$\s?([\d.,]+)/) || [])[1]);
+    if (amount > 0) {
+      return { amount, currency: 'COP', bank: 'nequi', ref: null, direction: 'out' };
+    }
+    return null; // sin monto no hay nada que anunciar (generic también respeta el asunto)
+  }
 
   // 1) INGRESOS con verbo explícito pegado al monto.
   const inPatterns = [

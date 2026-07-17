@@ -2,12 +2,23 @@
 // contiene palabras tipicas de "recibo de pago".
 // Util como fallback solo cuando el remitente esta en allowlist pero
 // ningun parser especifico lo cubrio.
-import { parseAmount, hasOutgoingVerb, parseOutgoingAmount } from './parse-amount.js';
+import { parseAmount, hasOutgoingVerb, parseOutgoingAmount, isNonIncomingSubject } from './parse-amount.js';
 
 export const name = 'generic';
 
-export function parse(text) {
+export function parse(text, subject = '') {
   if (!text) return null;
+
+  // Asunto de egreso/no-venta ("¡Pago exitoso!", reversos, etc.): jamás 'in'.
+  if (isNonIncomingSubject(subject)) {
+    const outAmount = parseOutgoingAmount(text)
+      || parseAmount((text.match(/\$\s?([\d.,]+)/) || [])[1]);
+    if (outAmount > 0) {
+      return { amount: outAmount, currency: 'COP', bank: 'unknown', direction: 'out', parser: 'generic' };
+    }
+    return null;
+  }
+
   const looksLikePayment = /(recib|abono|consignaci|transferencia|pago|enviaron|pagaron|depositaron)/i.test(text);
   if (!looksLikePayment) return null;
 

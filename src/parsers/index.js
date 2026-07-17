@@ -29,7 +29,7 @@ export function parseEmail(email) {
 
   for (const p of PARSERS) {
     if (p.matches(from, subject)) {
-      const result = p.parse(text);
+      const result = p.parse(text, subject);
       if (result) {
         return { ...result, parser: p.name };
       }
@@ -37,7 +37,7 @@ export function parseEmail(email) {
   }
 
   // Fallback: regex generica
-  return generic.parse(text);
+  return generic.parse(text, subject);
 }
 
 function stripHtml(html) {
