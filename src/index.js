@@ -25,7 +25,7 @@ import { filterOnline } from './speaker-online.js';
 import { fetchEfiStatus } from './efipay.js';
 import { reportPurchasesToMeta } from './meta-capi.js';
 import { sendActivationEmail } from './activation-email.js';
-import { enqueueWhatsApp, enqueueGuiaCreadaIfReady, GUIA_CREADA_SINCE, qrPhonesSet, normalizePhoneCO } from './wa-enqueue.js';
+import { enqueueWhatsApp, enqueueGuiaCreadaIfReady, GUIA_CREADA_SINCE, qrPhonesSet, normalizePhoneCO, orderSilenciada } from './wa-enqueue.js';
 import { getShipment, extractLabel } from './skydropx.js';
 import { runWaReminderJob } from './wa-reminders.js';
 import { startWaSender } from './wa-sender.js';
@@ -456,7 +456,7 @@ async function main() {
         if (!['queued', 'sending'].includes(w.status)) continue;
         const o = getOrder(w.order_id);
         if (!o) continue;
-        if (o.archived_at) { nArchived += cancelAllPendingWa(w.order_id); continue; }
+        if (orderSilenciada(o)) { nArchived += cancelAllPendingWa(w.order_id); continue; }
         if (ONBOARDING_KINDS.includes(w.kind) && (o.qr_path || conQr.has(normalizePhoneCO(o.phone)))) {
           nOnboarding += cancelPendingWaByKinds(w.order_id, [w.kind]);
         }

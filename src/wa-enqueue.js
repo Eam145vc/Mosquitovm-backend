@@ -174,6 +174,15 @@ export function buildWaBody(order, kind) {
   ]);
 }
 
+/** Estados de orden que NO deben recibir NINGÚN mensaje automático (además del
+ *  soft-delete archived_at). El envío manual del admin (force) sí los salta. */
+export const ESTADOS_SIN_MENSAJES = ['cancelada', 'declined'];
+
+/** ¿La orden está silenciada para mensajes automáticos? (archivada o cancelada). */
+export function orderSilenciada(order) {
+  return Boolean(order.archived_at || ESTADOS_SIN_MENSAJES.includes(order.status));
+}
+
 /** Teléfonos (normalizados) que YA subieron su QR en ALGUNA orden. El onboarding
  *  es por CLIENTE, no por orden: con órdenes duplicadas (checkout reintentado), el
  *  QR queda en una y la gemela sin QR seguía mandando "sube tu QR" (bug 16-jul). */
@@ -191,9 +200,10 @@ export function qrPhonesSet(orders = listOrders()) {
  *  y, en los kinds de onboarding, también por (teléfono, kind) en ventana de 48h. */
 export function enqueueWhatsApp(order, kind) {
   if (!order) return false;
-  // Orden archivada (soft-delete): al cliente no se le manda NINGÚN mensaje automático.
-  if (order.archived_at) {
-    logger.info({ orderId: order.id, kind }, 'wa: orden archivada, no se encola');
+  // Orden archivada (soft-delete) o cancelada/declinada: al cliente no se le manda
+  // NINGÚN mensaje automático (bug 16-jul: 'cancelada' seguía recibiendo recordatorios).
+  if (orderSilenciada(order)) {
+    logger.info({ orderId: order.id, kind, status: order.status }, 'wa: orden archivada/cancelada, no se encola');
     return false;
   }
   // Los mensajes de onboarding piden subir el QR: si la orden YA lo tiene, son ruido

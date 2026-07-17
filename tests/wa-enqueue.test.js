@@ -71,3 +71,13 @@ test('onboarding por CLIENTE: otra orden del mismo teléfono con QR bloquea el "
   updateOrder(c, { status: 'paid', phone: '300 999 8877', business_name: 'Otro Cliente' });
   assert.equal(enqueueWhatsApp(getOrder(c), 'activacion'), true);
 });
+
+test('orden cancelada/declinada no encola NINGÚN mensaje automático', () => {
+  const x = createOrder({ amountCents: 8_900_000 });
+  updateOrder(x, { status: 'cancelada', phone: '301 555 6677', business_name: 'Cancelado' });
+  assert.equal(enqueueWhatsApp(getOrder(x), 'activacion'), false);
+  assert.equal(enqueueWhatsApp(getOrder(x), 'envio'), false);
+  const y = createOrder({ amountCents: 8_900_000 });
+  updateOrder(y, { status: 'declined', phone: '302 555 6677', business_name: 'Declinado' });
+  assert.equal(enqueueWhatsApp(getOrder(y), 'recordatorio_3h'), false);
+});

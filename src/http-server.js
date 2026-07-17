@@ -74,7 +74,7 @@ import { createStripeCheckout, fetchStripeSession } from './stripe.js';
 import { generatePaymentLink, chargeCard, chargePse, chargeBreb, chargeCash, getResource, fetchEfiTransaction, fetchEfiStatus, isValidEfiWebhook, parseEfiWebhook, tokenizeCard } from './efipay.js';
 import * as announceLog from './announce-log.js';
 import { sendActivationEmail } from './activation-email.js';
-import { enqueueWhatsApp, enqueueWhatsAppForce, normalizePhoneCO } from './wa-enqueue.js';
+import { enqueueWhatsApp, enqueueWhatsAppForce, normalizePhoneCO, ESTADOS_SIN_MENSAJES } from './wa-enqueue.js';
 import { isWaCloudActive } from './wa-cloud.js';
 import { CUOTA_2_3_CENTS } from './installments-scheduler.js';
 import { publishVoice, publishCommand } from './mqtt-publisher.js';
@@ -1558,6 +1558,12 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     const dev = listDevices().find(d => d.order_id === o.id);
     if (dev && status === 'shipped') setDeviceStatus(dev.spkr_id, 'enviado');
     if (dev && status === 'ready_to_ship') setDeviceStatus(dev.spkr_id, 'provisionado');
+    // Cancelada/declinada: matar YA los WhatsApp pendientes de la orden (sin esperar
+    // la barrida de 15 min) — igual que hace archivar.
+    if (ESTADOS_SIN_MENSAJES.includes(status)) {
+      const n = cancelAllPendingWa(o.id);
+      if (n) logger.info({ orderId: o.id, n }, 'wa: mensajes pendientes cancelados al cancelar la orden');
+    }
     logger.info({ orderId: o.id, from: o.status, status }, 'estado de orden cambiado (admin)');
     return { ok: true, status };
   });
