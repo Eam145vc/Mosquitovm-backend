@@ -13,9 +13,12 @@ process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), 'waep-')), 'db.sqlite');
 process.env.EMAIL_WEBHOOK_SECRET = 'testsecret123';
 process.env.HTTP_PORT = '0'; // efímero (config.js lee HTTP_PORT, no PORT)
 
-const { openDb, enqueueWa, listWaOutbox } = await import('../src/storage.js');
+const { openDb, enqueueWa, listWaOutbox, setWaSettings } = await import('../src/storage.js');
 const { startHttp } = await import('../src/http-server.js');
 openDb();
+// /wa/pending ya no entrega mensajes fuera del horario activo: para que estos
+// tests no dependan de la hora a la que corre la suite, horario 0-24.
+setWaSettings({ active_hour_start: 0, active_hour_end: 24 });
 
 // startHttp arranca el server (app.listen) y retorna la instancia Fastify.
 const app = startHttp(() => {}, () => {}, () => {});

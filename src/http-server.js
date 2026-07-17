@@ -53,7 +53,7 @@ import {
   claimWaPending, markWaSent,
   touchWaAgent, getWaSettings, setWaSettings, getWaAgentLastSeen, countWaByStatus,
   listWaOutbox, requeueWa, cancelWa, cancelPendingWaByKinds, cancelAllPendingWa,
-  insertWaInbound, listWaInbound, updateWaDeliveryByWamid,
+  insertWaInbound, listWaInbound, updateWaDeliveryByWamid, countWaSentSince,
   getShipmentByOrder, updateShipmentRow, renameDeviceLocal,
   insertUgcApplication, listUgcApplications, countUgcNuevo, setUgcStatus, deleteUgcApplication,
   createPaymentIntent, getPaymentIntent, matchPaymentIntent,
@@ -76,6 +76,7 @@ import * as announceLog from './announce-log.js';
 import { sendActivationEmail } from './activation-email.js';
 import { enqueueWhatsApp, enqueueWhatsAppForce, normalizePhoneCO, ESTADOS_SIN_MENSAJES } from './wa-enqueue.js';
 import { isWaCloudActive } from './wa-cloud.js';
+import { bogotaHour, startOfBogotaDay, withinActiveHours } from './wa-shared.js';
 import { CUOTA_2_3_CENTS } from './installments-scheduler.js';
 import { publishVoice, publishCommand } from './mqtt-publisher.js';
 import { buildVoiceMessage } from './amount-to-wavs.js';
@@ -2416,7 +2417,17 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     touchWaAgent(); // heartbeat: el agente está vivo
     const settings = getWaSettings();
     if (!settings.enabled) return { messages: [], settings }; // OFF global
-    const limit = Math.min(Number(req.query.limit) || 5, 50);
+    // Fuera de horario activo o con el tope diario lleno NO se entregan mensajes:
+    // el agente viejo reclama ANTES de chequear hora/tope, y todo lo reclamado
+    // quedaba atascado en 'sending' sin enviarse (bug 17-jul: PC prendida a las
+    // 7:38 dejó la cola entera en "Enviando"). El chequeo vive acá, en el server,
+    // para que ninguna versión del agente pueda reclamar lo que no va a enviar.
+    if (!withinActiveHours(bogotaHour(), settings.active_hour_start, settings.active_hour_end)) {
+      return { messages: [], settings };
+    }
+    const sentToday = countWaSentSince(startOfBogotaDay());
+    if (sentToday >= settings.daily_cap) return { messages: [], settings };
+    const limit = Math.min(Number(req.query.limit) || 5, 50, settings.daily_cap - sentToday);
     const rows = claimWaPending(limit);
     return {
       messages: rows.map((r) => ({
