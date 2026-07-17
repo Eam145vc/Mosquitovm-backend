@@ -25,7 +25,7 @@ import { filterOnline } from './speaker-online.js';
 import { fetchEfiStatus } from './efipay.js';
 import { reportPurchasesToMeta } from './meta-capi.js';
 import { sendActivationEmail } from './activation-email.js';
-import { enqueueWhatsApp, enqueueGuiaCreadaIfReady, GUIA_CREADA_SINCE } from './wa-enqueue.js';
+import { enqueueWhatsApp, enqueueGuiaCreadaIfReady, GUIA_CREADA_SINCE, qrPhonesSet, normalizePhoneCO } from './wa-enqueue.js';
 import { getShipment, extractLabel } from './skydropx.js';
 import { runWaReminderJob } from './wa-reminders.js';
 import { startWaSender } from './wa-sender.js';
@@ -449,12 +449,15 @@ async function main() {
   const waOnboardingSweep = () => {
     try {
       let nOnboarding = 0, nArchived = 0, nGuiaVieja = 0;
+      // Teléfonos que ya subieron QR en ALGUNA orden: el onboarding es por cliente,
+      // no por orden (órdenes duplicadas del mismo cliente no deben pedir QR de nuevo).
+      const conQr = qrPhonesSet();
       for (const w of listWaOutbox()) {
         if (!['queued', 'sending'].includes(w.status)) continue;
         const o = getOrder(w.order_id);
         if (!o) continue;
         if (o.archived_at) { nArchived += cancelAllPendingWa(w.order_id); continue; }
-        if (ONBOARDING_KINDS.includes(w.kind) && o.qr_path) {
+        if (ONBOARDING_KINDS.includes(w.kind) && (o.qr_path || conQr.has(normalizePhoneCO(o.phone)))) {
           nOnboarding += cancelPendingWaByKinds(w.order_id, [w.kind]);
         }
         // 'guia_creada' en cola de un envío ANTERIOR al corte: cancelarla (pedidos

@@ -1133,13 +1133,21 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     if (order.business_name) patch.status = 'ready_to_ship';
     updateOrder(order.id, patch);
 
-    // La orden ya tiene su QR: los WhatsApp de onboarding pendientes ("sube tu QR")
-    // quedan obsoletos — cancelarlos para que no salgan cuando la PC prenda (compra
-    // nocturna: el agente estaba apagado, el cliente subió el QR de una, y el mensaje
-    // viejo seguía en cola).
+    // El cliente ya tiene su QR: los WhatsApp de onboarding pendientes ("sube tu QR")
+    // quedan obsoletos — en ESTA orden y en cualquier orden HERMANA del mismo teléfono
+    // (checkout reintentado deja duplicadas sin QR que seguían recordando; bug 16-jul).
     try {
-      const n = cancelPendingWaByKinds(order.id, ['activacion', 'recordatorio_3h', 'recordatorio_24h']);
-      if (n) logger.info({ orderId: order.id, n }, 'wa: onboarding pendiente cancelado (QR ya subido)');
+      const KINDS = ['activacion', 'recordatorio_3h', 'recordatorio_24h'];
+      let n = cancelPendingWaByKinds(order.id, KINDS);
+      const ph = normalizePhoneCO(order.phone);
+      if (ph) {
+        for (const sib of listOrders()) {
+          if (sib.id !== order.id && normalizePhoneCO(sib.phone) === ph) {
+            n += cancelPendingWaByKinds(sib.id, KINDS);
+          }
+        }
+      }
+      if (n) logger.info({ orderId: order.id, n }, 'wa: onboarding pendiente cancelado (QR ya subido, incluye órdenes hermanas)');
     } catch (e) {
       logger.warn({ orderId: order.id, err: e.message }, 'wa: no se pudo cancelar el onboarding pendiente');
     }

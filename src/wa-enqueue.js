@@ -4,7 +4,7 @@
 
 import { config } from './config.js';
 import { logger } from './logger.js';
-import { enqueueWa, enqueueWaForce, getShipmentByOrder, hasRecentWa } from './storage.js';
+import { enqueueWa, enqueueWaForce, getShipmentByOrder, hasRecentWa, listOrders } from './storage.js';
 
 // Mensajes de onboarding: son genéricos ("sube tu QR"), así que si el MISMO teléfono ya
 // recibió ese tipo hace poco por OTRA orden (cliente que reintentó el checkout y quedó
@@ -174,6 +174,19 @@ export function buildWaBody(order, kind) {
   ]);
 }
 
+/** Teléfonos (normalizados) que YA subieron su QR en ALGUNA orden. El onboarding
+ *  es por CLIENTE, no por orden: con órdenes duplicadas (checkout reintentado), el
+ *  QR queda en una y la gemela sin QR seguía mandando "sube tu QR" (bug 16-jul). */
+export function qrPhonesSet(orders = listOrders()) {
+  const s = new Set();
+  for (const o of orders) {
+    if (!o.qr_path) continue;
+    const p = normalizePhoneCO(o.phone);
+    if (p) s.add(p);
+  }
+  return s;
+}
+
 /** Normaliza el teléfono, arma el texto y encola. Idempotente por (order.id, kind)
  *  y, en los kinds de onboarding, también por (teléfono, kind) en ventana de 48h. */
 export function enqueueWhatsApp(order, kind) {
@@ -193,6 +206,12 @@ export function enqueueWhatsApp(order, kind) {
   const phone = normalizePhoneCO(order.phone);
   if (!phone) {
     logger.warn({ orderId: order.id }, 'wa: orden sin teléfono válido, no se encola WhatsApp');
+    return false;
+  }
+  // Onboarding por CLIENTE: si el MISMO teléfono ya subió QR en OTRA orden (duplicada
+  // por checkout reintentado), pedirle el QR de nuevo es ruido y confunde.
+  if (PHONE_DEDUPE_KINDS.has(kind) && qrPhonesSet().has(phone)) {
+    logger.info({ orderId: order.id, kind, phone }, 'wa: otro pedido del mismo cliente ya tiene QR, onboarding no se encola');
     return false;
   }
   if (
