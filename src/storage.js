@@ -256,6 +256,15 @@ export function openDb() {
     ['wamid', 'TEXT'],
     ['delivery', 'TEXT'],
   ]);
+  // CRM /soporte-app: wa_inbound pasó de "solo entrantes" a hilo de chat completo.
+  // direction 'in'|'out'; delivery = status Meta de los salientes; read_at = visto
+  // por el operador (contador de no-leídos por conversación).
+  ensureColumns('wa_inbound', [
+    ["direction", "TEXT NOT NULL DEFAULT 'in'"],
+    ['delivery', 'TEXT'],
+    ['read_at', 'INTEGER'],
+  ]);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_wa_inbound_phone ON wa_inbound(phone, received_at DESC)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_wa_outbox_wamid ON wa_outbox(wamid)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_orders_plan ON orders(mp_plan_id)');
   // Índice para que el job de cobro encuentre rápido las cuotas vencidas.
@@ -1498,6 +1507,17 @@ export function getWaAgentLastSeen() {
  *  muestre "Enviado" en mensajes que Meta aceptó pero nunca entregó. */
 export function updateWaDeliveryByWamid(wamid, delivery, error = null) {
   openDb();
+  // El hilo del chat (wa_inbound, salientes del CRM y plantillas) comparte wamid:
+  // actualizarlo siempre para que /soporte-app muestre los chulitos reales.
+  const noDegradar = `
+     AND (delivery IS NULL
+          OR (delivery = 'sent' AND ? IN ('delivered','read'))
+          OR (delivery = 'delivered' AND ? = 'read'))`;
+  db.prepare(
+    delivery === 'failed'
+      ? `UPDATE wa_inbound SET delivery = 'failed' WHERE id = ?`
+      : `UPDATE wa_inbound SET delivery = ? WHERE id = ?${noDegradar}`
+  ).run(...(delivery === 'failed' ? [wamid] : [delivery, wamid, delivery, delivery]));
   if (delivery === 'failed') {
     return db.prepare(
       `UPDATE wa_outbox SET delivery = ?, status = 'failed', last_error = ? WHERE wamid = ?`
@@ -1505,26 +1525,67 @@ export function updateWaDeliveryByWamid(wamid, delivery, error = null) {
   }
   // No degradar: read > delivered > sent (los statuses pueden llegar desordenados).
   return db.prepare(
-    `UPDATE wa_outbox SET delivery = ? WHERE wamid = ?
-     AND (delivery IS NULL
-          OR (delivery = 'sent' AND ? IN ('delivered','read'))
-          OR (delivery = 'delivered' AND ? = 'read'))`
+    `UPDATE wa_outbox SET delivery = ? WHERE wamid = ?${noDegradar}`
   ).run(delivery, wamid, delivery, delivery).changes;
 }
 
-/** Mensaje entrante del webhook de Meta (respuestas de clientes). Idempotente por id. */
-export function insertWaInbound({ id, phone, name, type, body }) {
+/** Mensaje del hilo de chat (entrante del webhook o saliente del CRM/plantillas).
+ *  Idempotente por id (wamid). direction: 'in' | 'out'. */
+export function insertWaInbound({ id, phone, name, type, body, direction = 'in', delivery = null }) {
   openDb();
   const info = db.prepare(
-    `INSERT OR IGNORE INTO wa_inbound (id, phone, name, type, body, received_at)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(id, phone, name || null, type, body || null, Date.now());
+    `INSERT OR IGNORE INTO wa_inbound (id, phone, name, type, body, direction, delivery, received_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, phone, name || null, type, body || null, direction, delivery, Date.now());
   return info.changes > 0;
 }
 
 export function listWaInbound(limit = 100) {
   openDb();
   return db.prepare(`SELECT * FROM wa_inbound ORDER BY received_at DESC LIMIT ?`).all(limit);
+}
+
+// ── CRM /soporte-app: conversaciones e hilos ────────────────────────────────────
+
+/** Conversaciones agrupadas por teléfono: último mensaje + no-leídos, recientes primero. */
+export function listWaChats(limit = 100) {
+  openDb();
+  return db.prepare(`
+    SELECT phone,
+           MAX(received_at) AS last_at,
+           (SELECT body FROM wa_inbound b WHERE b.phone = w.phone ORDER BY b.received_at DESC, b.rowid DESC LIMIT 1) AS last_body,
+           (SELECT direction FROM wa_inbound b WHERE b.phone = w.phone ORDER BY b.received_at DESC, b.rowid DESC LIMIT 1) AS last_direction,
+           (SELECT name FROM wa_inbound b WHERE b.phone = w.phone AND b.name IS NOT NULL ORDER BY b.received_at DESC, b.rowid DESC LIMIT 1) AS name,
+           SUM(CASE WHEN direction = 'in' AND read_at IS NULL THEN 1 ELSE 0 END) AS unread
+    FROM wa_inbound w
+    GROUP BY phone
+    ORDER BY last_at DESC
+    LIMIT ?`).all(limit);
+}
+
+/** Hilo completo de una conversación (ascendente para pintar el chat). */
+export function listWaChatMessages(phone, limit = 200) {
+  openDb();
+  return db.prepare(
+    `SELECT id, phone, name, type, body, direction, delivery, read_at, received_at
+     FROM wa_inbound WHERE phone = ? ORDER BY received_at DESC, rowid DESC LIMIT ?`
+  ).all(phone, limit).reverse();
+}
+
+/** Marca leídos todos los entrantes de una conversación. */
+export function markWaChatRead(phone) {
+  openDb();
+  return db.prepare(
+    `UPDATE wa_inbound SET read_at = ? WHERE phone = ? AND direction = 'in' AND read_at IS NULL`
+  ).run(Date.now(), phone).changes;
+}
+
+/** No-leídos totales (badge del panel). */
+export function countWaChatUnread() {
+  openDb();
+  return db.prepare(
+    `SELECT COUNT(*) n FROM wa_inbound WHERE direction = 'in' AND read_at IS NULL`
+  ).get().n;
 }
 
 /** Enviados desde un instante (ms). Lo usan los enviadores de la VM para el tope

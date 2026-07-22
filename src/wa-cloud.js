@@ -19,7 +19,7 @@ import { config } from './config.js';
 import { logger } from './logger.js';
 import {
   claimWaPending, markWaSent, getWaSettings, touchWaAgent, countWaSentSince,
-  getShipmentByOrder, getOrder,
+  getShipmentByOrder, getOrder, insertWaInbound,
 } from './storage.js';
 import { bogotaHour, startOfBogotaDay, withinActiveHours, randDelay, sleep } from './wa-shared.js';
 import { moneyCo, esCodPendiente, firstNameOf } from './wa-enqueue.js';
@@ -123,6 +123,30 @@ async function graphSend(phone, template) {
   return data?.messages?.[0]?.id || null; // wamid
 }
 
+/** Texto libre para el CRM /soporte-app. Solo funciona dentro de la ventana de
+ *  servicio de 24h (desde el último mensaje DEL cliente); fuera de ella Meta
+ *  responde 131047 y acá se traduce a un error entendible para el operador. */
+export async function sendCloudText(phone, text) {
+  if (!config.hasWaCloud) throw new Error('Cloud API no configurada');
+  try {
+    const data = await graph(`/${config.WA_CLOUD_PHONE_NUMBER_ID}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to: phone,
+        type: 'text',
+        text: { body: text, preview_url: true },
+      }),
+    });
+    return data?.messages?.[0]?.id || null; // wamid
+  } catch (e) {
+    if (/131047|re-engagement/i.test(e.message)) {
+      throw new Error('VENTANA_CERRADA: han pasado más de 24h desde el último mensaje del cliente; solo puede iniciarse con plantilla');
+    }
+    throw e;
+  }
+}
+
 // ── Verificación de plantillas y estado activo ─────────────────────────────────
 
 let active = false;
@@ -190,6 +214,12 @@ async function tick() {
         // Una sola escritura: status y wamid juntos, para que el webhook de Meta
         // (que puede llegar en milisegundos) siempre encuentre la fila por wamid.
         markWaSent(m.id, true, null, wamid);
+        // Reflejar la plantilla en el hilo del CRM (/soporte-app): el operador ve
+        // TODO lo que le llegó al cliente. body = texto encolado (aproximación
+        // legible del contenido de la plantilla).
+        if (wamid) {
+          insertWaInbound({ id: wamid, phone: m.phone, name: null, type: 'template', body: m.body, direction: 'out' });
+        }
         logger.info({ phone: m.phone, kind: m.kind, wamid }, 'wa-cloud: aceptado por Meta');
       } catch (e) {
         if (e.transient) {
