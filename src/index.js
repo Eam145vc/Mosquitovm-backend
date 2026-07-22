@@ -19,7 +19,7 @@ import { updateAccountHistory, updateAccountWatch, recordPayment, upsertDeviceFr
   setSubStatus, accountsToAutoSuspend, markNewlyExpired, listOrders, updateOrder, getOrder,
   paymentsFor, requeueStaleWa, shipmentsAwaitingTracking, updateShipmentRow, listWaOutbox,
   listShipments, cancelPendingWaByKinds, cancelAllPendingWa, getShipmentByOrder,
-  speakersForBank } from './storage.js';
+  speakersForBank, paymentsAggregate } from './storage.js';
 import { onIncident as onBankIncident } from './bank-status.js';
 import { filterOnline } from './speaker-online.js';
 import { fetchEfiStatus } from './efipay.js';
@@ -426,6 +426,37 @@ async function main() {
   };
   waEnvioJob();
   setInterval(waEnvioJob, 10 * 60 * 1000);
+
+  // Aviso automático de posible problema de conexión (kind 'conexion'): cliente que
+  // RECIBIÓ su Sonó hace >24h, YA conectó el correo (account_id) y NO se le ha
+  // detectado NINGÚN pago desde la entrega. Idempotente por (order_id,'conexion').
+  // Solo desde el 22-jul-2026 en adelante (no molestar clientes viejos ya andando).
+  const CONEXION_SINCE = 1784000000000; // ~22-jul-2026
+  const CONEXION_MIN_AGE = 24 * 3600 * 1000;
+  const conexionJob = () => {
+    try {
+      let n = 0;
+      const now = Date.now();
+      for (const order of listOrders()) {
+        if (!order.account_id) continue;              // correo aún sin conectar: es onboarding, no conexión
+        if (order.archived_at) continue;
+        const sh = getShipmentByOrder(order.id);
+        if (!sh || sh.tracking_status !== 'delivered') continue;
+        const deliveredAt = sh.tracking_status_at || 0;
+        if (deliveredAt < CONEXION_SINCE) continue;   // corte histórico
+        if (now - deliveredAt < CONEXION_MIN_AGE) continue; // aún no cumplen 24h
+        // ¿Algún pago desde la entrega? Si ya vendió, todo está bien: no molestar.
+        const agg = paymentsAggregate(order.account_id, deliveredAt, now);
+        if (agg && agg.n > 0) continue;
+        if (enqueueWhatsApp(order, 'conexion')) n += 1; // idempotente por (order,kind)
+      }
+      if (n) logger.info({ n }, 'wa: aviso de conexión encolado (entregado >24h sin pagos)');
+    } catch (e) {
+      logger.error({ err: e.message }, 'wa: conexionJob error');
+    }
+  };
+  conexionJob();
+  setInterval(conexionJob, 60 * 60 * 1000); // cada hora
 
   // Devuelve a 'queued' los mensajes 'sending' que la PC dejó colgados >30 min.
   setInterval(() => {

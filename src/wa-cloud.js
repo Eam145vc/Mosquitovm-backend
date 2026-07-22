@@ -90,6 +90,8 @@ export function buildWaCloudPayload(order, kind, shipment = null) {
   if (kind === 'entregado') return tpl('sono_entregado', [nombre]);
   if (kind === 'correo') return tpl('sono_correo', [nombre]);
   if (kind === 'libreta') return tpl('sono_libreta', [nombre]);
+  if (kind === 'qr_problema') return tpl('sono_qr_problema', [nombre]);
+  if (kind === 'conexion') return tpl('sono_conexion', [nombre]);
   return null;
 }
 

@@ -137,6 +137,14 @@ export function buildWaBody(order, kind) {
       `${hola}, para que tu Sonó empiece a cantar tus ventas solo falta conectar el correo donde te llegan los avisos de pago (2 min): ${emailLinkFor(order)}. Si te trabas, escríbeme por aquí.`,
     ]);
   }
+  // 'qr_problema': el QR subido tiene un problema (borroso/incompleto). Manual.
+  if (kind === 'qr_problema') {
+    return `${hola} 👋 Revisamos el QR de Bre-B que subiste para tu Sonó y encontramos un problema (quedó borroso o incompleto y no lo podemos imprimir). ¿Nos lo reenvías por aquí? Con eso lo dejamos listo y despachamos tu equipo: ${link}`;
+  }
+  // 'conexion': posible problema de conexión (sin pagos). Manual o automático (job).
+  if (kind === 'conexion') {
+    return `${hola} 👋 Notamos que tu Sonó lleva un tiempo sin anunciar pagos. Suele ser un detalle con la conexión del correo donde te avisan los pagos. Revísalo en 2 min aquí, o escríbeme por este chat y lo solucionamos juntos: ${emailLinkFor(order)}`;
+  }
   // ── Avisos de tracking (webhook de Skydropx) ──────────────────────────────
   // 'reparto' (last_mile): el paquete sale a entrega HOY. En COD es el aviso clave:
   // que el cliente esté en el local y con el efectivo (las devoluciones las paga Sonó).

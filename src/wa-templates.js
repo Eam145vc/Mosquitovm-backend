@@ -73,4 +73,18 @@ export const WA_TEMPLATES = {
     bodyExample: ['Carlos'],
     button: { text: 'Abrir mi Libreta', urlBase: LIBRETA },
   },
+  // Problema con el QR subido (envío manual desde el panel). Reabre la ventana de 24h
+  // para poder chatear libre; el botón lleva a re-subir el QR.
+  sono_qr_problema: {
+    body: 'Hola {{1}} 👋 Revisamos el QR de Bre-B que subiste para tu Sonó y encontramos un problema (quedó borroso o incompleto y no lo podemos imprimir). ¿Nos lo reenvías por aquí? Con eso lo dejamos listo y despachamos tu equipo.',
+    bodyExample: ['Carlos'],
+    button: { text: 'Reenviar mi QR', urlBase: ACTIVAR },
+  },
+  // Posible problema de conexión: Sonó lleva sin anunciar pagos. Manual o automático
+  // (job de index.js: >24h de entregado + correo conectado + 0 pagos).
+  sono_conexion: {
+    body: 'Hola {{1}} 👋 Notamos que tu Sonó lleva un tiempo sin anunciar pagos. Suele ser un detalle con la conexión del correo donde te avisan los pagos. Toca el botón para revisarlo en 2 minutos, o escríbenos por aquí y lo solucionamos juntos.',
+    bodyExample: ['Carlos'],
+    button: { text: 'Revisar mi conexión', urlBase: ACTIVAR_CORREO },
+  },
 };

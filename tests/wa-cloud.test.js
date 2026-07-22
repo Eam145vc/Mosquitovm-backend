@@ -39,7 +39,8 @@ test('sanitizeParam: sin saltos de línea ni espacios múltiples (regla dura de 
 
 test('todos los kinds del sistema tienen plantilla', () => {
   const kinds = ['activacion', 'recordatorio_3h', 'recordatorio_24h', 'guia_creada',
-    'envio', 'reparto', 'intento_entrega', 'entregado', 'correo', 'libreta'];
+    'envio', 'reparto', 'intento_entrega', 'entregado', 'correo', 'libreta',
+    'qr_problema', 'conexion'];
   for (const k of kinds) {
     const p = buildWaCloudPayload(order(), k, shipment());
     assert.ok(p, `kind sin plantilla: ${k}`);
