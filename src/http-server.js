@@ -61,7 +61,7 @@ import {
 } from './storage.js';
 import { bogotaDayStart, bogotaDayStartFromKey, bogotaMonthStart, bogotaPrevMonthStart, DAY_MS } from './libreta-time.js';
 import { getShipment, extractLabel, fetchLabelPdf } from './skydropx.js';
-import { decodeBrebImage, normalizeKey } from './breb-qr.js';
+import { scanBrebImage, decodeBrebImage, normalizeKey } from './breb-qr.js';
 import { parseEmail } from './parsers/index.js';
 import { simpleParser } from 'mailparser';
 import { generateAlias, createClientAlias, updateClientAliasRecipients } from './forwardemail.js';
@@ -1126,8 +1126,31 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
 
   // Guarda el archivo del QR, marca ready_to_ship y decodifica la llave Bre-B para el
   // ruteo multipunto. Lo usan el cliente (/activar/:order/qr) y el admin (subida manual).
-  // Devuelve { hasQr, brebKey, brebKeyType } — brebKey=null si no se pudo decodificar.
-  async function processQrUpload(order, buf, mimetype, ext) {
+  // Devuelve { hasQr, brebKey, brebKeyType, qrReadable } — brebKey=null si no se pudo
+  // decodificar. Con opts.requireReadableQr, si la imagen NO tiene un QR de Bre-B legible
+  // devuelve { rejected } SIN guardar (para no pisar un QR bueno previo), con rejected:
+  //   - 'no_qr'    → la foto no tiene ningún QR legible (movida/borrosa).
+  //   - 'not_breb' → se leyó un QR pero NO es de Bre-B (otro QR, un link, etc.).
+  // El cliente debe repetir. El admin NO pasa la opción → puede forzar cualquier imagen.
+  async function processQrUpload(order, buf, mimetype, ext, opts = {}) {
+    const isImage = mimetype.startsWith('image/');
+
+    // Multipunto: escanear el QR ANTES de guardar. Separa "no se leyó ningún QR"
+    // (foto mala) de "se leyó un QR pero no es Bre-B" (otro QR) de "es Bre-B".
+    let scan = { qrText: null, decoded: null, isBreb: false };
+    if (isImage) {
+      try {
+        scan = await scanBrebImage(buf);
+      } catch (e) {
+        logger.warn({ orderId: order.id, err: e.message }, 'multipunto: fallo al leer el QR');
+      }
+    }
+    // Validación para el cliente (rechaza sin tocar el QR ya guardado):
+    if (opts.requireReadableQr && isImage) {
+      if (!scan.qrText) return { rejected: 'no_qr', hasQr: false };
+      if (!scan.isBreb) return { rejected: 'not_breb', hasQr: false };
+    }
+
     const filename = `${order.id}.${ext}`;
     fs.writeFileSync(path.join(QR_DIR, filename), buf);
 
@@ -1155,41 +1178,35 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     }
 
     let brebKey = null, brebKeyType = null;
-    // Multipunto: decodificar el QR Bre-B para extraer la LLAVE del local y guardarla en
-    // el device de esta orden (sirve para rutear los pagos al speaker correcto). Solo
-    // imágenes (los PDF no se decodifican acá). Si falla, NO rompemos la subida del QR.
-    if (mimetype.startsWith('image/')) {
-      try {
-        const decoded = await decodeBrebImage(buf);
-        if (decoded && decoded.routable && decoded.key) {
-          brebKey = normalizeKey(decoded.key);
-          brebKeyType = decoded.keyType;
-          const dev = listDevices().find((d) => d.order_id === order.id);
-          if (dev) {
-            setDeviceBrebKey(dev.spkr_id, {
-              key: brebKey,
-              qrJson: { raw: decoded.raw, key: decoded.key, keyType: decoded.keyType },
-              localName: decoded.merchantName || order.business_name || null,
-            });
-            logger.info({ orderId: order.id, spkr: dev.spkr_id, key: decoded.key, keyType: decoded.keyType }, 'multipunto: llave Bre-B asociada al device');
-          } else {
-            // El device aún no está asignado: guardamos la llave en la orden para
-            // transferirla al device cuando se asigne el speaker (al despachar).
-            updateOrder(order.id, {
-              breb_key: brebKey,
-              breb_qr_json: JSON.stringify({ raw: decoded.raw, key: decoded.key, keyType: decoded.keyType }),
-              local_name: decoded.merchantName || order.business_name || null,
-            });
-            logger.info({ orderId: order.id, key: decoded.key }, 'multipunto: llave detectada, device aún sin asignar (se asociará al asignar el speaker)');
-          }
-        } else {
-          logger.warn({ orderId: order.id }, 'multipunto: QR sin llave ruteable (no se pudo asociar)');
-        }
-      } catch (e) {
-        logger.warn({ orderId: order.id, err: e.message }, 'multipunto: fallo al decodificar el QR (la subida sigue OK)');
+    // Multipunto: usar la llave Bre-B ya extraída del escaneo para guardarla en el device
+    // de esta orden (sirve para rutear los pagos al speaker correcto). Solo imágenes (los
+    // PDF no se decodifican acá). Si no hay llave, NO rompemos la subida del QR.
+    const decoded = scan.decoded;
+    if (decoded && decoded.routable && decoded.key) {
+      brebKey = normalizeKey(decoded.key);
+      brebKeyType = decoded.keyType;
+      const dev = listDevices().find((d) => d.order_id === order.id);
+      if (dev) {
+        setDeviceBrebKey(dev.spkr_id, {
+          key: brebKey,
+          qrJson: { raw: decoded.raw, key: decoded.key, keyType: decoded.keyType },
+          localName: decoded.merchantName || order.business_name || null,
+        });
+        logger.info({ orderId: order.id, spkr: dev.spkr_id, key: decoded.key, keyType: decoded.keyType }, 'multipunto: llave Bre-B asociada al device');
+      } else {
+        // El device aún no está asignado: guardamos la llave en la orden para
+        // transferirla al device cuando se asigne el speaker (al despachar).
+        updateOrder(order.id, {
+          breb_key: brebKey,
+          breb_qr_json: JSON.stringify({ raw: decoded.raw, key: decoded.key, keyType: decoded.keyType }),
+          local_name: decoded.merchantName || order.business_name || null,
+        });
+        logger.info({ orderId: order.id, key: decoded.key }, 'multipunto: llave detectada, device aún sin asignar (se asociará al asignar el speaker)');
       }
+    } else if (isImage) {
+      logger.warn({ orderId: order.id, qrRead: Boolean(scan.qrText) }, 'multipunto: QR sin llave ruteable (no se pudo asociar)');
     }
-    return { hasQr: true, brebKey, brebKeyType };
+    return { hasQr: true, brebKey, brebKeyType, qrReadable: isImage ? Boolean(scan.qrText) : null };
   }
 
   app.post('/activar/:order/qr', async (req, reply) => {
@@ -1205,7 +1222,21 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     const buf = await file.toBuffer();
     if (buf.length > 5 * 1024 * 1024) return reply.code(413).send({ error: 'archivo muy grande' });
 
-    await processQrUpload(order, buf, file.mimetype, ext);
+    // Exigir un QR de Bre-B legible: si la foto está movida (no se lee QR) o el QR no es
+    // de Bre-B (otro QR/link), se rechaza para que el cliente lo corrija (no se guarda nada).
+    const res = await processQrUpload(order, buf, file.mimetype, ext, { requireReadableQr: true });
+    if (res.rejected === 'no_qr') {
+      logger.info({ orderId: order.id, bytes: buf.length }, 'qr rechazado: foto sin QR legible');
+      return reply.code(422).send({
+        error: 'No pudimos leer el QR de la foto. Tomala otra vez bien enfocada, derecha y con buena luz, que se vea el QR completo y sin reflejos.',
+      });
+    }
+    if (res.rejected === 'not_breb') {
+      logger.info({ orderId: order.id, bytes: buf.length }, 'qr rechazado: no es un QR de Bre-B');
+      return reply.code(422).send({
+        error: 'Ese no es un QR de Bre-B. Sube el QR de Bre-B que generás desde la app de tu banco (Bancolombia, Nequi o BBVA), no otro QR.',
+      });
+    }
     logger.info({ orderId: order.id, bytes: buf.length }, 'qr subido');
     return { ok: true };
   });
@@ -2523,21 +2554,24 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
             const body = msg.text?.body || msg.button?.text || msg.interactive?.button_reply?.title
               || media?.caption || (media ? `[${msg.type}]` : `[${msg.type}]`);
             if (insertWaInbound({ id: msg.id, phone: msg.from, name, type: msg.type, body })) {
-              req.log?.info?.({ from: msg.from, type: msg.type }, 'wa-cloud: mensaje entrante');
+              logger.info({ from: msg.from, type: msg.type, hasMedia: Boolean(media?.id) }, 'wa-cloud: mensaje entrante');
               // Media: descargar YA en background (el link de Graph expira en ~5 min)
               // y colgar el archivo al mensaje; el panel lo pinta al siguiente poll.
               if (media?.id) {
                 downloadWaMedia(media.id)
-                  .then(({ path: mediaPath, mime }) => setWaInboundMedia(msg.id, mediaPath, mime))
-                  .catch((e) => req.log?.warn?.({ err: e.message, type: msg.type }, 'wa-cloud: descarga de media falló'));
+                  .then(({ path: mediaPath, mime }) => {
+                    setWaInboundMedia(msg.id, mediaPath, mime);
+                    logger.info({ msgId: msg.id, mime }, 'wa-cloud: media descargada');
+                  })
+                  .catch((e) => logger.error({ err: e.message, type: msg.type, mediaId: media.id }, 'wa-cloud: descarga de media falló'));
               }
               notifyAdmins({
                 title: `🟢 WhatsApp · ${name || '+' + msg.from}`,
                 body: media ? `📎 ${msg.type}` : String(body).slice(0, 120),
                 url: `/soporte-app/#/conv/wa:${msg.from}`,
                 tag: `wa-${msg.from}`,
-              }).then((r2) => req.log?.info?.({ sent: r2.sent }, 'wa-cloud: push entrante enviado'))
-                .catch((e) => req.log?.warn?.({ err: e.message }, 'wa-cloud: push entrante falló'));
+              }).then((r2) => logger.info({ sent: r2.sent }, 'wa-cloud: push entrante enviado'))
+                .catch((e) => logger.warn({ err: e.message }, 'wa-cloud: push entrante falló'));
             }
           }
         }

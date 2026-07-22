@@ -53,6 +53,17 @@ export function normalizeKey(k) {
 }
 
 /**
+ * ¿El string EMVCo es un QR de Bre-B? Todo QR Bre-B (sistema del Banco de la República,
+ * red "RBM") lleva el namespace CO.COM.RBM en su TLV, sin importar el banco emisor
+ * (Bancolombia, Nequi, BBVA, etc. — Bre-B es interbancario). Otros QR (pago normal de
+ * Nequi, MercadoPago, un link) NO lo tienen. Más laxo que extractBrebKey: reconoce el QR
+ * como Bre-B aunque la llave esté en un subtag/variante que aún no sepamos parsear.
+ */
+export function isBrebString(s) {
+  return typeof s === 'string' && s.includes('CO.COM.RBM');
+}
+
+/**
  * Extrae la llave Bre-B de un string EMVCo. Devuelve null si no hay tag 26.
  *
  * El RUTEO multipunto es SOLO por llave `@` (alfanumérica): es lo único que distingue
@@ -143,21 +154,29 @@ export function decodeBrebString(emvco) {
 }
 
 /**
- * Lee el QR de una imagen (buffer PNG/JPG), obtiene el string EMVCo y lo decodifica.
- * Devuelve null si no se pudo leer el QR o no es un Bre-B válido.
+ * Escanea una imagen (buffer PNG/JPG) e intenta LEER un QR y decodificarlo como Bre-B.
+ * Distingue dos fallos que el llamador necesita separar:
+ *   - `qrText === null`  → NO se pudo leer NINGÚN QR (foto movida/borrosa/incompleta).
+ *                          Esto es lo que hay que rechazarle al cliente para que repita.
+ *   - `qrText` con valor pero `decoded === null` → se leyó un QR, pero no es un Bre-B
+ *                          parseable. Mirá `isBreb`: si es true, es un QR Bre-B de una
+ *                          variante que aún no sabemos parsear (la foto está bien, el
+ *                          admin edita la llave); si es false, NO es un QR de Bre-B.
  * @param {Buffer} imageBuffer
+ * @returns {Promise<{qrText: string|null, decoded: object|null, isBreb: boolean}>}
  */
-export async function decodeBrebImage(imageBuffer) {
+export async function scanBrebImage(imageBuffer) {
   let base;
   try {
     base = await Jimp.read(imageBuffer);
   } catch {
-    return null;
+    return { qrText: null, decoded: null, isBreb: false };
   }
   // jsQR es sensible a la resolución y el contraste: el template oficial de
   // Bancolombia (880px, QR con logo al centro) fallaba tal cual pero decodifica
   // reescalado (visto jul-2026, orden de Vera Sáenz). Intentos en cascada; el
-  // primero que decodifique un Bre-B válido gana.
+  // primero que decodifique un Bre-B válido gana. Si ninguno decodifica Bre-B pero
+  // alguno SÍ leyó un QR, devolvemos ese texto (la foto era legible).
   const attempts = [
     () => base,
     () => base.clone().greyscale().contrast(0.5),
@@ -166,15 +185,27 @@ export async function decodeBrebImage(imageBuffer) {
     () => base.clone().resize({ w: 600 }),
     () => base.clone().resize({ w: 400 }),
   ];
+  let firstText = null;
   for (const make of attempts) {
     try {
       const { data, width, height } = make().bitmap;
       const code = jsQR(new Uint8ClampedArray(data), width, height);
       if (code && code.data) {
+        if (!firstText) firstText = code.data;
         const decoded = decodeBrebString(code.data);
-        if (decoded) return decoded;
+        if (decoded) return { qrText: code.data, decoded, isBreb: true };
       }
     } catch { /* siguiente intento */ }
   }
-  return null;
+  return { qrText: firstText, decoded: null, isBreb: isBrebString(firstText) };
+}
+
+/**
+ * Lee el QR de una imagen (buffer PNG/JPG), obtiene el string EMVCo y lo decodifica.
+ * Devuelve null si no se pudo leer el QR o no es un Bre-B válido.
+ * @param {Buffer} imageBuffer
+ */
+export async function decodeBrebImage(imageBuffer) {
+  const { decoded } = await scanBrebImage(imageBuffer);
+  return decoded;
 }
