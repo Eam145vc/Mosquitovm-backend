@@ -32,6 +32,11 @@ import {
   addMessage, listMessages, historyForModel, listConversations, countPending, savePushSub,
   findConvsToReengage, markReengaged, getMessage, editMessage, deleteMessage,
 } from './support-store.js';
+// Canal WhatsApp (Cloud API oficial): las conversaciones del número de Sonó se
+// integran a ESTE panel con id 'wa:<telefono>' — un solo lugar para atender todo.
+import { listWaChats, listWaChatMessages, markWaChatRead, insertWaInbound, listOrders } from '../storage.js';
+import { normalizePhoneCO } from '../wa-enqueue.js';
+import { sendCloudText } from '../wa-cloud.js';
 
 // Mensaje de re-enganche: si el cliente deja de responder 5 min y el último mensaje
 // fue del bot, Valeria escribe UNA vez invitando a comprar, con el link al checkout.
@@ -277,29 +282,107 @@ export function registerSupportRoutes(app) {
 
   // ---------------------------------------------------------------- ADMIN
 
+  // Nombre a mostrar de un chat de WhatsApp: negocio de la orden con ese teléfono,
+  // o el nombre de perfil de WhatsApp, o el número.
+  const negocioPorTelefono = () => {
+    const m = new Map();
+    for (const o of listOrders()) {
+      const p = normalizePhoneCO(o.phone);
+      if (p && o.business_name && !m.has(p)) m.set(p, o.business_name);
+    }
+    return m;
+  };
+
+  // Chats de WhatsApp con la MISMA forma que las conversaciones del widget web.
+  // status: 'pending' con no-leídos (suena en el filtro Pendientes); si no, 'open'.
+  const waConversations = (filter) => {
+    const negocios = negocioPorTelefono();
+    return listWaChats(150)
+      .filter((c) => (filter === 'pending' ? c.unread > 0 : true))
+      .map((c) => ({
+        id: `wa:${c.phone}`,
+        channel: 'wa',
+        name: negocios.get(c.phone) || c.name || `+${c.phone}`,
+        contact: `+${c.phone}`,
+        status: c.unread > 0 ? 'pending' : 'open',
+        mode: 'human',
+        preview: (c.last_direction === 'out' ? 'Tú: ' : '') + (c.last_body || '…'),
+        last_msg_at: c.last_at,
+        unread_admin: c.unread,
+      }));
+  };
+
+  const isWaId = (id) => String(id).startsWith('wa:');
+  const waPhone = (id) => String(id).slice(3).replace(/\D/g, '');
+
   app.get('/soporte/admin/conversations', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
+    const filter = req.query.filter || 'open';
+    const wa = waConversations(filter);
+    const web = listConversations(filter).map((c) => ({ ...c, channel: 'web' }));
     return {
-      pending: countPending(),
-      conversations: listConversations(req.query.filter || 'open'),
+      pending: countPending() + wa.filter((c) => c.unread_admin > 0).length,
+      conversations: [...web, ...wa].sort((a, b) => (b.last_msg_at || 0) - (a.last_msg_at || 0)),
     };
   });
 
   app.get('/soporte/admin/conv/:id', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
+    if (isWaId(req.params.id)) {
+      const phone = waPhone(req.params.id);
+      markWaChatRead(phone); // abrir = leer
+      const negocios = negocioPorTelefono();
+      const msgs = listWaChatMessages(phone, 300);
+      const name = negocios.get(phone) || msgs.findLast?.((m) => m.name)?.name || `+${phone}`;
+      return {
+        conversation: {
+          id: `wa:${phone}`, channel: 'wa', name, contact: `+${phone}`,
+          page: 'WhatsApp', mode: 'human', status: 'open',
+        },
+        // Mapeo al formato del panel: entrante=user, plantilla automática=bot, tú=human.
+        messages: msgs.map((m) => ({
+          id: m.id,
+          role: m.direction === 'in' ? 'user' : (m.type === 'template' ? 'bot' : 'human'),
+          text: m.body || `[${m.type}]`,
+          ts: m.received_at,
+          delivery: m.delivery,
+        })),
+      };
+    }
     const conv = getConversation(req.params.id);
     if (!conv) return reply.code(404).send({ error: 'no encontrada' });
     clearUnreadAdmin(conv.id);
-    return { conversation: conv, messages: listMessages(conv.id, 0).filter(m => m.role !== 'system') };
+    return {
+      conversation: { ...conv, channel: 'web' },
+      messages: listMessages(conv.id, 0).filter(m => m.role !== 'system'),
+    };
   });
 
   // El dueño responde manual. Pone la conversación en modo humano y la saca de pendiente.
   app.post('/soporte/admin/conv/:id/reply', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
-    const conv = getConversation(req.params.id);
-    if (!conv) return reply.code(404).send({ error: 'no encontrada' });
     const text = String((req.body || {}).text || '').trim();
     if (!text) return reply.code(400).send({ error: 'mensaje vacío' });
+    if (isWaId(req.params.id)) {
+      const phone = waPhone(req.params.id);
+      try {
+        const wamid = await sendCloudText(phone, text);
+        const id = wamid || `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        insertWaInbound({ id, phone, name: null, type: 'text', body: text, direction: 'out' });
+        logger.info({ phone }, 'soporte: respuesta WhatsApp enviada');
+        return { ok: true, message: { id, role: 'human', text, ts: Date.now() } };
+      } catch (e) {
+        const ventana = e.message.startsWith('VENTANA_CERRADA');
+        logger.warn({ phone, err: e.message }, 'soporte: respuesta WhatsApp falló');
+        return reply.code(ventana ? 409 : 502).send({
+          error: ventana
+            ? 'Pasaron más de 24h desde el último mensaje del cliente: WhatsApp solo permite reabrir con una plantilla (botón de reenviar en la orden del /admin).'
+            : `No se pudo enviar: ${e.message}`,
+        });
+      }
+    }
+    const conv = getConversation(req.params.id);
+    if (!conv) return reply.code(404).send({ error: 'no encontrada' });
     touchConversation(conv.id, { mode: 'human', status: 'human' });
     const msg = addMessage(conv.id, 'human', text);
     clearUnreadAdmin(conv.id);

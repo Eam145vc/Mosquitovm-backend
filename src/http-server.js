@@ -54,7 +54,6 @@ import {
   touchWaAgent, getWaSettings, setWaSettings, getWaAgentLastSeen, countWaByStatus,
   listWaOutbox, requeueWa, cancelWa, cancelPendingWaByKinds, cancelAllPendingWa,
   insertWaInbound, listWaInbound, updateWaDeliveryByWamid, countWaSentSince,
-  listWaChats, listWaChatMessages, markWaChatRead, countWaChatUnread,
   getShipmentByOrder, updateShipmentRow, renameDeviceLocal,
   insertUgcApplication, listUgcApplications, countUgcNuevo, setUgcStatus, deleteUgcApplication,
   createPaymentIntent, getPaymentIntent, matchPaymentIntent,
@@ -76,8 +75,9 @@ import { generatePaymentLink, chargeCard, chargePse, chargeBreb, chargeCash, get
 import * as announceLog from './announce-log.js';
 import { sendActivationEmail } from './activation-email.js';
 import { enqueueWhatsApp, enqueueWhatsAppForce, normalizePhoneCO, ESTADOS_SIN_MENSAJES } from './wa-enqueue.js';
-import { isWaCloudActive, sendCloudText } from './wa-cloud.js';
+import { isWaCloudActive } from './wa-cloud.js';
 import { bogotaHour, startOfBogotaDay, withinActiveHours } from './wa-shared.js';
+import { notifyAdmins } from './support/webpush.js';
 import { CUOTA_2_3_CENTS } from './installments-scheduler.js';
 import { publishVoice, publishCommand } from './mqtt-publisher.js';
 import { buildVoiceMessage } from './amount-to-wavs.js';
@@ -2514,12 +2514,19 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
             }
             if (st.status === 'failed') req.log?.warn?.({ wamid: st.id, err }, 'wa-cloud: entrega FALLÓ');
           }
-          // Respuestas de clientes ("escríbenos por aquí"): quedan en wa_inbound.
+          // Respuestas de clientes ("escríbenos por aquí"): quedan en wa_inbound y
+          // avisan por push al iPhone (mismo canal que las escaladas del bot web).
           for (const msg of v.messages || []) {
             const name = v.contacts?.[0]?.profile?.name || null;
             const body = msg.text?.body || msg.button?.text || msg.interactive?.button_reply?.title || `[${msg.type}]`;
             if (insertWaInbound({ id: msg.id, phone: msg.from, name, type: msg.type, body })) {
               req.log?.info?.({ from: msg.from }, 'wa-cloud: mensaje entrante');
+              notifyAdmins({
+                title: `🟢 WhatsApp · ${name || '+' + msg.from}`,
+                body: String(body).slice(0, 120),
+                url: `/soporte-app/#/conv/wa:${msg.from}`,
+                tag: `wa-${msg.from}`,
+              }).catch(() => {});
             }
           }
         }
@@ -2546,60 +2553,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     };
   });
 
-  // ── CRM /soporte-app: conversaciones del WhatsApp oficial (Cloud API) ──────
-  // Nombre a mostrar: perfil de WhatsApp si existe; si no, el negocio de la orden
-  // con ese teléfono (los clientes casi nunca tienen nombre de perfil útil).
-  const negocioPorTelefono = () => {
-    const m = new Map();
-    for (const o of listOrders()) {
-      const p = normalizePhoneCO(o.phone);
-      if (p && o.business_name && !m.has(p)) m.set(p, o.business_name);
-    }
-    return m;
-  };
-
-  app.get('/admin/soporte/chats', async (req, reply) => {
-    if (!requireAdmin(req, reply)) return;
-    const negocios = negocioPorTelefono();
-    return {
-      unreadTotal: countWaChatUnread(),
-      cloudActive: isWaCloudActive(),
-      chats: listWaChats(150).map((c) => ({
-        ...c,
-        business: negocios.get(c.phone) || null,
-      })),
-    };
-  });
-
-  app.get('/admin/soporte/chats/:phone', async (req, reply) => {
-    if (!requireAdmin(req, reply)) return;
-    const phone = String(req.params.phone).replace(/\D/g, '');
-    if (!phone) return reply.code(400).send({ error: 'teléfono inválido' });
-    markWaChatRead(phone); // abrir el hilo = leerlo
-    return {
-      phone,
-      business: negocioPorTelefono().get(phone) || null,
-      messages: listWaChatMessages(phone, 300),
-    };
-  });
-
-  app.post('/admin/soporte/chats/:phone/send', async (req, reply) => {
-    if (!requireAdmin(req, reply)) return;
-    const phone = String(req.params.phone).replace(/\D/g, '');
-    const text = String(req.body?.text || '').trim();
-    if (!phone || !text) return reply.code(400).send({ error: 'faltan teléfono o texto' });
-    if (!config.hasWaCloud) return reply.code(503).send({ error: 'Cloud API no configurada' });
-    try {
-      const wamid = await sendCloudText(phone, text);
-      const id = wamid || `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      insertWaInbound({ id, phone, name: null, type: 'text', body: text, direction: 'out' });
-      return { ok: true, id, wamid };
-    } catch (e) {
-      const ventana = e.message.startsWith('VENTANA_CERRADA');
-      req.log?.warn?.({ phone, err: e.message }, 'soporte: envío falló');
-      return reply.code(ventana ? 409 : 502).send({ error: e.message });
-    }
-  });
+  // (Las conversaciones de WhatsApp del CRM viven en /soporte/admin/* —
+  //  support-routes.js las integra al panel /soporte-app junto al chat web.)
 
   app.patch('/admin/wa/settings', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;

@@ -123,13 +123,13 @@ export async function askGemini(history, userText) {
     contents,
     generationConfig: {
       temperature: 0.2,            // bajo: más fiel a la KB, menos creatividad
-      // Subido a 4096 (antes 2048, antes 1024): respuestas largas se cortaban → JSON
-      // incompleto → el bot escalaba de más ("json invalido"). Además salvageAnswer
-      // rescata el answer de un JSON truncado como red final. thinkingBudget:0
-      // desactiva el razonamiento de Gemini (innecesario para un bot con KB fija) para
-      // que TODO el presupuesto vaya a la respuesta y además responda más rápido.
-      maxOutputTokens: 4096,
-      thinkingConfig: { thinkingBudget: 0 },
+      // 8192 (antes 4096/2048/1024): respuestas largas se cortaban → JSON incompleto
+      // → el bot escalaba de más ("json invalido"); salvageAnswer rescata truncados.
+      // ⚠️ SIN thinkingConfig: el 21-jul-2026 Google movió el alias gemini-flash-latest
+      // a un modelo que RECHAZA thinkingBudget:0 con 400 INVALID_ARGUMENT — Valeria
+      // escaló TODO durante ~1 día. El razonamiento queda en su default del modelo y
+      // consume parte del presupuesto de salida (por eso el tope sube a 8192).
+      maxOutputTokens: 8192,
       responseMimeType: 'application/json',
     },
   };
