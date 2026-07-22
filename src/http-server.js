@@ -53,7 +53,7 @@ import {
   claimWaPending, markWaSent,
   touchWaAgent, getWaSettings, setWaSettings, getWaAgentLastSeen, countWaByStatus,
   listWaOutbox, requeueWa, cancelWa, cancelPendingWaByKinds, cancelAllPendingWa,
-  insertWaInbound, listWaInbound, updateWaDeliveryByWamid, countWaSentSince,
+  insertWaInbound, listWaInbound, updateWaDeliveryByWamid, countWaSentSince, setWaInboundMedia,
   getShipmentByOrder, updateShipmentRow, renameDeviceLocal,
   insertUgcApplication, listUgcApplications, countUgcNuevo, setUgcStatus, deleteUgcApplication,
   createPaymentIntent, getPaymentIntent, matchPaymentIntent,
@@ -75,7 +75,7 @@ import { generatePaymentLink, chargeCard, chargePse, chargeBreb, chargeCash, get
 import * as announceLog from './announce-log.js';
 import { sendActivationEmail } from './activation-email.js';
 import { enqueueWhatsApp, enqueueWhatsAppForce, normalizePhoneCO, ESTADOS_SIN_MENSAJES } from './wa-enqueue.js';
-import { isWaCloudActive } from './wa-cloud.js';
+import { isWaCloudActive, downloadWaMedia } from './wa-cloud.js';
 import { bogotaHour, startOfBogotaDay, withinActiveHours } from './wa-shared.js';
 import { notifyAdmins } from './support/webpush.js';
 import { CUOTA_2_3_CENTS } from './installments-scheduler.js';

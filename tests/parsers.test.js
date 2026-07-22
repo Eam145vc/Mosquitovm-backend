@@ -56,30 +56,6 @@ describe('Nequi', () => {
   });
 });
 
-describe('Daviplata', () => {
-  test('Recibiste $20.000 en Daviplata', () => {
-    const r = parseEmail({
-      from: 'notificaciones@davivienda.com',
-      subject: 'Daviplata: tienes plata nueva',
-      text: 'Recibiste $20.000 en tu Daviplata.',
-    });
-    assert.equal(r.amount, 20000);
-    assert.equal(r.bank, 'daviplata');
-  });
-});
-
-describe('Davivienda (no Daviplata)', () => {
-  test('Abono a cuenta', () => {
-    const r = parseEmail({
-      from: 'notificaciones@davivienda.com',
-      subject: 'Abono en su cuenta',
-      text: 'Le informamos que su cuenta recibio un abono por $100.000.',
-    });
-    assert.equal(r.amount, 100000);
-    assert.equal(r.bank, 'davivienda');
-  });
-});
-
 describe('No matches', () => {
   test('Email no de banco -> null', () => {
     const r = parseEmail({

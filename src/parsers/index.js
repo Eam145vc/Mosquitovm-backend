@@ -5,12 +5,12 @@
 
 import * as bancolombia from './bancolombia.js';
 import * as nequi from './nequi.js';
-import * as daviplata from './daviplata.js';
-import * as davivienda from './davivienda.js';
 import * as bbva from './bbva.js';
 import * as generic from './generic.js';
 
-const PARSERS = [bancolombia, nequi, daviplata, davivienda, bbva];
+// Bancos soportados: SOLO Bancolombia, Nequi y BBVA (decisión de producto jul-2026).
+// Daviplata y Davivienda se retiraron (parser + filtro de remitente en sender-filter.js).
+const PARSERS = [bancolombia, nequi, bbva];
 
 /**
  * Intenta parsear un email de notificacion de pago.

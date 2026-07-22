@@ -6,13 +6,13 @@
 // NOTA: el sufijo aleatorio del alias se MANTIENE (resuelve colisión de nombres). Este
 // filtro es una capa de seguridad ADICIONAL, no un reemplazo del sufijo.
 
-// Dominios de remitente válidos (bancos colombianos soportados).
+// Dominios de remitente válidos (bancos soportados: SOLO Bancolombia, Nequi, BBVA).
+// Daviplata y Davivienda se retiraron (jul-2026); su dominio davivienda.com queda FUERA.
 const BANK_DOMAINS = [
   'bancolombia.com',
   'notificacionesbancolombia.com',
   'nequi.com.co',
-  'daviplata.com',
-  'davivienda.com',
+  'bbva.com',
 ];
 
 /** ¿El remitente es de un banco conocido? */
