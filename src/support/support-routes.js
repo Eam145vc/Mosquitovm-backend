@@ -170,24 +170,15 @@ export function registerSupportRoutes(app) {
         }
         catch (e) { logger.warn({ convId: conv.id, err: e.message }, 'no se pudo guardar la respuesta diferida'); }
       }, 10_000);
-      await safeNotify({
-        title: `💬 ${conv.name || 'Cliente'}`,
-        body: text.slice(0, 100),
-        url: `/soporte-app/#/conv/${conv.id}`,
-        tag: `conv-${conv.id}`,
-      });
+      // Sin push: el bot responde solo (no molestar). Solo se notifica si escala o
+      // si el dueño ya tiene el control de la conversación (decisión del usuario jul-2026).
       return { reply: saludo, escalated: false, msgId: helloMsg.id, userMsgId: userMsg.id, more: true };
     }
 
     const botMsg = addMessage(conv.id, 'bot', answer);
-    // Notificar TODOS los mensajes (aunque el bot ya respondió), para que el dueño esté
-    // al tanto de cada conversación. Texto distinto al de escalada para diferenciar.
-    await safeNotify({
-      title: `💬 ${conv.name || 'Cliente'}`,
-      body: text.slice(0, 100),
-      url: `/soporte-app/#/conv/${conv.id}`,
-      tag: `conv-${conv.id}`,
-    });
+    // SIN push: el bot respondió solo y bien → no molestar. El dueño solo recibe
+    // notificación del chat web cuando el bot ESCALA o cuando él tiene el control
+    // (modo humano). WhatsApp entrante sí notifica siempre.
     return { reply: answer, escalated: false, msgId: botMsg.id, userMsgId: userMsg.id };
   });
 
