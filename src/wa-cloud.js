@@ -220,35 +220,45 @@ export async function sendCloudText(phone, text) {
 // ── Verificación de plantillas y estado activo ─────────────────────────────────
 
 let active = false;
+// Plantillas APROBADAS en Meta ahora mismo. El enviador NO se apaga entero por una
+// plantilla nueva en revisión: se activa mientras la CORE esté aprobada, y por-mensaje
+// salta los kinds cuya plantilla aún no está lista (quedan en cola esperando aprobación).
+let approvedTemplates = new Set();
+// Plantilla imprescindible: si esta está aprobada, el pipeline (WABA+token) funciona.
+const CORE_TEMPLATE = 'sono_activacion';
 
-/** true = wa-cloud ES el enviador (plantillas verificadas). Lo consulta el guard
- *  de /wa/pending: mientras sea false, el agente de la PC sigue drenando. */
+/** true = wa-cloud ES el enviador (pipeline vivo). Lo consulta el guard de
+ *  /wa/pending: mientras sea false, el agente de la PC sigue drenando. */
 export function isWaCloudActive() {
   return active;
 }
 
 async function verifyTemplates() {
   if (!config.WA_CLOUD_WABA_ID) {
-    // Sin WABA_ID no se puede verificar: se activa igual (decisión del operador),
-    // avisando que el failsafe de plantillas queda apagado.
-    logger.warn('wa-cloud: sin WA_CLOUD_WABA_ID no se verifica el estado de las plantillas; activando a ciegas');
+    logger.warn('wa-cloud: sin WA_CLOUD_WABA_ID no se verifican plantillas; activando a ciegas');
     active = true;
+    approvedTemplates = new Set(Object.keys(WA_TEMPLATES)); // asumir todas OK
     return;
   }
   try {
     const data = await graph(`/${config.WA_CLOUD_WABA_ID}/message_templates?fields=name,status&limit=200`);
-    const estados = new Map((data.data || []).map((t) => [t.name, t.status]));
-    const faltantes = Object.keys(WA_TEMPLATES).filter((n) => estados.get(n) !== 'APPROVED');
-    if (faltantes.length === 0) {
-      if (!active) logger.info('wa-cloud: todas las plantillas APROBADAS — enviador ACTIVO');
+    approvedTemplates = new Set((data.data || []).filter((t) => t.status === 'APPROVED').map((t) => t.name));
+    const pendientes = Object.keys(WA_TEMPLATES).filter((n) => !approvedTemplates.has(n));
+    // Activo mientras la plantilla CORE esté aprobada (el pipeline funciona). Una
+    // plantilla nueva en revisión NO tumba el envío: solo esos kinds esperan.
+    if (approvedTemplates.has(CORE_TEMPLATE)) {
+      if (!active) logger.info('wa-cloud: pipeline OK — enviador ACTIVO');
       active = true;
-      return;
+      if (pendientes.length) logger.warn({ pendientes }, 'wa-cloud: plantillas en revisión (sus kinds esperan; el resto envía normal)');
+    } else {
+      active = false;
+      logger.error({ core: CORE_TEMPLATE }, 'wa-cloud: la plantilla core no está aprobada — agente PC a cargo; reintento en 10 min');
     }
-    active = false;
-    logger.error({ faltantes }, 'wa-cloud: plantillas sin aprobar — el agente PC sigue a cargo; reintento en 10 min');
   } catch (e) {
-    active = false;
-    logger.error({ err: e.message }, 'wa-cloud: no se pudo verificar plantillas — reintento en 10 min');
+    // NO desactivar por un error transitorio de red si ya estábamos activos: mantener
+    // el envío (el token/plantillas no cambian por un fetch fallido).
+    if (!active) logger.error({ err: e.message }, 'wa-cloud: no se pudo verificar plantillas — reintento en 10 min');
+    else logger.warn({ err: e.message }, 'wa-cloud: verificación de plantillas falló, se mantiene activo');
   }
 }
 
@@ -280,6 +290,13 @@ async function tick() {
         const shipment = KINDS_CON_SHIPMENT.has(m.kind) ? getShipmentByOrder(m.order_id) : null;
         const template = buildWaCloudPayload(order, m.kind, shipment);
         if (!template) throw new Error(`kind sin plantilla: ${m.kind}`);
+        // Plantilla de este kind aún en revisión de Meta: NO enviar (Meta rechazaría
+        // con error de plantilla inexistente). Dejar en cola: sale cuando la aprueben.
+        if (!approvedTemplates.has(template.name)) {
+          const e = new Error(`plantilla ${template.name} aún no aprobada`);
+          e.transient = true;
+          throw e;
+        }
         const wamid = await graphSend(m.phone, template);
         // Una sola escritura: status y wamid juntos, para que el webhook de Meta
         // (que puede llegar en milisegundos) siempre encuentre la fila por wamid.
