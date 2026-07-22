@@ -37,7 +37,13 @@ import {
 import { listWaChats, listWaChatMessages, markWaChatRead, insertWaInbound, listOrders, getWaMedia, setWaInboundMedia } from '../storage.js';
 import { normalizePhoneCO } from '../wa-enqueue.js';
 import { sendCloudText, sendCloudImage } from '../wa-cloud.js';
-import { createReadStream, existsSync } from 'node:fs';
+import { createReadStream, existsSync, writeFileSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { setMessageMedia } from './support-store.js';
+
+// Imágenes que sube el CLIENTE en el chat web: archivo local junto a la DB.
+const SOPORTE_MEDIA_DIR = join(dirname(config.DB_PATH || './data/db.sqlite'), 'soporte-media');
+const IMG_EXT = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif' };
 
 // Mensaje de re-enganche: si el cliente deja de responder 5 min y el último mensaje
 // fue del bot, Valeria escribe UNA vez invitando a comprar, con el link al checkout.
@@ -257,6 +263,63 @@ export function registerSupportRoutes(app) {
     return { ok: true, mailed };
   });
 
+  // El CLIENTE sube una imagen al chat (multipart: file [+ caption]). El bot no ve
+  // imágenes → si estaba al mando, escala a humano con un mensaje honesto.
+  app.post('/soporte/conv/:id/media', async (req, reply) => {
+    const conv = getConversation(req.params.id);
+    if (!conv) return reply.code(404).send({ error: 'conversación no encontrada' });
+    if (conv.status === 'closed') return reply.code(409).send({ error: 'conversación cerrada' });
+    if (tooFast(conv.id)) return reply.code(429).send({ error: 'demasiados mensajes, espera un momento' });
+    const part = await req.file();
+    if (!part) return reply.code(400).send({ error: 'falta el archivo' });
+    const mime = part.mimetype || '';
+    if (!IMG_EXT[mime]) return reply.code(415).send({ error: 'solo imágenes (jpg, png, webp, gif)' });
+    const buf = await part.toBuffer();
+    if (buf.length > 5 * 1024 * 1024) return reply.code(413).send({ error: 'máximo 5MB' });
+    const caption = String(part.fields?.caption?.value || '').trim().slice(0, 500);
+
+    mkdirSync(SOPORTE_MEDIA_DIR, { recursive: true });
+    const userMsg = addMessage(conv.id, 'user', caption || '[imagen]');
+    const file = join(SOPORTE_MEDIA_DIR, `${conv.id}-${userMsg.id}${IMG_EXT[mime]}`);
+    writeFileSync(file, buf);
+    setMessageMedia(conv.id, userMsg.id, file, mime);
+    incUnreadAdmin(conv.id);
+
+    // Valeria no puede ver imágenes: escalar a humano (solo si el bot estaba al mando).
+    let botReply = null, escalated = false;
+    if (conv.mode !== 'human') {
+      touchConversation(conv.id, { status: 'pending' });
+      escalated = true;
+      botReply = addMessage(conv.id, 'bot',
+        'Recibí tu imagen 🙌 Se la paso a un agente del equipo para revisarla, dame un momentico.',
+        { escalated: true });
+    }
+    await safeNotify({
+      title: `🖼 ${conv.name || 'Cliente'} envió una imagen`,
+      body: caption || 'Imagen en el chat de la web',
+      url: `/soporte-app/#/conv/${conv.id}`,
+      tag: `conv-${conv.id}`,
+    });
+    logger.info({ convId: conv.id, msgId: userMsg.id }, 'soporte: imagen del cliente recibida');
+    return {
+      ok: true, userMsgId: userMsg.id,
+      reply: botReply?.text || null, msgId: botReply?.id || null, escalated,
+    };
+  });
+
+  // Imagen de un mensaje del chat web. Público: quien tiene el id de la conversación
+  // (token aleatorio de 12 bytes en localStorage del cliente) puede ver sus imágenes —
+  // el mismo nivel de acceso que ya da /soporte/conv/:id/messages.
+  app.get('/soporte/conv/:id/media/:msgId', async (req, reply) => {
+    const conv = getConversation(req.params.id);
+    if (!conv) return reply.code(404).send({ error: 'no encontrada' });
+    const msg = getMessage(conv.id, Number(req.params.msgId));
+    if (!msg?.media_path || !existsSync(msg.media_path)) return reply.code(404).send({ error: 'sin media' });
+    reply.header('Content-Type', msg.media_mime || 'application/octet-stream');
+    reply.header('Cache-Control', 'private, max-age=86400');
+    return reply.send(createReadStream(msg.media_path));
+  });
+
   app.get('/soporte/vapid-public', async () => ({
     publicKey: config.VAPID_PUBLIC_KEY || null,
     pushEnabled: pushEnabled(),
@@ -350,6 +413,7 @@ export function registerSupportRoutes(app) {
           type: m.type,
           media: Boolean(m.has_media),
           mime: m.media_mime || null,
+          media_url: m.has_media ? `/soporte/admin/wa-media/${encodeURIComponent(m.id)}` : null,
         })),
       };
     }
@@ -358,7 +422,13 @@ export function registerSupportRoutes(app) {
     clearUnreadAdmin(conv.id);
     return {
       conversation: { ...conv, channel: 'web' },
-      messages: listMessages(conv.id, 0).filter(m => m.role !== 'system'),
+      messages: listMessages(conv.id, 0).filter(m => m.role !== 'system').map((m) => ({
+        ...m,
+        ts: m.created_at,
+        media: Boolean(m.has_media),
+        mime: m.media_mime || null,
+        media_url: m.has_media ? `/soporte/conv/${conv.id}/media/${m.id}` : null,
+      })),
     };
   });
 

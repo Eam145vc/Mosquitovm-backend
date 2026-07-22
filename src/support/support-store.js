@@ -62,6 +62,10 @@ function db() {
     // Migración idempotente: revisión de edición. Sube al editar/borrar un mensaje ya
     // enviado; el widget la compara en cada poll y repinta el historial si cambió.
     try { d.exec('ALTER TABLE support_conversations ADD COLUMN rev INTEGER NOT NULL DEFAULT 0'); } catch (e) { /* ya existe */ }
+    // Migración idempotente: imágenes subidas por el cliente en el chat web
+    // (archivo local en <dirname(DB_PATH)>/soporte-media).
+    try { d.exec('ALTER TABLE support_messages ADD COLUMN media_path TEXT'); } catch (e) { /* ya existe */ }
+    try { d.exec('ALTER TABLE support_messages ADD COLUMN media_mime TEXT'); } catch (e) { /* ya existe */ }
     inited = true;
   }
   return d;
@@ -148,8 +152,16 @@ export function addMessage(convId, role, text, { escalated = false } = {}) {
 
 export function listMessages(convId, sinceId = 0) {
   return db().prepare(
-    'SELECT id, role, text, escalated, created_at FROM support_messages WHERE conv_id = ? AND id > ? ORDER BY id ASC'
+    `SELECT id, role, text, escalated, created_at, media_mime,
+            (media_path IS NOT NULL) AS has_media
+     FROM support_messages WHERE conv_id = ? AND id > ? ORDER BY id ASC`
   ).all(convId, sinceId);
+}
+
+/** Cuelga el archivo (imagen) a un mensaje ya insertado. */
+export function setMessageMedia(convId, msgId, mediaPath, mime) {
+  db().prepare('UPDATE support_messages SET media_path = ?, media_mime = ? WHERE conv_id = ? AND id = ?')
+    .run(mediaPath, mime || null, convId, msgId);
 }
 
 export function getMessage(convId, msgId) {
