@@ -54,13 +54,14 @@ test('body sin teléfono → found:false, nunca 500', async () => {
   assert.deepEqual(r.json(), { ok: true, found: false });
 });
 
-test('orden pagada sin cuenta → connected:false + connectUrl del wizard &correo=1', async () => {
+test('orden pagada sin cuenta → working:false + connectUrl + order del wizard &correo=1', async () => {
   const oid = mkOrden({ phone: '3009998877', businessName: 'Panadería Uno' });
   const r = await post('300 999 8877'); // con espacios: normalizePhoneCO los limpia
   assert.equal(r.statusCode, 200);
   const body = r.json();
   assert.equal(body.found, true);
-  assert.equal(body.connected, false);
+  assert.equal(body.working, false);
+  assert.equal(body.order, oid, 'devuelve el order id para el reset previo');
   assert.equal(body.businessName, 'Panadería Uno');
   assert.ok(body.connectUrl.endsWith(`/activar-pro/?order=${oid}&correo=1`), body.connectUrl);
 });
@@ -70,51 +71,53 @@ test('orden contraentrega (cod_pending) también recibe su enlace', async () => 
   const r = await post('3012223344');
   const body = r.json();
   assert.equal(body.found, true);
-  assert.equal(body.connected, false);
+  assert.equal(body.working, false);
   assert.ok(body.connectUrl.includes(oid));
 });
 
-test('cuenta creada pero cambio NO confirmado → connected:false (tener cuenta NO basta)', async () => {
+test('cuenta creada pero SIN pagos → working:false (tener cuenta NO basta)', async () => {
   const acc = mkCuenta();
   const oid = mkOrden({ phone: '3021110000', accountId: acc, businessName: 'A Medias SAS' });
-  // account_id existe pero SIN change_confirmed ni pagos → NO está listo de verdad.
+  // account_id existe pero sin pagos → NO hay prueba de que funcione.
   const r = await post('3021110000');
   const body = r.json();
   assert.equal(body.found, true);
-  assert.equal(body.connected, false, 'sin cambio confirmado ni pago no cuenta como conectado');
+  assert.equal(body.working, false, 'sin pago no cuenta como funcionando');
   assert.ok(body.connectUrl.endsWith(`/activar-pro/?order=${oid}&correo=1`), body.connectUrl);
 });
 
-test('cambio confirmado → connected:true, PERO igual trae connectUrl (para reconectar)', async () => {
+test('cambio confirmado A MANO pero SIN pago → working:false (no confiamos en el confirmado manual)', async () => {
   const acc = mkCuenta();
-  const oid = mkOrden({ phone: '3023334455', accountId: acc, businessName: 'Ya Conectada SAS' });
-  s.markChangeConfirmed(acc);
+  const oid = mkOrden({ phone: '3023334455', accountId: acc, businessName: 'Confirmada A Mano SAS' });
+  s.markChangeConfirmed(acc); // el cliente tocó "ya lo cambié" — NO es prueba de que sirvió
   const r = await post('3023334455');
   const body = r.json();
   assert.equal(body.found, true);
-  assert.equal(body.connected, true);
-  assert.equal(body.businessName, 'Ya Conectada SAS');
+  assert.equal(body.working, false, 'change_confirmed manual NO nos hace asegurar que funciona');
   assert.ok(body.connectUrl.endsWith(`/activar-pro/?order=${oid}&correo=1`),
-    'conectado igual devuelve el enlace para poder rehacerlo');
+    'igual devuelve el enlace para poder rehacerlo');
 });
 
-test('con un pago recibido → connected:true aunque no haya change_confirmed', async () => {
+test('con un pago recibido → working:true (única prueba fiable) + igual trae connectUrl', async () => {
   const acc = mkCuenta();
-  mkOrden({ phone: '3025556666', accountId: acc });
+  const oid = mkOrden({ phone: '3025556666', accountId: acc });
   s.recordPayment({ accountId: acc, amount: 5000, bank: 'nequi' });
   const r = await post('3025556666');
-  assert.equal(r.json().connected, true, 'un pago real prueba que el correo funciona');
+  const body = r.json();
+  assert.equal(body.working, true, 'un pago real prueba que el correo funciona');
+  assert.ok(body.connectUrl.includes(oid), 'aun funcionando puede reconectar');
 });
 
 test('órdenes duplicadas: el enlace apunta a la orden CON cuenta (preserva el alias)', async () => {
   const acc = mkCuenta();
   const conCuenta = mkOrden({ phone: '3034445566', accountId: acc }); // la real, con cuenta
-  s.markChangeConfirmed(acc);
+  s.recordPayment({ accountId: acc, amount: 8000, bank: 'bancolombia' });
   mkOrden({ phone: '3034445566' });                                   // gemela posterior sin cuenta
   const r = await post('3034445566');
   const body = r.json();
-  assert.equal(body.connected, true, 'la que tiene cuenta manda (onboarding por cliente)');
-  assert.ok(body.connectUrl.includes(conCuenta), 'el enlace apunta a la orden con la cuenta, no a la gemela');
+  assert.equal(body.working, true, 'la que tiene cuenta con pagos manda (onboarding por cliente)');
+  assert.equal(body.order, conCuenta, 'el order apunta a la orden con la cuenta, no a la gemela');
+  assert.ok(body.connectUrl.includes(conCuenta));
 });
 
 test('orden archivada o sin pagar → found:false (kill-switch)', async () => {

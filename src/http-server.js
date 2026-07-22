@@ -3065,14 +3065,18 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
   // correo. A diferencia de /libreta-acceso acá no se reenvía por WhatsApp: ese canal
   // depende del agente de la PC / del webhook de la transportadora, y este flujo existe
   // justamente para cuando fallan (decisión 17-jul-2026).
-  //   • `connected` = LISTO DE VERDAD (mismo criterio que orderView.emailReady: el banco
-  //     confirmó el cambio O ya llegó un pago). Tener cuenta NO basta: el cliente pudo
-  //     poner el correo y nunca terminar en el banco → nunca suena un pago, y decirle
-  //     "ya quedó listo" lo dejaba sin salida (incidente 22-jul-2026).
-  //   • `connectUrl` va SIEMPRE (conectado o no): el cliente debe poder rehacerlo las
-  //     veces que quiera "por si algo falló". Apunta a la orden que YA tiene la cuenta,
-  //     para que el wizard reuse el MISMO alias (inmutable por orden) — nunca genera uno
-  //     nuevo, así el correo que el cliente ya puso en su banco sigue sirviendo.
+  //   • NO afirmamos "conectado": el sistema NO puede saber de forma fiable si el cliente
+  //     terminó el cambio en el banco. `change_confirmed` lo pone el botón manual "ya lo
+  //     cambié", que el cliente toca en su apuro sin haber terminado → NO es prueba. La
+  //     ÚNICA señal 100% confiable es que ya haya llegado un PAGO real por esa cuenta.
+  //     Por eso devolvemos `working` = ¿ya recibió al menos un pago? (provable). Si no,
+  //     ni aseguramos ni negamos; solo ofrecemos conectar/reconectar (decisión 22-jul-2026).
+  //   • `connectUrl` + `order` van SIEMPRE (working o no): el cliente debe poder rehacerlo
+  //     las veces que quiera. Apuntan a la orden que YA tiene la cuenta, para que el wizard
+  //     reuse el MISMO alias (inmutable por orden) — reconectar nunca genera uno nuevo, así
+  //     el correo que el cliente ya puso en su banco sigue sirviendo. `order` explícito deja
+  //     al front reiniciar (email-reset) antes de abrir el wizard, cayendo directo en el
+  //     flujo de rehacer sin la pantalla intermedia "¡Correo conectado!".
   // Rate limits por IP y por teléfono.
   app.post('/correo-acceso', async (req, reply) => {
     reply.header('cache-control', 'no-store');
@@ -3093,23 +3097,18 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       logger.info({ phone: phone.slice(-4) }, 'correo-acceso: teléfono sin orden');
       return { ok: true, found: false };
     }
-    // ¿La cuenta de esta orden ya está LISTA? (cambio confirmado o pago recibido).
-    // Tener account_id no alcanza — ver comentario del endpoint.
-    const emailReadyFor = (o) => {
-      if (!o.account_id) return false;
-      const acc = getAccount(o.account_id);
-      if (!acc) return false;
-      return Boolean(acc.change_confirmed) || paymentsFor(o.account_id, 1).length > 0;
-    };
+    // ¿Ya FUNCIONA? = llegó al menos un pago real por la cuenta. Única prueba fiable;
+    // NO usamos change_confirmed (lo marca a mano el cliente, sin garantía de que sirvió).
+    const workingFor = (o) => (o.account_id ? paymentsFor(o.account_id, 1).length > 0 : false);
     // Enrutar SIEMPRE al MISMO alias: preferimos la orden que ya tiene cuenta (su wizard
     // reusa el alias inmutable); si ninguna, la más reciente. El onboarding es por CLIENTE,
     // así que con órdenes gemelas (checkout reintentado) la que tiene la cuenta manda.
     const conAccount = propias.find((o) => o.account_id && getAccount(o.account_id));
     const target = conAccount
       || propias.sort((a, b) => (b.created_at || 0) - (a.created_at || 0))[0];
-    const connected = conAccount ? emailReadyFor(conAccount) : false;
-    logger.info({ orderId: target.id, connected }, 'correo-acceso: enlace mostrado');
-    return { ok: true, found: true, connected,
+    const working = conAccount ? workingFor(conAccount) : false;
+    logger.info({ orderId: target.id, working }, 'correo-acceso: enlace mostrado');
+    return { ok: true, found: true, working, order: target.id,
              businessName: target.business_name || null,
              connectUrl: `${config.FRONTEND_BASE_URL}/activar-pro/?order=${target.id}&correo=1` };
   });
