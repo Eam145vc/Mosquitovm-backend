@@ -3061,13 +3061,19 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
   });
 
   // "Conectar mi correo" (paso 1 del manual, autogestión): el cliente escribe su
-  // celular y, si hay una orden suya SIN correo conectado, el enlace del wizard
-  // (&correo=1) se MUESTRA en pantalla. A diferencia de /libreta-acceso acá no se
-  // reenvía por WhatsApp: ese canal depende del agente de la PC / del webhook de la
-  // transportadora, y este flujo existe justamente para cuando fallan (decisión
-  // 17-jul-2026). Exposición acotada: el enlace solo se revela mientras el correo
-  // NO está conectado (la Libreta de una orden sin cuenta está vacía); una vez
-  // conectado responde connected:true SIN URL. Rate limits por IP y por teléfono.
+  // celular y recibe el enlace del wizard (&correo=1) para conectar/RECONECTAR el
+  // correo. A diferencia de /libreta-acceso acá no se reenvía por WhatsApp: ese canal
+  // depende del agente de la PC / del webhook de la transportadora, y este flujo existe
+  // justamente para cuando fallan (decisión 17-jul-2026).
+  //   • `connected` = LISTO DE VERDAD (mismo criterio que orderView.emailReady: el banco
+  //     confirmó el cambio O ya llegó un pago). Tener cuenta NO basta: el cliente pudo
+  //     poner el correo y nunca terminar en el banco → nunca suena un pago, y decirle
+  //     "ya quedó listo" lo dejaba sin salida (incidente 22-jul-2026).
+  //   • `connectUrl` va SIEMPRE (conectado o no): el cliente debe poder rehacerlo las
+  //     veces que quiera "por si algo falló". Apunta a la orden que YA tiene la cuenta,
+  //     para que el wizard reuse el MISMO alias (inmutable por orden) — nunca genera uno
+  //     nuevo, así el correo que el cliente ya puso en su banco sigue sirviendo.
+  // Rate limits por IP y por teléfono.
   app.post('/correo-acceso', async (req, reply) => {
     reply.header('cache-control', 'no-store');
     const ip = req.ip;
@@ -3087,20 +3093,25 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       logger.info({ phone: phone.slice(-4) }, 'correo-acceso: teléfono sin orden');
       return { ok: true, found: false };
     }
-    // El onboarding es por CLIENTE, no por orden: si CUALQUIER orden del número ya
-    // tiene cuenta, el correo está conectado (evita mandar a "conectar" una orden
-    // gemela duplicada por checkout reintentado — patrón qrPhonesSet).
-    const conectada = propias.find((o) => o.account_id && getAccount(o.account_id));
-    if (conectada) {
-      logger.info({ orderId: conectada.id }, 'correo-acceso: correo ya conectado, sin enlace');
-      return { ok: true, found: true, connected: true,
-               businessName: conectada.business_name || null };
-    }
-    const match = propias.sort((a, b) => (b.created_at || 0) - (a.created_at || 0))[0];
-    logger.info({ orderId: match.id }, 'correo-acceso: enlace de conexión mostrado');
-    return { ok: true, found: true, connected: false,
-             businessName: match.business_name || null,
-             connectUrl: `${config.FRONTEND_BASE_URL}/activar-pro/?order=${match.id}&correo=1` };
+    // ¿La cuenta de esta orden ya está LISTA? (cambio confirmado o pago recibido).
+    // Tener account_id no alcanza — ver comentario del endpoint.
+    const emailReadyFor = (o) => {
+      if (!o.account_id) return false;
+      const acc = getAccount(o.account_id);
+      if (!acc) return false;
+      return Boolean(acc.change_confirmed) || paymentsFor(o.account_id, 1).length > 0;
+    };
+    // Enrutar SIEMPRE al MISMO alias: preferimos la orden que ya tiene cuenta (su wizard
+    // reusa el alias inmutable); si ninguna, la más reciente. El onboarding es por CLIENTE,
+    // así que con órdenes gemelas (checkout reintentado) la que tiene la cuenta manda.
+    const conAccount = propias.find((o) => o.account_id && getAccount(o.account_id));
+    const target = conAccount
+      || propias.sort((a, b) => (b.created_at || 0) - (a.created_at || 0))[0];
+    const connected = conAccount ? emailReadyFor(conAccount) : false;
+    logger.info({ orderId: target.id, connected }, 'correo-acceso: enlace mostrado');
+    return { ok: true, found: true, connected,
+             businessName: target.business_name || null,
+             connectUrl: `${config.FRONTEND_BASE_URL}/activar-pro/?order=${target.id}&correo=1` };
   });
 
   // Bot de soporte (chat público + admin + web push).

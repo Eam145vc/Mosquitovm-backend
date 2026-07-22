@@ -74,26 +74,47 @@ test('orden contraentrega (cod_pending) también recibe su enlace', async () => 
   assert.ok(body.connectUrl.includes(oid));
 });
 
-test('correo ya conectado → connected:true y SIN connectUrl en el body', async () => {
+test('cuenta creada pero cambio NO confirmado → connected:false (tener cuenta NO basta)', async () => {
   const acc = mkCuenta();
-  mkOrden({ phone: '3023334455', accountId: acc, businessName: 'Ya Conectada SAS' });
+  const oid = mkOrden({ phone: '3021110000', accountId: acc, businessName: 'A Medias SAS' });
+  // account_id existe pero SIN change_confirmed ni pagos → NO está listo de verdad.
+  const r = await post('3021110000');
+  const body = r.json();
+  assert.equal(body.found, true);
+  assert.equal(body.connected, false, 'sin cambio confirmado ni pago no cuenta como conectado');
+  assert.ok(body.connectUrl.endsWith(`/activar-pro/?order=${oid}&correo=1`), body.connectUrl);
+});
+
+test('cambio confirmado → connected:true, PERO igual trae connectUrl (para reconectar)', async () => {
+  const acc = mkCuenta();
+  const oid = mkOrden({ phone: '3023334455', accountId: acc, businessName: 'Ya Conectada SAS' });
+  s.markChangeConfirmed(acc);
   const r = await post('3023334455');
   const body = r.json();
   assert.equal(body.found, true);
   assert.equal(body.connected, true);
   assert.equal(body.businessName, 'Ya Conectada SAS');
-  assert.ok(!('connectUrl' in body), 'conectado NO debe traer connectUrl');
-  assert.ok(!r.body.includes('activar-pro'), 'ni rastro del enlace en el body');
+  assert.ok(body.connectUrl.endsWith(`/activar-pro/?order=${oid}&correo=1`),
+    'conectado igual devuelve el enlace para poder rehacerlo');
 });
 
-test('órdenes duplicadas: si CUALQUIERA tiene cuenta → connected:true (onboarding por cliente)', async () => {
+test('con un pago recibido → connected:true aunque no haya change_confirmed', async () => {
   const acc = mkCuenta();
-  mkOrden({ phone: '3034445566', accountId: acc });   // la orden real, conectada
-  mkOrden({ phone: '3034445566' });                    // gemela posterior sin cuenta
+  mkOrden({ phone: '3025556666', accountId: acc });
+  s.recordPayment({ accountId: acc, amount: 5000, bank: 'nequi' });
+  const r = await post('3025556666');
+  assert.equal(r.json().connected, true, 'un pago real prueba que el correo funciona');
+});
+
+test('órdenes duplicadas: el enlace apunta a la orden CON cuenta (preserva el alias)', async () => {
+  const acc = mkCuenta();
+  const conCuenta = mkOrden({ phone: '3034445566', accountId: acc }); // la real, con cuenta
+  s.markChangeConfirmed(acc);
+  mkOrden({ phone: '3034445566' });                                   // gemela posterior sin cuenta
   const r = await post('3034445566');
   const body = r.json();
-  assert.equal(body.connected, true, 'no debe mandar a "conectar" la orden gemela');
-  assert.ok(!('connectUrl' in body));
+  assert.equal(body.connected, true, 'la que tiene cuenta manda (onboarding por cliente)');
+  assert.ok(body.connectUrl.includes(conCuenta), 'el enlace apunta a la orden con la cuenta, no a la gemela');
 });
 
 test('orden archivada o sin pagar → found:false (kill-switch)', async () => {
