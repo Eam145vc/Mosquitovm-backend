@@ -34,9 +34,10 @@ import {
 } from './support-store.js';
 // Canal WhatsApp (Cloud API oficial): las conversaciones del número de Sonó se
 // integran a ESTE panel con id 'wa:<telefono>' — un solo lugar para atender todo.
-import { listWaChats, listWaChatMessages, markWaChatRead, insertWaInbound, listOrders } from '../storage.js';
+import { listWaChats, listWaChatMessages, markWaChatRead, insertWaInbound, listOrders, getWaMedia, setWaInboundMedia } from '../storage.js';
 import { normalizePhoneCO } from '../wa-enqueue.js';
-import { sendCloudText } from '../wa-cloud.js';
+import { sendCloudText, sendCloudImage } from '../wa-cloud.js';
+import { createReadStream, existsSync } from 'node:fs';
 
 // Mensaje de re-enganche: si el cliente deja de responder 5 min y el último mensaje
 // fue del bot, Valeria escribe UNA vez invitando a comprar, con el link al checkout.
@@ -346,6 +347,9 @@ export function registerSupportRoutes(app) {
           text: m.body || `[${m.type}]`,
           ts: m.received_at,
           delivery: m.delivery,
+          type: m.type,
+          media: Boolean(m.has_media),
+          mime: m.media_mime || null,
         })),
       };
     }
@@ -388,6 +392,47 @@ export function registerSupportRoutes(app) {
     clearUnreadAdmin(conv.id);
     logger.info({ convId: conv.id }, 'soporte: respuesta humana enviada');
     return { ok: true, message: msg };
+  });
+
+  // Archivo de media de un mensaje de WhatsApp (imagen/audio/video/documento).
+  // El panel lo pide con fetch autenticado y lo pinta como blob.
+  app.get('/soporte/admin/wa-media/:msgId', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const m = getWaMedia(req.params.msgId);
+    if (!m?.media_path || !existsSync(m.media_path)) return reply.code(404).send({ error: 'sin media' });
+    reply.header('Content-Type', m.media_mime || 'application/octet-stream');
+    reply.header('Cache-Control', 'private, max-age=86400');
+    return reply.send(createReadStream(m.media_path));
+  });
+
+  // Enviar una IMAGEN a un chat de WhatsApp (multipart: file + caption opcional).
+  app.post('/soporte/admin/conv/:id/media', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    if (!isWaId(req.params.id)) return reply.code(400).send({ error: 'solo disponible en chats de WhatsApp' });
+    const phone = waPhone(req.params.id);
+    const part = await req.file();
+    if (!part) return reply.code(400).send({ error: 'falta el archivo' });
+    const mime = part.mimetype || '';
+    if (!mime.startsWith('image/')) return reply.code(415).send({ error: 'solo imágenes por ahora' });
+    const buf = await part.toBuffer();
+    if (buf.length > 5 * 1024 * 1024) return reply.code(413).send({ error: 'máximo 5MB (límite de WhatsApp)' });
+    const caption = String(part.fields?.caption?.value || '').trim();
+    try {
+      const { wamid, path: mediaPath, mime: outMime } = await sendCloudImage(phone, buf, mime, caption);
+      const id = wamid || `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      insertWaInbound({ id, phone, name: null, type: 'image', body: caption || '[image]', direction: 'out' });
+      setWaInboundMedia(id, mediaPath, outMime);
+      logger.info({ phone }, 'soporte: imagen WhatsApp enviada');
+      return { ok: true, id };
+    } catch (e) {
+      const ventana = e.message.startsWith('VENTANA_CERRADA');
+      logger.warn({ phone, err: e.message }, 'soporte: imagen WhatsApp falló');
+      return reply.code(ventana ? 409 : 502).send({
+        error: ventana
+          ? 'Pasaron más de 24h desde el último mensaje del cliente: WhatsApp solo permite reabrir con una plantilla.'
+          : `No se pudo enviar la imagen: ${e.message}`,
+      });
+    }
   });
 
   // Corregir un mensaje ya enviado (bot o human; los del cliente no se tocan).

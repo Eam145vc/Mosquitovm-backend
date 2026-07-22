@@ -263,6 +263,10 @@ export function openDb() {
     ["direction", "TEXT NOT NULL DEFAULT 'in'"],
     ['delivery', 'TEXT'],
     ['read_at', 'INTEGER'],
+    // Media de WhatsApp (imagen/audio/video/documento): archivo descargado de Meta
+    // (los links de Graph expiran en ~5 min, por eso se persiste local).
+    ['media_path', 'TEXT'],
+    ['media_mime', 'TEXT'],
   ]);
   db.exec('CREATE INDEX IF NOT EXISTS idx_wa_inbound_phone ON wa_inbound(phone, received_at DESC)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_wa_outbox_wamid ON wa_outbox(wamid)');
@@ -1567,9 +1571,23 @@ export function listWaChats(limit = 100) {
 export function listWaChatMessages(phone, limit = 200) {
   openDb();
   return db.prepare(
-    `SELECT id, phone, name, type, body, direction, delivery, read_at, received_at
+    `SELECT id, phone, name, type, body, direction, delivery, read_at, received_at, media_mime,
+            (media_path IS NOT NULL) AS has_media
      FROM wa_inbound WHERE phone = ? ORDER BY received_at DESC, rowid DESC LIMIT ?`
   ).all(phone, limit).reverse();
+}
+
+/** Ruta local del archivo de media de un mensaje (para servirlo al panel). */
+export function getWaMedia(id) {
+  openDb();
+  return db.prepare(`SELECT media_path, media_mime FROM wa_inbound WHERE id = ?`).get(id) || null;
+}
+
+/** Marca el archivo descargado/guardado de un mensaje con media. */
+export function setWaInboundMedia(id, mediaPath, mime) {
+  openDb();
+  db.prepare(`UPDATE wa_inbound SET media_path = ?, media_mime = ? WHERE id = ?`)
+    .run(mediaPath, mime || null, id);
 }
 
 /** Marca leídos todos los entrantes de una conversación. */

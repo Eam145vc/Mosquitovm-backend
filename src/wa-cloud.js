@@ -123,6 +123,74 @@ async function graphSend(phone, template) {
   return data?.messages?.[0]?.id || null; // wamid
 }
 
+// ── Media (imágenes/audios/videos/documentos de los chats) ─────────────────────
+
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+
+const MEDIA_DIR = join(dirname(config.DB_PATH || './data/db.sqlite'), 'wa-media');
+
+const EXT_BY_MIME = {
+  'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp',
+  'audio/ogg': '.ogg', 'audio/ogg; codecs=opus': '.ogg', 'audio/mpeg': '.mp3',
+  'audio/mp4': '.m4a', 'audio/amr': '.amr',
+  'video/mp4': '.mp4', 'application/pdf': '.pdf',
+};
+
+/** Descarga el archivo de un mensaje con media y lo persiste local (los links de
+ *  Graph expiran en ~5 min). Devuelve { path, mime } o lanza. */
+export async function downloadWaMedia(mediaId) {
+  const meta = await graph(`/${mediaId}`); // { url, mime_type, ... }
+  if (!meta?.url) throw new Error('media sin url');
+  const r = await fetch(meta.url, {
+    headers: { Authorization: `Bearer ${config.WA_CLOUD_ACCESS_TOKEN}` },
+  });
+  if (!r.ok) throw new Error(`descarga media HTTP ${r.status}`);
+  const buf = Buffer.from(await r.arrayBuffer());
+  const mime = meta.mime_type || r.headers.get('content-type') || 'application/octet-stream';
+  const ext = EXT_BY_MIME[mime] || EXT_BY_MIME[mime.split(';')[0]] || '';
+  mkdirSync(MEDIA_DIR, { recursive: true });
+  const file = join(MEDIA_DIR, `${mediaId}${ext}`);
+  writeFileSync(file, buf);
+  return { path: file, mime };
+}
+
+/** Sube una imagen a Meta y la envía a un chat. Guarda copia local para el hilo.
+ *  Devuelve { wamid, path, mime }. Misma regla de ventana de 24h que el texto. */
+export async function sendCloudImage(phone, buffer, mime, caption = '') {
+  if (!config.hasWaCloud) throw new Error('Cloud API no configurada');
+  const form = new FormData();
+  form.append('messaging_product', 'whatsapp');
+  form.append('type', mime);
+  form.append('file', new Blob([buffer], { type: mime }), `imagen${EXT_BY_MIME[mime] || '.jpg'}`);
+  const up = await fetch(
+    `https://graph.facebook.com/${config.WA_CLOUD_GRAPH_VERSION}/${config.WA_CLOUD_PHONE_NUMBER_ID}/media`,
+    { method: 'POST', headers: { Authorization: `Bearer ${config.WA_CLOUD_ACCESS_TOKEN}` }, body: form },
+  );
+  const upData = await up.json().catch(() => ({}));
+  if (!up.ok || !upData.id) throw new Error(`subida de media: ${upData?.error?.message || `HTTP ${up.status}`}`);
+  try {
+    const data = await graph(`/${config.WA_CLOUD_PHONE_NUMBER_ID}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        messaging_product: 'whatsapp', to: phone, type: 'image',
+        image: { id: upData.id, ...(caption ? { caption } : {}) },
+      }),
+    });
+    const wamid = data?.messages?.[0]?.id || null;
+    // Copia local para que el hilo del panel muestre lo enviado.
+    mkdirSync(MEDIA_DIR, { recursive: true });
+    const file = join(MEDIA_DIR, `${wamid || `out-${Date.now()}`}${EXT_BY_MIME[mime] || '.jpg'}`);
+    writeFileSync(file, buffer);
+    return { wamid, path: file, mime };
+  } catch (e) {
+    if (/131047|re-engagement/i.test(e.message)) {
+      throw new Error('VENTANA_CERRADA: han pasado más de 24h desde el último mensaje del cliente; solo puede iniciarse con plantilla');
+    }
+    throw e;
+  }
+}
+
 /** Texto libre para el CRM /soporte-app. Solo funciona dentro de la ventana de
  *  servicio de 24h (desde el último mensaje DEL cliente); fuera de ella Meta
  *  responde 131047 y acá se traduce a un error entendible para el operador. */

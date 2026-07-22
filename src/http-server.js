@@ -2518,15 +2518,26 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
           // avisan por push al iPhone (mismo canal que las escaladas del bot web).
           for (const msg of v.messages || []) {
             const name = v.contacts?.[0]?.profile?.name || null;
-            const body = msg.text?.body || msg.button?.text || msg.interactive?.button_reply?.title || `[${msg.type}]`;
+            const MEDIA_TYPES = ['image', 'audio', 'video', 'document', 'sticker'];
+            const media = MEDIA_TYPES.includes(msg.type) ? msg[msg.type] : null;
+            const body = msg.text?.body || msg.button?.text || msg.interactive?.button_reply?.title
+              || media?.caption || (media ? `[${msg.type}]` : `[${msg.type}]`);
             if (insertWaInbound({ id: msg.id, phone: msg.from, name, type: msg.type, body })) {
-              req.log?.info?.({ from: msg.from }, 'wa-cloud: mensaje entrante');
+              req.log?.info?.({ from: msg.from, type: msg.type }, 'wa-cloud: mensaje entrante');
+              // Media: descargar YA en background (el link de Graph expira en ~5 min)
+              // y colgar el archivo al mensaje; el panel lo pinta al siguiente poll.
+              if (media?.id) {
+                downloadWaMedia(media.id)
+                  .then(({ path: mediaPath, mime }) => setWaInboundMedia(msg.id, mediaPath, mime))
+                  .catch((e) => req.log?.warn?.({ err: e.message, type: msg.type }, 'wa-cloud: descarga de media falló'));
+              }
               notifyAdmins({
                 title: `🟢 WhatsApp · ${name || '+' + msg.from}`,
-                body: String(body).slice(0, 120),
+                body: media ? `📎 ${msg.type}` : String(body).slice(0, 120),
                 url: `/soporte-app/#/conv/wa:${msg.from}`,
                 tag: `wa-${msg.from}`,
-              }).catch(() => {});
+              }).then((r2) => req.log?.info?.({ sent: r2.sent }, 'wa-cloud: push entrante enviado'))
+                .catch((e) => req.log?.warn?.({ err: e.message }, 'wa-cloud: push entrante falló'));
             }
           }
         }
