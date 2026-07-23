@@ -264,14 +264,19 @@ export function registerSupportRoutes(app) {
     const part = await req.file();
     if (!part) return reply.code(400).send({ error: 'falta el archivo' });
     const mime = part.mimetype || '';
-    if (!IMG_EXT[mime]) return reply.code(415).send({ error: 'solo imágenes (jpg, png, webp, gif)' });
+    // Cualquier imagen (incluye HEIC/HEIF del iPhone y otras). Antes solo jpg/png/webp/
+    // gif → las fotos de iPhone se rechazaban. La extensión cae a .jpg si no se conoce.
+    if (!mime.startsWith('image/')) return reply.code(415).send({ error: 'solo se pueden enviar imágenes' });
+    const ext = IMG_EXT[mime] || '.jpg';
     const buf = await part.toBuffer();
     if (buf.length > 5 * 1024 * 1024) return reply.code(413).send({ error: 'máximo 5MB' });
+    // El caption viaja como field; con @fastify/multipart llega en part.fields solo si
+    // va ANTES del archivo (el widget ya lo manda en ese orden).
     const caption = String(part.fields?.caption?.value || '').trim().slice(0, 500);
 
     mkdirSync(SOPORTE_MEDIA_DIR, { recursive: true });
     const userMsg = addMessage(conv.id, 'user', caption || '[imagen]');
-    const file = join(SOPORTE_MEDIA_DIR, `${conv.id}-${userMsg.id}${IMG_EXT[mime]}`);
+    const file = join(SOPORTE_MEDIA_DIR, `${conv.id}-${userMsg.id}${ext}`);
     writeFileSync(file, buf);
     setMessageMedia(conv.id, userMsg.id, file, mime);
     incUnreadAdmin(conv.id);
