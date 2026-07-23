@@ -25,6 +25,7 @@ import { filterOnline } from './speaker-online.js';
 import { fetchEfiStatus } from './efipay.js';
 import { reportPurchasesToMeta } from './meta-capi.js';
 import { sendActivationEmail } from './activation-email.js';
+import { notifySale } from './sale-push.js';
 import { enqueueWhatsApp, enqueueGuiaCreadaIfReady, GUIA_CREADA_SINCE, qrPhonesSet, normalizePhoneCO, orderSilenciada } from './wa-enqueue.js';
 import { getShipment, extractLabel } from './skydropx.js';
 import { runWaReminderJob } from './wa-reminders.js';
@@ -281,6 +282,7 @@ async function main() {
             next_charge_at: nextCharge,
           });
           const fresh = getOrder(o.id);
+          notifySale(fresh, 'EfiPay');
           // Dispara el correo de activación (el cliente recibe el link para el onboarding).
           sendActivationEmail(fresh).catch((e) =>
             logger.error({ orderId: o.id, err: e.message }, 'conciliación EfiPay: correo de activación falló'));

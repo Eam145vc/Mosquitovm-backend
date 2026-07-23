@@ -78,6 +78,7 @@ import { enqueueWhatsApp, enqueueWhatsAppForce, normalizePhoneCO, ESTADOS_SIN_ME
 import { isWaCloudActive, downloadWaMedia } from './wa-cloud.js';
 import { bogotaHour, startOfBogotaDay, withinActiveHours } from './wa-shared.js';
 import { notifyAdmins } from './support/webpush.js';
+import { notifySale } from './sale-push.js';
 import { CUOTA_2_3_CENTS } from './installments-scheduler.js';
 import { publishVoice, publishCommand } from './mqtt-publisher.js';
 import { buildVoiceMessage } from './amount-to-wavs.js';
@@ -268,6 +269,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       updateOrder(order.id, { status: 'pendiente_qr', wompi_txn_id: `breb-own-${intent.id}` });
       logger.info({ orderId: order.id, intentId: intent.id, amount: result.amount, bank: result.bank },
         'pago aprobado (breb propio, match por monto)');
+      notifySale(getOrder(order.id), 'QR Nequi');
       sendActivationEmail(getOrder(order.id)).catch(() => {});
       try { enqueueWhatsApp(getOrder(order.id), 'activacion'); } catch (e) {
         logger.error({ orderId: order.id, err: e.message }, 'wa: no se pudo encolar activación (breb propio)');
@@ -465,6 +467,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
           mp_payer_email: formData.payer.email, next_charge_at: nextCharge,
         });
         logger.info({ orderId, payment: payment.id }, 'pago aprobado (in-web)');
+        notifySale(getOrder(orderId), 'MercadoPago');
       } else {
         logger.info({ orderId, payment: payment.id, st: payment.status_detail }, 'pago en proceso/no aprobado');
       }
@@ -533,6 +536,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
           mp_payer_email: payer.email, next_charge_at: nextCharge,
         });
         logger.info({ orderId, txn: result.transactionId }, 'pago aprobado (efipay embebido)');
+        notifySale(getOrder(orderId), 'tarjeta');
         // Correo con el link de activación (red de seguridad si cierra la pantalla).
         sendActivationEmail(getOrder(orderId)).catch(() => {});
         try { enqueueWhatsApp(getOrder(orderId), 'activacion'); } catch (e) {
@@ -633,6 +637,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
           status: 'pendiente_qr', wompi_txn_id: String(result.transactionId || ''),
           mp_payer_email: payer.email, next_charge_at: nextCharge,
         });
+        notifySale(getOrder(orderId), method === 'pse' ? 'PSE' : method === 'breb' ? 'Bre-B' : 'efectivo');
         sendActivationEmail(getOrder(orderId)).catch(() => {});
         try { enqueueWhatsApp(getOrder(orderId), 'activacion'); } catch (e) {
           logger.error({ orderId, err: e.message }, 'wa: no se pudo encolar activación');
@@ -703,6 +708,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
             mp_payer_email: payment.payer?.email || null,
           });
           logger.info({ orderId: order.id, payment: payment.id }, 'pago aprobado (webhook)');
+          notifySale(getOrder(order.id), 'MercadoPago');
         }
       } catch (e) {
         logger.error({ err: e.message }, 'mp webhook error');
@@ -725,6 +731,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
         if (ok && !isPaid(order)) {
           updateOrder(order.id, { status: 'pendiente_qr', wompi_txn_id: String(transactionId || '') });
           logger.info({ orderId: order.id, txn: transactionId }, 'pago aprobado (efipay webhook)');
+          notifySale(getOrder(order.id), 'EfiPay');
           sendActivationEmail(getOrder(order.id)).catch(() => {});
           try { enqueueWhatsApp(getOrder(order.id), 'activacion'); } catch (e) {
             logger.error({ orderId: order.id, err: e.message }, 'wa: no se pudo encolar activación (webhook)');
@@ -754,6 +761,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
           updateOrder(o.id, { status: 'pendiente_qr', wompi_txn_id: `efi-status-${o.efi_payment_id}`, next_charge_at: nextCharge });
           logger.info({ orderId: o.id, paymentId: o.efi_payment_id }, 'pago confirmado por polling de estado (webhook no llegó)');
           o = getOrder(o.id);
+          notifySale(o, 'EfiPay');
           sendActivationEmail(o).catch(() => {});
           try { enqueueWhatsApp(o, 'activacion'); } catch (e) {
             logger.error({ orderId: o.id, err: e.message }, 'wa: no se pudo encolar activación');
@@ -797,6 +805,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
           mp_payer_email: session.customer_details?.email || null,
         });
         logger.info({ orderId: order.id, session: session.id }, 'pago aprobado (stripe)');
+        notifySale(getOrder(order.id), 'Stripe');
       }
       return orderView(getOrder(order.id));
     }
@@ -812,6 +821,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     ) {
       updateOrder(order.id, { status: 'pendiente_qr', wompi_txn_id: String(payment.id) });
       logger.info({ orderId: order.id, payment: payment.id }, 'pago aprobado (verify)');
+      notifySale(getOrder(order.id), 'MercadoPago');
     }
     return orderView(getOrder(order.id));
   });
@@ -1329,6 +1339,14 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     const link = `${config.FRONTEND_BASE_URL}/activar-pro?order=${orderId}`;
     logger.info({ orderId, business_name }, 'orden manual creada (venta offline)');
     return { ok: true, orderId, link, next_charge_at: nextCharge };
+  });
+
+  // Prueba del push de venta (cha-ching): manda la notificación de una venta falsa
+  // a los dispositivos suscritos, sin tocar órdenes reales.
+  app.post('/admin/test-venta', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    notifySale({ id: `test-${Date.now()}`, amount_cents: 19_900_000, business_name: 'Venta de prueba' }, 'test');
+    return { ok: true };
   });
 
   app.get('/admin/orders/:order/qr', async (req, reply) => {

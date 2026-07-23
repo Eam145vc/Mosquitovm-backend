@@ -45,6 +45,7 @@ export async function notifyAdmins(payload) {
     body: payload.body || '',
     url: payload.url || '/soporte-app/',
     tag: payload.tag || 'sono-soporte',
+    sound: payload.sound || null, // 'cash' = cha-ching de venta (lo reproduce la PWA abierta)
   });
 
   let sent = 0;
