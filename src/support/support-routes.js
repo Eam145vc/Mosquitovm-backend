@@ -34,7 +34,8 @@ import {
 } from './support-store.js';
 // Canal WhatsApp (Cloud API oficial): las conversaciones del número de Sonó se
 // integran a ESTE panel con id 'wa:<telefono>' — un solo lugar para atender todo.
-import { listWaChats, listWaChatMessages, markWaChatRead, insertWaInbound, listOrders, getWaMedia, setWaInboundMedia } from '../storage.js';
+import { listWaChats, listWaChatMessages, markWaChatRead, insertWaInbound, listOrders, getWaMedia, setWaInboundMedia,
+  countWaChatUnread, unseenInboxCount, clientsAttentionCount, pedidosPendientesCount } from '../storage.js';
 import { normalizePhoneCO } from '../wa-enqueue.js';
 import { sendCloudText, sendCloudImage } from '../wa-cloud.js';
 import { createReadStream, existsSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -353,6 +354,18 @@ export function registerSupportRoutes(app) {
     return m;
   };
 
+  // El pedido más reciente (no archivado) de un teléfono → para el botón "Abrir
+  // pedido" del chat y el atajo de plantillas de WhatsApp. Devuelve {id, business,
+  // account_id} o null.
+  const orderByPhone = (phone) => {
+    const p = normalizePhoneCO(phone);
+    if (!p) return null;
+    const cand = listOrders()
+      .filter((o) => !o.archived_at && normalizePhoneCO(o.phone) === p)
+      .sort((a, b) => (b.created_at || 0) - (a.created_at || 0))[0];
+    return cand ? { id: cand.id, business: cand.business_name || null, account_id: cand.account_id || null } : null;
+  };
+
   // Chats de WhatsApp con la MISMA forma que las conversaciones del widget web.
   // status: 'pending' con no-leídos (suena en el filtro Pendientes); si no, 'open'.
   const waConversations = (filter) => {
@@ -374,6 +387,45 @@ export function registerSupportRoutes(app) {
 
   const isWaId = (id) => String(id).startsWith('wa:');
   const waPhone = (id) => String(id).slice(3).replace(/\D/g, '');
+
+  // Señales para los badges de la barra del PWA: chats sin leer, buzón sin ver,
+  // pedidos pendientes, clientes por vencer. Barato, se pollea cada ~30s.
+  app.get('/soporte/admin/signals', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const waUnread = listWaChats(200).filter((c) => c.unread > 0).length;
+    return {
+      chats: countPending() + waUnread,
+      buzon: unseenInboxCount(),
+      pedidos: pedidosPendientesCount(),
+      clientes: clientsAttentionCount(),
+    };
+  });
+
+  // Buscador global: pedidos + clientes por nombre/teléfono/llave/correo. Devuelve
+  // resultados unificados para saltar al pedido o al cliente desde el PWA.
+  app.get('/soporte/admin/search', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const q = String(req.query.q || '').trim().toLowerCase();
+    if (q.length < 2) return { results: [] };
+    const qDigits = q.replace(/\D/g, '');
+    const results = [];
+    for (const o of listOrders()) {
+      if (o.archived_at) continue;
+      const hay = [o.business_name, o.phone, o.breb_key, o.customer_email, o.city, o.address]
+        .filter(Boolean).join(' ').toLowerCase();
+      const phoneHit = qDigits.length >= 4 && String(o.phone || '').replace(/\D/g, '').includes(qDigits);
+      if (hay.includes(q) || phoneHit) {
+        results.push({
+          type: 'order', id: o.id,
+          title: o.business_name || 'Sin nombre',
+          sub: [o.phone, o.city].filter(Boolean).join(' · '),
+          accountId: o.account_id || null,
+        });
+      }
+      if (results.length >= 20) break;
+    }
+    return { results };
+  });
 
   app.get('/soporte/admin/conversations', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
@@ -398,6 +450,7 @@ export function registerSupportRoutes(app) {
         conversation: {
           id: `wa:${phone}`, channel: 'wa', name, contact: `+${phone}`,
           page: 'WhatsApp', mode: 'human', status: 'open',
+          order: orderByPhone(phone), // link al pedido para "Abrir pedido" + plantillas
         },
         // Mapeo al formato del panel: entrante=user, plantilla automática=bot, tú=human.
         messages: msgs.map((m) => ({
@@ -417,7 +470,8 @@ export function registerSupportRoutes(app) {
     if (!conv) return reply.code(404).send({ error: 'no encontrada' });
     clearUnreadAdmin(conv.id);
     return {
-      conversation: { ...conv, channel: 'web' },
+      // El chat web a veces trae teléfono en 'contact' → intentamos linkear su pedido.
+      conversation: { ...conv, channel: 'web', order: orderByPhone(conv.contact) },
       messages: listMessages(conv.id, 0).filter(m => m.role !== 'system').map((m) => ({
         ...m,
         ts: m.created_at,
