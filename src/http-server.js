@@ -54,7 +54,7 @@ import {
   touchWaAgent, getWaSettings, setWaSettings, getWaAgentLastSeen, countWaByStatus,
   listWaOutbox, requeueWa, cancelWa, cancelPendingWaByKinds, cancelAllPendingWa,
   insertWaInbound, listWaInbound, updateWaDeliveryByWamid, countWaSentSince, setWaInboundMedia,
-  getShipmentByOrder, updateShipmentRow, renameDeviceLocal,
+  getShipmentByOrder, updateShipmentRow, renameDeviceLocal, listShipments,
   insertUgcApplication, listUgcApplications, countUgcNuevo, setUgcStatus, deleteUgcApplication,
   createPaymentIntent, getPaymentIntent, matchPaymentIntent,
   speakersForBank,
@@ -1617,6 +1617,81 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     }
     logger.info({ orderId: o.id, from: o.status, status }, 'estado de orden cambiado (admin)');
     return { ok: true, status };
+  });
+
+  // Panel "Caja" del admin: foto financiera en tiempo real, computada acá para que
+  // haya UNA sola verdad. Devuelve:
+  //  - resumen por estado de orden (unidades y $)
+  //  - caja real: EfiPay + COD ya ENTREGADO (recaudado por la transportadora, en
+  //    liquidación de Skydropx) + online cobrado por otra vía (Bre-B propio/Nequi)
+  //  - pipeline COD por estado de rastreo (con novedades y devoluciones)
+  //  - serie diaria de ventas confirmadas (últimos 14 días)
+  app.get('/admin/caja', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const orders = listOrders().filter((o) => !o.archived_at);
+    const shipByOrder = new Map(
+      listShipments().filter((s) => s.status !== 'cancelled').map((s) => [s.order_id, s]),
+    );
+    const CONFIRMED = new Set(['shipped', 'ready_to_ship', 'paid', 'cod_pending']);
+    const cents = (arr) => arr.reduce((a, o) => a + (o.amount_cents || 0), 0);
+    const pack = (arr) => ({ n: arr.length, cents: cents(arr) });
+
+    const conf = orders.filter((o) => CONFIRMED.has(o.status));
+    const cod = conf.filter((o) => o.delivery === 'contraentrega');
+    const track = (o) => shipByOrder.get(o.id)?.tracking_status || 'sin_guia';
+
+    // Caja real (plata efectivamente cobrada a hoy)
+    const efipay = pack(orders.filter((o) => o.efi_payment_id));
+    const codEntregado = pack(cod.filter((o) => track(o) === 'delivered'));
+    // Órdenes online confirmadas sin EfiPay = cobradas por Bre-B propio / Nequi directo
+    // (una orden online no pagada se queda en 'created', que no es estado confirmado).
+    const onlineOtro = pack(conf.filter((o) => o.delivery !== 'contraentrega' && !o.efi_payment_id));
+
+    // Pipeline COD por estado de rastreo
+    const pipeline = {};
+    for (const o of cod) {
+      const st = track(o);
+      pipeline[st] = pipeline[st] || { n: 0, cents: 0 };
+      pipeline[st].n += 1;
+      pipeline[st].cents += o.amount_cents || 0;
+    }
+
+    // Resumen por estado de orden
+    const porEstado = {};
+    for (const o of orders) {
+      porEstado[o.status] = porEstado[o.status] || { n: 0, cents: 0 };
+      porEstado[o.status].n += 1;
+      porEstado[o.status].cents += o.amount_cents || 0;
+    }
+
+    // Serie diaria de confirmadas, últimos 14 días (fecha en hora de Colombia, UTC-5)
+    const dias = [];
+    const hoy = new Date(Date.now() - 5 * 3600e3).toISOString().slice(0, 10);
+    for (let i = 13; i >= 0; i--) {
+      const d = new Date(Date.now() - 5 * 3600e3 - i * 24 * 3600e3).toISOString().slice(0, 10);
+      dias.push({ dia: d, n: 0, cents: 0 });
+    }
+    const idx = new Map(dias.map((d, i) => [d.dia, i]));
+    for (const o of conf) {
+      const d = new Date(o.created_at - 5 * 3600e3).toISOString().slice(0, 10);
+      const i = idx.get(d);
+      if (i != null) { dias[i].n += 1; dias[i].cents += o.amount_cents || 0; }
+    }
+
+    return {
+      generado: Date.now(),
+      hoy,
+      confirmadas: pack(conf),
+      cajaReal: {
+        efipay,
+        codEntregado,
+        onlineOtro,
+        totalCents: efipay.cents + codEntregado.cents + onlineOtro.cents,
+      },
+      codPipeline: pipeline,
+      porEstado,
+      dias,
+    };
   });
 
   // Renovaciones que vencen pronto (o ya vencidas) para avisar por WhatsApp.
