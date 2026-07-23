@@ -432,8 +432,9 @@ async function main() {
   // Aviso automático de posible problema de conexión (kind 'conexion'): cliente que
   // RECIBIÓ su Sonó hace >24h, YA conectó el correo (account_id) y NO se le ha
   // detectado NINGÚN pago desde la entrega. Idempotente por (order_id,'conexion').
-  // Solo desde el 22-jul-2026 en adelante (no molestar clientes viejos ya andando).
-  const CONEXION_SINCE = 1784000000000; // ~22-jul-2026
+  // SIN corte de fecha (decisión del usuario 22-jul-2026): cubre TAMBIÉN el backlog
+  // de entregados viejos sin ventas. Una sola vez por orden; el daily_cap y los
+  // delays del enviador reparten el envío para no soltarlo todo de golpe.
   const CONEXION_MIN_AGE = 24 * 3600 * 1000;
   const conexionJob = () => {
     try {
@@ -445,7 +446,6 @@ async function main() {
         const sh = getShipmentByOrder(order.id);
         if (!sh || sh.tracking_status !== 'delivered') continue;
         const deliveredAt = sh.tracking_status_at || 0;
-        if (deliveredAt < CONEXION_SINCE) continue;   // corte histórico
         if (now - deliveredAt < CONEXION_MIN_AGE) continue; // aún no cumplen 24h
         // ¿Algún pago desde la entrega? Si ya vendió, todo está bien: no molestar.
         const agg = paymentsAggregate(order.account_id, deliveredAt, now);
