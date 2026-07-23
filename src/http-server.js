@@ -45,6 +45,7 @@ import {
   setDeviceBrebKey, listDevicesByAccount, findDeviceByKey,
   listDeviceKeys, addDeviceKey, removeDeviceKey,
   updateAccountHistory, updateAccountWatch, setAccountForward, findAccountByForward, markChangeConfirmed,
+  setAccountOnlyBreb, getAccountByEmailCI,
   resetChangeConfirmed, renameAccountAlias,
   paymentsFor, subState, setSubStatus,
   recordPayment, paymentsAggregate, bestHours, paymentsAfter, paymentsPage, paymentsPageRange,
@@ -247,6 +248,16 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     // sin llave parseable o llave que no coincide con ningún local → NO suena + aviso.
     return { speakerId: null, unrouted: true, key };
   };
+
+  // FILTRO "solo pagos por llave Bre-B" (account.only_breb): cuando el cliente quiere
+  // que NO le suenen las transferencias directas por número de cuenta, solo lo que entra
+  // por su llave Bre-B. El correo Bre-B de Bancolombia trae "conectado a la llave X"
+  // (result.brebKey queda seteado); una transferencia directa no la trae → se silencia.
+  // ⚠️ SOLO Bancolombia: Nequi/BBVA no incluyen la llave en el correo, así que ahí el
+  // filtro se ignora (si no, silenciaría TODO). Devuelve true si hay que ignorar el pago.
+  const dropByOnlyBreb = (account, result) =>
+    Boolean(account.only_breb) && result.direction === 'in'
+      && result.bank === 'bancolombia' && !result.brebKey;
 
   // CHECKOUT BRE-B PROPIO: los pagos que entran a la cuenta de pagos de Sonó
   // (SONO_PAGOS_ALIAS) se matchean por MONTO contra los intents pendientes del
@@ -1968,6 +1979,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       ...summary,
       email_method: acc.auth_type === 'imap' ? 'imap' : (acc.alias ? 'redirect' : (acc.oauth_provider || 'gmail')),
       change_confirmed: Boolean(acc.change_confirmed),
+      only_breb: Boolean(acc.only_breb),   // filtro: solo pagos por llave Bre-B (Bancolombia)
       grace_until: acc.grace_until || null,
       suspended_at: acc.suspended_at || null,
       orders,
@@ -2080,6 +2092,19 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     if (!removed) return reply.code(404).send({ error: 'esa llave no está vinculada como adicional' });
     logger.info({ clientId: acc.id, spkr: dev.spkr_id, key }, 'admin: llave adicional quitada');
     return { ok: true, spkr_id: dev.spkr_id, keys: listDeviceKeys(dev.spkr_id) };
+  });
+
+  // Toggle "solo pagos por llave Bre-B" (silencia transferencias directas por número de
+  // cuenta). ⚠️ Solo tiene efecto real en cuentas Bancolombia (Nequi/BBVA no traen la
+  // llave en el correo). body { value: true|false }.
+  app.patch('/admin/clients/:id/only-breb', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const acc = getAccount(req.params.id);
+    if (!acc) return reply.code(404).send({ error: 'cliente no encontrado' });
+    const value = Boolean(req.body?.value);
+    setAccountOnlyBreb(acc.id, value);
+    logger.info({ clientId: acc.id, only_breb: value }, 'admin: toggle only_breb');
+    return { ok: true, only_breb: value };
   });
 
   // Reactivar (vuelve a anunciar).
@@ -2463,7 +2488,11 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     let wasPayment = false;
     try {
       const result = parseEmail({ from: String(from).toLowerCase(), subject, text, html });
-      if (result && onPaymentDetected) {
+      if (result && onPaymentDetected && dropByOnlyBreb(account, result)) {
+        wasPayment = true;
+        logger.info({ alias, accountId: account.id, amount: result.amount, bank: result.bank },
+          'only_breb: pago sin llave (transferencia directa), no se anuncia ni se registra');
+      } else if (result && onPaymentDetected) {
         wasPayment = true;
         const route = pickSpeaker(account, result);
         logger.info({ alias, accountId: account.id, ...result, routedTo: route.speakerId, unrouted: route.unrouted || false }, 'payment detected (email webhook)');
@@ -2912,7 +2941,11 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     try {
       if (isTrustedBankEmail(from, body)) {
         const result = parseEmail({ from: String(from).toLowerCase(), subject, text, html });
-        if (result && onPaymentDetected) {
+        if (result && onPaymentDetected && dropByOnlyBreb(account, result)) {
+          wasPayment = true;
+          logger.info({ alias, accountId: account.id, amount: result.amount, bank: result.bank },
+            'only_breb: pago sin llave (transferencia directa), no se anuncia ni se registra');
+        } else if (result && onPaymentDetected) {
           wasPayment = true;
           const route = pickSpeaker(account, result);
           logger.info({ alias, accountId: account.id, ...result, routedTo: route.speakerId, unrouted: route.unrouted || false }, 'payment detected (fe webhook)');

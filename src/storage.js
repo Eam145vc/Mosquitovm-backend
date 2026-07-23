@@ -301,6 +301,12 @@ export function openDb() {
     // Anunciar también EGRESOS ("Transferiste $X"). Apagado por defecto;
     // será un toggle en el panel de usuario.
     ['announce_outgoing', 'INTEGER NOT NULL DEFAULT 0'],
+    // only_breb: si está en 1, SOLO se anuncian los pagos que entran por la llave
+    // Bre-B (el correo del banco trae "conectado a la llave X"); las transferencias
+    // directas por número de cuenta (sin llave) NO suenan. Apagado por defecto.
+    // ⚠️ Solo aplica a Bancolombia: Nequi/BBVA no traen la llave en el correo, así
+    // que el filtro se limita a bank='bancolombia' (ver http-server payment flow).
+    ['only_breb', 'INTEGER NOT NULL DEFAULT 0'],
   ]);
   db.exec('CREATE INDEX IF NOT EXISTS idx_accounts_alias ON accounts(alias)');
   // Buzón: columnas para threading y estado de respuesta (DBs viejas no las tenían).
@@ -544,6 +550,20 @@ export function renameAccountAlias(id, alias, email) {
     .run(alias, email, Date.now(), id).changes > 0;
 }
 
+/** Enciende/apaga el filtro "solo pagos por llave Bre-B" de una cuenta (Bancolombia). */
+export function setAccountOnlyBreb(id, value) {
+  openDb();
+  return db.prepare('UPDATE accounts SET only_breb = ?, updated_at = ? WHERE id = ?')
+    .run(value ? 1 : 0, Date.now(), id).changes > 0;
+}
+
+/** Busca una cuenta por email (case-insensitive). Para setear flags desde el admin. */
+export function getAccountByEmailCI(email) {
+  openDb();
+  if (!email) return null;
+  return db.prepare('SELECT * FROM accounts WHERE lower(email) = lower(?)').get(String(email)) || null;
+}
+
 /** Asigna alias + correo de reenvío (cifrado) a una cuenta del método correo-redirigido. */
 export function setAccountForward(id, { alias, forwardTo }) {
   openDb();
@@ -613,6 +633,32 @@ export function listAccounts() {
 export function deleteAccount(id) {
   openDb();
   return db.prepare('DELETE FROM accounts WHERE id = ?').run(id).changes > 0;
+}
+
+/** Nº de clientes que necesitan atención (por vencer / vencidos / suspendidos).
+ *  Para el badge de "Clientes" en la barra del PWA de soporte. */
+export function clientsAttentionCount() {
+  openDb();
+  const accts = db.prepare('SELECT * FROM accounts').all();
+  const mainCharge = db.prepare(
+    `SELECT MIN(next_charge_at) AS nc FROM orders
+     WHERE account_id = ? AND status IN ('paid','pendiente_qr','ready_to_ship','shipped')
+       AND next_charge_at IS NOT NULL`);
+  let n = 0;
+  for (const acc of accts) {
+    const s = subState(acc, mainCharge.get(acc.id)?.nc || null);
+    if (s === 'por_vencer' || s === 'vencida' || s === 'suspendida') n += 1;
+  }
+  return n;
+}
+
+/** Nº de pedidos en el pipeline activo (necesitan trabajo: QR, despacho…). */
+export function pedidosPendientesCount() {
+  openDb();
+  return db.prepare(
+    `SELECT COUNT(*) n FROM orders
+     WHERE archived_at IS NULL AND status IN ('paid','pendiente_qr','cod_pending','ready_to_ship')`
+  ).get().n;
 }
 
 // ---------------------------------------------------------------------------
