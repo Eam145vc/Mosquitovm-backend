@@ -87,4 +87,11 @@ export const WA_TEMPLATES = {
     bodyExample: ['Carlos'],
     button: { text: 'Revisar mi conexión', urlBase: ACTIVAR_CORREO },
   },
+  // QR incompatible: el cliente subió un QR de Bancolombia Negocios (no soportado).
+  // Sonó solo capta con Bancolombia Personas, Nequi o BBVA. Manual desde el panel.
+  sono_qr_incompatible: {
+    body: 'Hola {{1}} 👋 Gracias por subir tu QR. Te contamos que Sonó por ahora no es compatible con cuentas de Bancolombia Negocios; sí funciona con Bancolombia Personas, Nequi o BBVA. Genera el QR de Bre-B desde una de esas cuentas y súbelo por aquí para dejar tu Sonó listo.',
+    bodyExample: ['Carlos'],
+    button: { text: 'Subir el QR correcto', urlBase: ACTIVAR },
+  },
 };
