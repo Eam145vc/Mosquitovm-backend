@@ -1070,6 +1070,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
         forwardTo,
         associated: true,
         needsVerification: false,
+        // Reloj del servidor al registrar el correo: el front lo usa como corte de
+        // frescura del OTP (solo mostrar códigos capturados DESPUÉS de este momento).
+        now: Date.now(),
       };
     }
 
@@ -1086,6 +1089,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
         alias: `${self.alias}@${config.MAIL_DOMAIN}`,
         forwardTo,
         needsVerification: false,
+        now: Date.now(),
       };
     }
 
@@ -1107,6 +1111,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
         alias: `${self.alias}@${config.MAIL_DOMAIN}`,
         forwardTo,
         needsVerification: false,
+        now: Date.now(),
       };
     }
 
@@ -1132,6 +1137,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       forwardTo,
       // ForwardEmail NO requiere verificación del destino → el cliente puede ir directo al banco.
       needsVerification: false,
+      now: Date.now(),
     };
   });
 
