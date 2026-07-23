@@ -19,14 +19,14 @@ import { updateAccountHistory, updateAccountWatch, recordPayment, upsertDeviceFr
   setSubStatus, accountsToAutoSuspend, markNewlyExpired, listOrders, updateOrder, getOrder,
   paymentsFor, requeueStaleWa, shipmentsAwaitingTracking, updateShipmentRow, listWaOutbox,
   listShipments, cancelPendingWaByKinds, cancelAllPendingWa, getShipmentByOrder,
-  speakersForBank, paymentsAggregate } from './storage.js';
+  speakersForBank, paymentsAggregate, lastPaymentAt, lastWaAt } from './storage.js';
 import { onIncident as onBankIncident } from './bank-status.js';
 import { filterOnline } from './speaker-online.js';
 import { fetchEfiStatus } from './efipay.js';
 import { reportPurchasesToMeta } from './meta-capi.js';
 import { sendActivationEmail } from './activation-email.js';
 import { notifySale } from './sale-push.js';
-import { enqueueWhatsApp, enqueueGuiaCreadaIfReady, GUIA_CREADA_SINCE, qrPhonesSet, normalizePhoneCO, orderSilenciada } from './wa-enqueue.js';
+import { enqueueWhatsApp, enqueueWhatsAppForce, enqueueGuiaCreadaIfReady, GUIA_CREADA_SINCE, qrPhonesSet, normalizePhoneCO, orderSilenciada } from './wa-enqueue.js';
 import { getShipment, extractLabel } from './skydropx.js';
 import { runWaReminderJob } from './wa-reminders.js';
 import { startWaSender } from './wa-sender.js';
@@ -429,30 +429,47 @@ async function main() {
   waEnvioJob();
   setInterval(waEnvioJob, 10 * 60 * 1000);
 
-  // Aviso automático de posible problema de conexión (kind 'conexion'): cliente que
-  // RECIBIÓ su Sonó hace >24h, YA conectó el correo (account_id) y NO se le ha
-  // detectado NINGÚN pago desde la entrega. Idempotente por (order_id,'conexion').
-  // SIN corte de fecha (decisión del usuario 22-jul-2026): cubre TAMBIÉN el backlog
-  // de entregados viejos sin ventas. Una sola vez por orden; el daily_cap y los
-  // delays del enviador reparten el envío para no soltarlo todo de golpe.
+  // Aviso automático de posible problema de conexión (kind 'conexion') al cliente que
+  // RECIBIÓ su Sonó (entregado >24h), YA conectó el correo (account_id) y no está
+  // vendiendo. DOS casos:
+  //   A) NUNCA vendió desde la entrega → una sola vez (enqueueWhatsApp, idempotente).
+  //   B) "SE APAGÓ": venía vendiendo pero su última venta fue hace 4-30 días → aviso
+  //      RE-ARMABLE (enqueueWhatsAppForce) con cooldown de 14 días para no repetir cada
+  //      hora ni acosar. (Fin de semana/noche NO dispara: exige 4 días de silencio.)
+  // Sin corte de fecha: cubre también el backlog viejo. El daily_cap y los delays del
+  // enviador reparten el envío. NOTA: los avisos quedan en cola hasta que Meta apruebe
+  // la plantilla sono_conexion (failsafe por plantilla).
   const CONEXION_MIN_AGE = 24 * 3600 * 1000;
+  const D = 24 * 3600 * 1000;
+  const SILENCE_MIN = 4 * D;   // 4 días sin vender = "se apagó" (decisión del usuario)
+  const SILENCE_MAX = 30 * D;  // más de 30 días callado = churn viejo, no re-acosar
+  const CONEXION_COOLDOWN = 14 * D;
   const conexionJob = () => {
     try {
-      let n = 0;
+      let nNuevo = 0, nApagado = 0;
       const now = Date.now();
       for (const order of listOrders()) {
-        if (!order.account_id) continue;              // correo aún sin conectar: es onboarding, no conexión
-        if (order.archived_at) continue;
+        if (!order.account_id) continue;              // correo sin conectar: es onboarding, no conexión
+        if (orderSilenciada(order)) continue;         // archivada/cancelada: nada
         const sh = getShipmentByOrder(order.id);
         if (!sh || sh.tracking_status !== 'delivered') continue;
         const deliveredAt = sh.tracking_status_at || 0;
         if (now - deliveredAt < CONEXION_MIN_AGE) continue; // aún no cumplen 24h
-        // ¿Algún pago desde la entrega? Si ya vendió, todo está bien: no molestar.
-        const agg = paymentsAggregate(order.account_id, deliveredAt, now);
-        if (agg && agg.n > 0) continue;
-        if (enqueueWhatsApp(order, 'conexion')) n += 1; // idempotente por (order,kind)
+        const lastPay = lastPaymentAt(order.account_id);
+        if (!lastPay || lastPay < deliveredAt) {
+          // A) Nunca vendió desde la entrega: aviso único (idempotente por order+kind).
+          if (enqueueWhatsApp(order, 'conexion')) nNuevo += 1;
+        } else {
+          // B) Vendía y se calló: última venta hace 4-30 días → re-armable con cooldown.
+          const silencio = now - lastPay;
+          if (silencio < SILENCE_MIN || silencio > SILENCE_MAX) continue;
+          const lastAviso = lastWaAt(order.id, 'conexion');
+          if (lastAviso && now - lastAviso < CONEXION_COOLDOWN) continue; // ya avisado hace poco
+          enqueueWhatsAppForce(order, 'conexion');
+          nApagado += 1;
+        }
       }
-      if (n) logger.info({ n }, 'wa: aviso de conexión encolado (entregado >24h sin pagos)');
+      if (nNuevo || nApagado) logger.info({ nuncaVendio: nNuevo, seApago: nApagado }, 'wa: aviso de conexión encolado');
     } catch (e) {
       logger.error({ err: e.message }, 'wa: conexionJob error');
     }

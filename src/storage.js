@@ -1043,6 +1043,23 @@ export function bestHours(accountId, fromMs, limit = 24) {
   ).all(accountId, fromMs, limit);
 }
 
+/** Timestamp (ms) del ÚLTIMO pago con monto de la cuenta, o null si nunca vendió.
+ *  Lo usa el detector de "se apagó" (venía vendiendo y se quedó callado). */
+export function lastPaymentAt(accountId) {
+  openDb();
+  if (!accountId) return null;
+  const r = db.prepare(`SELECT MAX(at) AS at FROM payments WHERE account_id = ? AND amount > 0`).get(accountId);
+  return r?.at || null;
+}
+
+/** created_at (ms) del último WhatsApp de ese (orden, kind), o null. Para el cooldown
+ *  del aviso de conexión re-armable (no repetir cada hora al mismo cliente). */
+export function lastWaAt(orderId, kind) {
+  openDb();
+  const r = db.prepare(`SELECT MAX(created_at) AS at FROM wa_outbox WHERE order_id = ? AND kind = ?`).get(orderId, kind);
+  return r?.at || null;
+}
+
 /** Polling en vivo: filas con id > afterId, más nuevas primero. Pedir limit+1 para detectar gap. */
 export function paymentsAfter(accountId, afterId, limit = 51) {
   openDb();
