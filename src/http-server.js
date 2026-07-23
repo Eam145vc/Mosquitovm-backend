@@ -2802,12 +2802,20 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
   // Onboarding Fase 3: el frontend hace polling acá para (a) mostrar el OTP del banco y
   // (b) saber si el cambio ya se confirmó (el banco mandó el "correo cambiado con éxito")
   // para cerrar el onboarding automático. Efímero/scopeado por order id (no adivinable).
+  // `at` = cuándo se capturó el código y `now` = reloj del servidor: el front descarta
+  // códigos capturados ANTES de que el cliente llegara a la pantalla del banco (un OTP
+  // de un intento anterior, aún dentro del TTL, confunde: "me muestra un código viejo").
   app.get('/activar/:order/otp', async (req, reply) => {
     const order = getOrder(req.params.order);
-    if (!order || !order.account_id) return { code: null, confirmed: false };
+    if (!order || !order.account_id) return { code: null, at: null, now: Date.now(), confirmed: false };
     const otp = readOtp(order.account_id);
     const acc = getAccount(order.account_id);
-    return { code: otp ? otp.code : null, confirmed: Boolean(acc && acc.change_confirmed) };
+    return {
+      code: otp ? otp.code : null,
+      at: otp ? otp.at : null,
+      now: Date.now(),
+      confirmed: Boolean(acc && acc.change_confirmed),
+    };
   });
 
   // Confirmación MANUAL: el cliente dice "ya cambié el correo en el banco" y avanza, por si
