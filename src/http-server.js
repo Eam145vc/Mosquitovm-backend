@@ -398,7 +398,6 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     if (esContraentrega) {
       updateOrder(orderId, { status: 'cod_pending' });
       logger.info({ orderId, plan: planNorm, amountCents, business_name }, 'orden contraentrega (pendiente de confirmación)');
-      notifySale(getOrder(orderId), 'contraentrega');
       try { enqueueWhatsApp(getOrder(orderId), 'activacion'); } catch (e) {
         logger.error({ orderId, err: e.message }, 'wa: no se pudo encolar activación (COD)');
       }
@@ -1168,6 +1167,12 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     const patch = { qr_path: filename, qr_mime: mimetype };
     if (order.business_name) patch.status = 'ready_to_ship';
     updateOrder(order.id, patch);
+
+    // Venta COD: cuenta cuando sube el QR por primera vez (igual que Meta CAPI),
+    // no al crear la orden. Las online avisan al pagar, no acá.
+    if (order.delivery === 'contraentrega' && !order.qr_path) {
+      notifySale(getOrder(order.id), 'contraentrega');
+    }
 
     // El cliente ya tiene su QR: los WhatsApp de onboarding pendientes ("sube tu QR")
     // quedan obsoletos — en ESTA orden y en cualquier orden HERMANA del mismo teléfono
