@@ -398,6 +398,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     if (esContraentrega) {
       updateOrder(orderId, { status: 'cod_pending' });
       logger.info({ orderId, plan: planNorm, amountCents, business_name }, 'orden contraentrega (pendiente de confirmación)');
+      notifySale(getOrder(orderId), 'contraentrega');
       try { enqueueWhatsApp(getOrder(orderId), 'activacion'); } catch (e) {
         logger.error({ orderId, err: e.message }, 'wa: no se pudo encolar activación (COD)');
       }
