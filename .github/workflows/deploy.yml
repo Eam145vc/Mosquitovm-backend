@@ -58,12 +58,16 @@ jobs:
       # 3) Instalar deps prod, reiniciar PM2, healthcheck con rollback automático.
       - name: Instalar + reiniciar + healthcheck
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         with:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
           port: 22
           script_stop: true
+          envs: TG_BOT_TOKEN,TG_CHAT_ID
           script: |
             set -e
             cd /home/sono/backend
@@ -91,6 +95,14 @@ jobs:
                 rm -rf node_modules
                 [ -d node_modules.bak-deploy ] && mv node_modules.bak-deploy node_modules
               fi
+            fi
+
+            # Telegram (aviso de venta): mismos secrets del uptime.yml, inyectados al .env
+            # del VM en cada deploy (idempotente; el .env no vive en el repo).
+            if [ -n "$TG_BOT_TOKEN" ] && [ -n "$TG_CHAT_ID" ]; then
+              grep -q '^TG_BOT_TOKEN=' .env && sed -i "s|^TG_BOT_TOKEN=.*|TG_BOT_TOKEN=$TG_BOT_TOKEN|" .env || echo "TG_BOT_TOKEN=$TG_BOT_TOKEN" >> .env
+              grep -q '^TG_CHAT_ID=' .env && sed -i "s|^TG_CHAT_ID=.*|TG_CHAT_ID=$TG_CHAT_ID|" .env || echo "TG_CHAT_ID=$TG_CHAT_ID" >> .env
+              echo "==> credenciales de Telegram inyectadas al .env"
             fi
 
             echo "==> reiniciar PM2"

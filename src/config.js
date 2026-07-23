@@ -180,6 +180,12 @@ const ConfigSchema = z.object({
   VAPID_PRIVATE_KEY: z.string().default(''),
   VAPID_SUBJECT: z.string().default('mailto:hola@sono.lat'),
 
+  // ---- Telegram (Sono_co_bot): aviso de venta con sonido custom del chat ----
+  // Mismos valores que los secrets TG_BOT_TOKEN/TG_CHAT_ID de GitHub (uptime.yml);
+  // el deploy los inyecta al .env del VM.
+  TG_BOT_TOKEN: z.string().default(''),
+  TG_CHAT_ID: z.string().default(''),
+
   LOG_LEVEL: z.enum(['trace','debug','info','warn','error']).default('info'),
 });
 
@@ -223,5 +229,6 @@ parsed.hasSkydropx = Boolean(parsed.SKYDROPX_CLIENT_ID && parsed.SKYDROPX_CLIENT
 parsed.hasEvolution = Boolean(parsed.EVOLUTION_API_URL && parsed.EVOLUTION_API_KEY);
 // Cloud API oficial configurada → wa-cloud envía desde la VM; misma exclusión.
 parsed.hasWaCloud = Boolean(parsed.WA_CLOUD_ACCESS_TOKEN && parsed.WA_CLOUD_PHONE_NUMBER_ID);
+parsed.hasTelegram = Boolean(parsed.TG_BOT_TOKEN && parsed.TG_CHAT_ID);
 
 export const config = parsed;

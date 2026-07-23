@@ -4,6 +4,7 @@
 // no permite sonido custom → suena el tono default del sistema (limitación iOS/Android).
 
 import { notifyAdmins } from './support/webpush.js';
+import { sendTelegram } from './telegram.js';
 import { logger } from './logger.js';
 
 // Dedupe en memoria: webhook + polling + conciliación pueden confirmar la misma
@@ -25,4 +26,8 @@ export function notifySale(order, via) {
     url: '/soporte-app/',
   }).then((r) => logger.info({ orderId: order.id, via, sent: r.sent }, 'push de venta enviado'))
     .catch((e) => logger.warn({ orderId: order.id, err: e.message }, 'push de venta falló'));
+  // Telegram en paralelo: es el canal que SÍ suena con sonido custom (cha-ching
+  // del chat) aunque el teléfono tenga todo cerrado.
+  sendTelegram(`💰 ¡Venta! ${body}`)
+    .catch((e) => logger.warn({ orderId: order.id, err: e.message }, 'telegram de venta falló'));
 }
