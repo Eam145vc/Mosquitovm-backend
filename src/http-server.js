@@ -1039,6 +1039,13 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     if (!forwardTo || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(forwardTo)) {
       return reply.code(400).send({ error: 'Pon un correo válido.' });
     }
+    // El correo personal no puede ser un alias de Sonó: reenviar el alias a sí mismo
+    // crea un loop en ForwardEmail y los correos del banco caen al catch-all
+    // (incidente Linpan chen, jul-2026).
+    const fwdDomain = forwardTo.split('@')[1];
+    if (fwdDomain === config.MAIL_DOMAIN || fwdDomain === config.FWD_DOMAIN) {
+      return reply.code(400).send({ error: 'Ese es tu correo de Sonó. Pon tu correo personal (el que usas normalmente, ej. Gmail).' });
+    }
     // associate: la elección del cliente cuando el correo ya existía (true = mismo negocio,
     // otro local; false = cuenta nueva separada). undefined = aún no preguntado.
     const associate = body.associate;
