@@ -1189,7 +1189,10 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     fs.writeFileSync(path.join(QR_DIR, filename), buf);
 
     const patch = { qr_path: filename, qr_mime: mimetype };
-    if (order.business_name) patch.status = 'ready_to_ship';
+    // Solo pasa a ready_to_ship si la orden está pagada o es COD. Sin este check,
+    // subir el QR (admin) marcaba "Listo para enviar" órdenes con pago rechazado
+    // (incidente Arley/Javier jul-2026: se despachó sin plata).
+    if (order.business_name && canOnboard(order)) patch.status = 'ready_to_ship';
     updateOrder(order.id, patch);
 
     // Venta COD: cuenta cuando sube el QR por primera vez (igual que Meta CAPI),
