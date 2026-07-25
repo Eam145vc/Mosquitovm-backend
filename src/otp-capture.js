@@ -7,9 +7,58 @@
 // justo cuando el cliente lo esperaba (incidente Ricardo jul-2026). Nunca queda
 // en la DB más de 10 minutos.
 
-import { saveOtpCode, loadOtpCode, deleteOtpCode, purgeOtpCodes } from './storage.js';
+import { saveOtpCode, loadOtpCode, deleteOtpCode, purgeOtpCodes, getOrderByAccount } from './storage.js';
+import { logger } from './logger.js';
+import { normalizePhoneCO } from './wa-enqueue.js';
+import { sendCloudTemplate, isTemplateApproved } from './wa-cloud.js';
 
 const TTL_MS = 10 * 60 * 1000;          // 10 minutos
+
+// Plantilla AUTHENTICATION creada a mano en el Business Manager (la API del token
+// no puede crear esa categoría). NO va en WA_TEMPLATES: forma distinta (botón
+// copiar código, texto fijo de Meta) y el script de creación no debe tocarla.
+const WA_OTP_TEMPLATE = 'sono_otp_banco';
+
+// Anti-spam: 1 aviso por código y máx 3 por hora por cuenta (los bancos reenvían
+// el mismo correo y el cliente puede pedir varios códigos seguidos).
+const waOtpSent = new Map(); // accountId → { codes: Set, ats: number[] }
+
+// El código del banco expira en ~10 min y la cola wa_outbox tiene horarios y
+// delays humanizados que lo matarían: por eso va DIRECTO por la Cloud API.
+// Fire-and-forget: su fallo jamás bloquea la captura (la pantalla sigue siendo
+// la vía principal; esto es el refuerzo que le llega al celular).
+async function notifyOtpWa(accountId, code) {
+  try {
+    if (!isTemplateApproved(WA_OTP_TEMPLATE)) {
+      logger.warn({ accountId }, 'otp-wa: plantilla sono_otp_banco no aprobada aún — no se envía');
+      return;
+    }
+    const now = Date.now();
+    const e = waOtpSent.get(accountId) || { codes: new Set(), ats: [] };
+    e.ats = e.ats.filter((t) => now - t < 3600_000);
+    if (e.codes.has(code) || e.ats.length >= 3) return;
+    const order = getOrderByAccount(accountId);
+    const phone = normalizePhoneCO(order?.phone);
+    if (!phone) {
+      logger.warn({ accountId }, 'otp-wa: la cuenta no tiene orden con teléfono');
+      return;
+    }
+    await sendCloudTemplate(phone, {
+      name: WA_OTP_TEMPLATE,
+      language: { code: 'es' },
+      components: [
+        { type: 'body', parameters: [{ type: 'text', text: code }] },
+        { type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: code }] },
+      ],
+    });
+    e.codes.add(code);
+    e.ats.push(now);
+    waOtpSent.set(accountId, e);
+    logger.info({ accountId }, 'otp-wa: código del banco enviado por WhatsApp');
+  } catch (err) {
+    logger.warn({ accountId, err: err.message }, 'otp-wa: falló el envío (no bloquea la captura)');
+  }
+}
 
 // Patrones de "esto es un correo con un código de verificación" (banco confirmando
 // el cambio de correo). En español colombiano.
@@ -37,6 +86,7 @@ export function maybeCaptureOtp(accountId, { subject = '', text = '', html = '' 
   if (!code) return false;
   saveOtpCode(accountId, code);
   purgeOtpCodes(TTL_MS); // barrer vencidos de paso (baratísimo, tabla diminuta)
+  notifyOtpWa(accountId, code); // sin await: el WA es refuerzo, no requisito
   return true;
 }
 

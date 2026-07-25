@@ -234,6 +234,20 @@ export function isWaCloudActive() {
   return active;
 }
 
+/** ¿Meta ya aprobó esta plantilla? (cache de verifyTemplates, refresca c/10 min).
+ *  Cubre TODAS las plantillas de la WABA, no solo las de WA_TEMPLATES. */
+export function isTemplateApproved(name) {
+  return approvedTemplates.has(name);
+}
+
+/** Envío DIRECTO de una plantilla, sin pasar por la cola wa_outbox (ni sus
+ *  horarios/delays humanizados). Para avisos urgentes tipo OTP, que expiran
+ *  antes de que la cola drene. Lanza si Meta rechaza: el caller decide. */
+export async function sendCloudTemplate(phone, template) {
+  if (!config.WA_CLOUD_PHONE_NUMBER_ID) throw new Error('wa-cloud sin configurar');
+  return graphSend(phone, template);
+}
+
 async function verifyTemplates() {
   if (!config.WA_CLOUD_WABA_ID) {
     logger.warn('wa-cloud: sin WA_CLOUD_WABA_ID no se verifican plantillas; activando a ciegas');

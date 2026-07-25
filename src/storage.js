@@ -771,6 +771,20 @@ export function getOrderByPlanId(planId) {
   return db.prepare('SELECT * FROM orders WHERE mp_plan_id = ?').get(planId) || null;
 }
 
+/**
+ * Orden vinculada a una cuenta, para avisos al teléfono del cliente (ej. el OTP
+ * del banco por WhatsApp). Si hay varias (duplicadas), prefiere la que tenga
+ * teléfono y sea más reciente.
+ */
+export function getOrderByAccount(accountId) {
+  openDb();
+  if (!accountId) return null;
+  return db.prepare(
+    `SELECT * FROM orders WHERE account_id = ?
+     ORDER BY (phone IS NOT NULL AND phone != '') DESC, updated_at DESC LIMIT 1`
+  ).get(accountId) || null;
+}
+
 /** Busca la orden reciente (36 horas, no archivada) del mismo WhatsApp o correo.
  *  Detecta al cliente que está por duplicar su compra: el checkout avisa antes de
  *  crear otra orden (incidente Claudia jul-2026: speaker asignado a la duplicada).
