@@ -144,6 +144,18 @@ describe('Nequi egresos/no-venta (correos reales jul-2026, bug: sonaban como ing
     assert.equal(r.direction, 'in');
     assert.equal(r.amount, 10000);
   });
+
+  test('BBVA "Compra Exitosa" (compra con tarjeta del dueño) → jamás in', () => {
+    // Sonó como "Recibiste $53.000" en producción (spkr-009, jul-2026): el parser
+    // BBVA solo cubre el template Bre-B y este correo caía al genérico como ingreso.
+    const r = parseEmail({
+      from: 'BBVA@bbvanet.com.co',
+      subject: 'Compra Exitosa',
+      text: 'Realizaste una compra en ALMACENES EXITO por $53.000 con tu Tarjeta ' +
+        'Débito terminada en 1234. Número de autorización: 7368132.',
+    });
+    assert.notEqual(r?.direction, 'in');
+  });
 });
 
 describe('Bancolombia Bre-B (llave + cuenta para ruteo multipunto)', () => {

@@ -49,9 +49,11 @@ const OUTGOING_RE = /\b(transferiste|enviaste|pagaste|compraste|retiraste|hicist
 //   "¡Pago exitoso!" / "¡Pago rechazado!" → "Hiciste un pago en X por $Y" (dueño paga)
 //   "Te hicimos un reverso."            → devolución, no es venta
 //   "Cambiaste los montos en tu Nequi"  → config de topes, trae cifras pero no es pago
+//   "Compra Exitosa" (BBVA@bbvanet.com.co) → compra con tarjeta que HACE el dueño;
+//     sonó como "Recibiste $53.000" en spkr-009 (jul-2026) vía parser genérico.
 // Con estos asuntos JAMÁS se devuelve direction 'in' (anunciarlos hizo sonar
 // egresos como ventas en producción — bug jul-2026, ver tests).
-const NON_INCOMING_SUBJECT_RE = /enviaste\s+plata|pago\s+(?:exitoso|rechazado)|realizaste\s+un\s+env|reverso|cambiaste\s+los\s+montos/i;
+const NON_INCOMING_SUBJECT_RE = /enviaste\s+plata|pago\s+(?:exitoso|rechazado)|realizaste\s+un\s+env|reverso|cambiaste\s+los\s+montos|compra\s+exitosa/i;
 
 export function isNonIncomingSubject(subject) {
   return NON_INCOMING_SUBJECT_RE.test(subject || '');
