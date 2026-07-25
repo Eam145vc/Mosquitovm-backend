@@ -771,6 +771,26 @@ export function getOrderByPlanId(planId) {
   return db.prepare('SELECT * FROM orders WHERE mp_plan_id = ?').get(planId) || null;
 }
 
+/** Busca la orden reciente (36 horas, no archivada) del mismo WhatsApp o correo.
+ *  Detecta al cliente que está por duplicar su compra: el checkout avisa antes de
+ *  crear otra orden (incidente Claudia jul-2026: speaker asignado a la duplicada).
+ *  El teléfono se compara por dígitos (ignora espacios/+57); el correo en minúsculas. */
+export function findDuplicateOrder(phone, email) {
+  openDb();
+  const digits = String(phone || '').replace(/\D/g, '').slice(-10);
+  const mail = String(email || '').trim().toLowerCase();
+  if (!digits && !mail) return null;
+  const cutoff = Date.now() - 36 * 3600 * 1000;
+  const rows = db.prepare(
+    'SELECT * FROM orders WHERE archived_at IS NULL AND created_at >= ? ORDER BY created_at DESC'
+  ).all(cutoff);
+  return rows.find((o) => {
+    const oPhone = String(o.phone || '').replace(/\D/g, '').slice(-10);
+    const oMail = String(o.customer_email || '').trim().toLowerCase();
+    return (digits && oPhone === digits) || (mail && oMail === mail);
+  }) || null;
+}
+
 /** Actualiza campos de una orden. `patch` es un objeto { campo: valor }. */
 export function updateOrder(id, patch) {
   openDb();
@@ -789,6 +809,8 @@ export function updateOrder(id, patch) {
     'delivery',
     // soft-delete (archivar)
     'archived_at', 'prev_status',
+    // al reusar una orden pendiente desde el checkout (cliente cambió de plan)
+    'amount_cents',
   ]);
   const keys = Object.keys(patch).filter(k => allowed.has(k));
   if (keys.length === 0) return false;

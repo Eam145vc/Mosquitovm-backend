@@ -40,7 +40,7 @@ import {
 } from './oauth-microsoft.js';
 import {
   upsertAccount, listAccounts, getAccount, getAccountByEmail, getAccountByAlias, setAccountSpeaker,
-  createOrder, getOrder, getOrderByPlanId, updateOrder, listOrders,
+  createOrder, getOrder, getOrderByPlanId, updateOrder, listOrders, findDuplicateOrder,
   createDevice, getDevice, listDevices, assignDevice, unassignDevice, setDeviceStatus,
   setDeviceBrebKey, listDevicesByAccount, findDeviceByKey,
   listDeviceKeys, addDeviceKey, removeDeviceKey,
@@ -376,9 +376,30 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     if (!config.hasEfipay && !config.hasStripe && !config.hasMp) {
       return reply.code(503).send({ error: 'checkout no configurado' });
     }
-    const { business_name, bank, address, city, phone, email, plan, delivery, city_dane } = req.body || {};
+    const { business_name, bank, address, city, phone, email, plan, delivery, city_dane, force, reuse_order } = req.body || {};
     if (!business_name || !address || !phone) {
       return reply.code(400).send({ error: 'faltan nombre, direccion o telefono' });
+    }
+    // DUPLICADOS: mismo WhatsApp/correo con una orden reciente → NO creamos otra a
+    // ciegas. Devolvemos la existente y el front pregunta: seguir con esa (editar
+    // plan / medio de pago) o confirmar que es una compra nueva (force=true).
+    if (!force && !reuse_order) {
+      const dup = findDuplicateOrder(phone, email);
+      if (dup) {
+        logger.info({ dupOrderId: dup.id, phone, email }, 'checkout: orden duplicada detectada, se pregunta al cliente');
+        return {
+          duplicate: true,
+          existing: {
+            orderId: dup.id,
+            paid: isPaid(dup),
+            status: dup.status,
+            plan: dup.plan === 'cuotas' ? 'cuotas' : 'contado',
+            delivery: dup.delivery === 'contraentrega' ? 'contraentrega' : 'online',
+            amount: Math.round(dup.amount_cents / 100),
+            createdAt: dup.created_at,
+          },
+        };
+      }
     }
     // Ciudad elegida del autocomplete: si el DANE es válido, la ciudad se guarda con el
     // nombre canónico del catálogo (concuerda 1:1 con el sistema de envíos Skydropx).
@@ -391,7 +412,18 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     // cliente paga al recibir la 1ª cuota + envío + recargo = $86.000).
     const amountCents = (PLAN_PRICES_CENTS[plan] ?? PLAN_PRICES_CENTS.contado)
       + (esContraentrega ? RECARGO_CONTRAENTREGA_CENTS : 0);
-    const orderId = createOrder({ amountCents });            // external_reference = orderId
+    // EDITAR en vez de duplicar: si el cliente eligió "continuar con mi orden", se
+    // reusa la pendiente (mismo id/link) con los datos y plan nuevos. Solo aplica a
+    // órdenes SIN pagar; una pagada nunca se pisa (esa sí sería compra nueva).
+    let orderId;
+    const reusing = reuse_order ? getOrder(String(reuse_order)) : null;
+    if (reusing && !isPaid(reusing) && !reusing.archived_at) {
+      orderId = reusing.id;
+      updateOrder(orderId, { amount_cents: amountCents, status: 'created' });
+      logger.info({ orderId, plan: planNorm }, 'checkout: orden pendiente reusada (cliente editó su compra)');
+    } else {
+      orderId = createOrder({ amountCents });                // external_reference = orderId
+    }
     updateOrder(orderId, {
       business_name, bank: bank || null, address, phone,
       city: ciudadCatalogo ? ciudadCatalogo.city : (city || null),
@@ -1261,6 +1293,12 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     if (!file) return reply.code(400).send({ error: 'no file' });
     const ext = MIME_EXT[file.mimetype];
     if (!ext) return reply.code(415).send({ error: 'formato no soportado (usa png/jpg/webp/pdf)' });
+    // Banco elegido en el paso del QR (el front lo manda antes del file, así queda
+    // en file.fields). Whitelist: solo los bancos compatibles.
+    const bankField = file.fields?.bank;
+    const bankChoice = bankField && !Array.isArray(bankField) && bankField.value
+      ? String(bankField.value).toLowerCase() : null;
+    const BANK_CHOICES = new Set(['nequi', 'bancolombia', 'bbva']);
 
     const buf = await file.toBuffer();
     if (buf.length > 5 * 1024 * 1024) return reply.code(413).send({ error: 'archivo muy grande' });
@@ -1280,7 +1318,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
         error: 'Ese no es un QR de Bre-B. Sube el QR de Bre-B que generás desde la app de tu banco (Bancolombia, Nequi o BBVA), no otro QR.',
       });
     }
-    logger.info({ orderId: order.id, bytes: buf.length }, 'qr subido');
+    // Persistir el banco elegido (fuera de processQrUpload, que comparte el admin).
+    if (bankChoice && BANK_CHOICES.has(bankChoice)) updateOrder(order.id, { bank: bankChoice });
+    logger.info({ orderId: order.id, bytes: buf.length, bank: bankChoice || undefined }, 'qr subido');
     return { ok: true };
   });
 
