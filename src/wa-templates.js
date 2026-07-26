@@ -94,4 +94,11 @@ export const WA_TEMPLATES = {
     bodyExample: ['Carlos'],
     button: { text: 'Subir el QR correcto', urlBase: ACTIVAR },
   },
+  // QR NO es de Bre-B: el cliente subió un QR normal / de recaudo / de otra red, no
+  // el QR de Bre-B ligado a su llave (el único que Sonó puede leer). Manual desde el panel.
+  sono_qr_no_breb: {
+    body: 'Hola {{1}} 👋 Gracias por enviar tu QR. Revisándolo vimos que no es el QR de Bre-B (el que va ligado a tu llave, tu @arroba o tu número). Sonó solo puede anunciar los pagos que entran por Bre-B. Genéralo desde tu app de Nequi, Bancolombia Personas o BBVA en la opción de Bre-B, y súbelo por aquí para dejar tu equipo listo.',
+    bodyExample: ['Carlos'],
+    button: { text: 'Subir mi QR de Bre-B', urlBase: ACTIVAR },
+  },
 };

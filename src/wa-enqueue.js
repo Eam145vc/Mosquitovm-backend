@@ -149,6 +149,10 @@ export function buildWaBody(order, kind) {
   if (kind === 'qr_incompatible') {
     return `${hola} 👋 Gracias por subir tu QR. Te contamos que Sonó por ahora no es compatible con cuentas de Bancolombia Negocios; sí funciona con Bancolombia Personas, Nequi o BBVA. Genera el QR de Bre-B desde una de esas cuentas y súbelo aquí para dejar tu Sonó listo: ${link}`;
   }
+  // 'qr_no_breb': el cliente subió un QR que NO es de Bre-B (normal/recaudo/otra red). Manual.
+  if (kind === 'qr_no_breb') {
+    return `${hola} 👋 Gracias por enviar tu QR. Revisándolo vimos que no es el QR de Bre-B (el que va ligado a tu llave, tu @arroba o tu número). Sonó solo puede anunciar los pagos que entran por Bre-B. Genéralo desde tu app de Nequi, Bancolombia Personas o BBVA en la opción de Bre-B, y súbelo aquí para dejar tu equipo listo: ${link}`;
+  }
   // ── Avisos de tracking (webhook de Skydropx) ──────────────────────────────
   // 'reparto' (last_mile): el paquete sale a entrega HOY. En COD es el aviso clave:
   // que el cliente esté en el local y con el efectivo (las devoluciones las paga Sonó).
