@@ -772,6 +772,19 @@ export function getOrderByPlanId(planId) {
 }
 
 /**
+ * Última vez que ESTE teléfono nos escribió (ms epoch). Define si la ventana de
+ * servicio de 24h de la Cloud API está abierta (texto libre sin plantilla).
+ */
+export function lastWaInboundAt(phone) {
+  openDb();
+  if (!phone) return null;
+  const r = db.prepare(
+    "SELECT MAX(received_at) AS at FROM wa_inbound WHERE phone = ? AND direction = 'in'"
+  ).get(phone);
+  return r?.at || null;
+}
+
+/**
  * Orden vinculada a una cuenta, para avisos al teléfono del cliente (ej. el OTP
  * del banco por WhatsApp). Si hay varias (duplicadas), prefiere la que tenga
  * teléfono y sea más reciente.
