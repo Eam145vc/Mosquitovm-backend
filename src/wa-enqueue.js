@@ -4,7 +4,7 @@
 
 import { config } from './config.js';
 import { logger } from './logger.js';
-import { enqueueWa, enqueueWaForce, getShipmentByOrder, hasRecentWa, listOrders, getActiveIntentByOrder } from './storage.js';
+import { enqueueWa, enqueueWaForce, getShipmentByOrder, hasRecentWa, listOrders } from './storage.js';
 
 // Mensajes de onboarding: son genéricos ("sube tu QR"), así que si el MISMO teléfono ya
 // recibió ese tipo hace poco por OTRA orden (cliente que reintentó el checkout y quedó
@@ -183,14 +183,14 @@ export function buildWaBody(order, kind) {
       `${hola}, ¡ya recibiste tu Sonó! 🎉 Para activarlo, conecta el correo donde te llegan los avisos de pago (2 min): ${emailLinkFor(order)}. Cualquier duda, escríbeme por aquí.`,
     ]);
   }
-  // Cobro de cuotas 2-3 (Bre-B, monto único del pool). El texto que llega de verdad
-  // va por la plantilla Cloud (sono_cuota); este body queda para el registro/CRM.
+  // Cobro de cuotas 2-3 (Bre-B): SOLO avisa, no reserva monto (eso pasa al tocar
+  // "Voy a pagar" en la página). El texto real va por la plantilla Cloud
+  // (sono_cuota); este body queda para el registro/CRM.
   if (kind === 'cuota_2' || kind === 'cuota_3') {
     const n = kind === 'cuota_3' ? 3 : 2;
-    const intent = getActiveIntentByOrder(order.id, 'cuota');
-    const monto = moneyCo((intent ? intent.amount : 69000) * 100);
+    const monto = moneyCo(69_000 * 100);
     const base = (config.FRONTEND_BASE_URL || 'https://sono.lat').replace(/\/$/, '');
-    return `${hola} 👋 Te recordamos la cuota ${n} de 3 de tu Sonó: ${monto}. Págala con Bre-B enviando exactamente ${monto} a nuestra llave de Nequi ${config.SONO_BREB_KEY || ''}. QR y llave: ${base}/cuota/?order=${order.id}`;
+    return `${hola} 👋 Te recordamos la cuota ${n} de 3 de tu Sonó: ${monto}. Toca el botón cuando vayas a pagarla: ${base}/cuota/?order=${order.id}`;
   }
   // recordatorio_24h
   return pickVariant(order.id, [

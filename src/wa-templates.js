@@ -69,13 +69,16 @@ export const WA_TEMPLATES = {
     bodyExample: ['Carlos'],
     button: { text: 'Conectar mi correo', urlBase: ACTIVAR_CORREO },
   },
-  // Cobro de cuotas 2-3 por Bre-B: el monto es ÚNICO por cliente (pool de montos,
-  // $69.000 → $68.999 → …) y así el correo del banco identifica quién pagó. El
-  // botón lleva a la página con el QR + llave copiable + monto gigante.
-  sono_cuota: {
-    body: 'Hola {{1}} 👋 Te recordamos la cuota {{2}} de 3 de tu Sonó: {{3}}. La pagas con Bre-B desde tu banco enviando exactamente ese valor a nuestra llave de Nequi: {{4}} — así queda registrada solita. En el botón tienes el QR y la llave lista para copiar.',
-    bodyExample: ['Carlos', '2', '$69.000', '0091787460'],
-    button: { text: 'Ver QR y pagar', urlBase: CUOTA },
+  // Cobro de cuotas 2-3 por Bre-B: SOLO avisa, no reserva nada todavía. El monto
+  // ÚNICO del pool ($69.000 → $68.999 → …) se asigna recién cuando el cliente
+  // toca "Voy a pagar" en la página — ahí se abre la ventana corta con el QR.
+  // _v2 (27-jul): la v1 (4 variables, monto pooled en el mensaje) quedó PENDING
+  // sin aprobar y sin permiso de borrado por API; se versiona el nombre en vez
+  // de editarla (regla de Meta, ver cabecera del archivo).
+  sono_cuota_v2: {
+    body: 'Hola {{1}} 👋 Te recordamos la cuota {{2}} de 3 de tu Sonó: {{3}}. Toca el botón cuando vayas a pagarla y te damos el QR de Bre-B al instante.',
+    bodyExample: ['Carlos', '2', '$69.000'],
+    button: { text: 'Voy a pagar', urlBase: CUOTA },
   },
   sono_libreta: {
     body: 'Hola {{1}} 📒 Esta es tu Libreta: ahí ves cada venta entrar en vivo, cuánto llevas hoy y tus mejores horas. Es tu enlace personal, guárdalo.',

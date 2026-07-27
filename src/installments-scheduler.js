@@ -17,7 +17,6 @@ import { config } from './config.js';
 import { logger } from './logger.js';
 import {
   listOrders, updateOrder, getOrder, setSubStatus,
-  createPaymentIntent, claimPooledAmount, getActiveIntentByOrder, countIntentsFor,
 } from './storage.js';
 import { chargeWithToken } from './efipay.js';
 import { enqueueWhatsAppForce, orderSilenciada } from './wa-enqueue.js';
@@ -26,12 +25,17 @@ const DAY = 24 * 3600 * 1000;
 const MAX_FAILS = 3; // al 3er fallo consecutivo se suspende el servicio
 
 // ── Cobro por Bre-B (órdenes SIN tarjeta tokenizada: Bre-B/PSE/contraentrega) ──
-// Pool de montos (idea del dueño): cada cobro activo reserva un monto único
-// ($69.000 → $68.999 → … → $68.951) y el correo de Nequi identifica quién pagó.
-export const CUOTA_POOL_SIZE = 50;               // hasta 50 cobros activos a la vez
-export const CUOTA_INTENT_TTL_MS = 72 * 3600 * 1000; // el cliente paga cuando pueda (3 días)
+// Pool de montos (idea del dueño): cada cobro ACTIVO reserva un monto único
+// ($69.000 → $68.999 → …) y el correo de Nequi identifica quién pagó. El monto
+// se reserva SOLO cuando el cliente toca "Voy a pagar" en /cuota — el
+// recordatorio de WhatsApp no abre ninguna ventana ni reserva nada, solo avisa.
+// Ventana CORTA (igual espíritu que el checkout: se abre al pedirla, se cierra
+// si no se usa) para que el pool rote rápido y libere el monto para el siguiente.
+export const CUOTA_POOL_SIZE = 20;               // hasta 20 cobros "en pantalla" a la vez
+export const CUOTA_INTENT_TTL_MS = 5 * 60 * 1000; // 5 min desde que toca "Voy a pagar"
 export const CUOTA_MATCH_GRACE_MS = 45_000;      // misma gracia que el matcher del checkout
-const MAX_RECORDATORIOS = 3;                     // 3 intents vencidos sin pago → gestión manual
+const MAX_RECORDATORIOS = 3;                     // 3 recordatorios sin pago → gestión manual
+const REMINDER_EVERY_MS = 3 * DAY;               // cadencia entre recordatorios
 
 /**
  * ¿A esta orden le toca cobrar una cuota por Bre-B, y cuál? Devuelve { n } o null.
@@ -181,10 +185,12 @@ async function runDueInstallments() {
   }
 }
 
-// Una pasada de RECORDATORIOS Bre-B: para cada orden con cuota vencida y sin
-// intent activo, reserva un monto del pool y (re)manda la plantilla sono_cuota.
-// Cada intent dura 72 h; si vence sin pago, la siguiente pasada crea otro y
-// re-manda (≈1 recordatorio cada 3 días, máx 3 → luego 'en_mora' manual).
+// Una pasada de RECORDATORIOS Bre-B: para cada orden con cuota vencida, manda
+// (o remanda) la plantilla sono_cuota SIN reservar monto ni crear intent — es
+// solo un aviso ("debes la cuota N"). El monto se reserva únicamente cuando el
+// cliente toca "Voy a pagar" en /cuota (ver POST /cuota/:order/pagar en
+// http-server.js). Cadencia por installment_reminder_at/count (no por intents,
+// que ahora son efímeros): ~1 recordatorio cada 3 días, máx 3 → 'en_mora' manual.
 // Apagado por defecto: se enciende con CUOTAS_WA_ENABLED=1 en el .env, para que
 // el primer envío masivo sea una decisión consciente del dueño.
 export function runBrebInstallmentReminders({ dryRun = false } = {}) {
@@ -201,26 +207,22 @@ export function runBrebInstallmentReminders({ dryRun = false } = {}) {
   for (const order of due) {
     const d = installmentDue(order, now);
     if (!d) continue;
-    if (getActiveIntentByOrder(order.id, 'cuota')) continue; // cobro en curso, no repetir
-    const intentos = countIntentsFor(order.id, 'cuota', d.n);
-    if (intentos >= MAX_RECORDATORIOS) {
+    const count = order.installment_reminder_count || 0;
+    if (count >= MAX_RECORDATORIOS) {
       if (order.installments_state !== 'en_mora') {
         if (!dryRun) updateOrder(order.id, { installments_state: 'en_mora' });
         acciones.push({ orderId: order.id, business: order.business_name, cuota: d.n, accion: 'en_mora' });
-        logger.warn({ orderId: order.id, cuota: d.n, intentos }, 'cuotas breb: sin pago tras recordatorios, EN MORA (gestión manual)');
+        logger.warn({ orderId: order.id, cuota: d.n, count }, 'cuotas breb: sin pago tras recordatorios, EN MORA (gestión manual)');
       }
       continue;
     }
-    const amount = claimPooledAmount(Math.round(CUOTA_2_3_CENTS / 100), CUOTA_POOL_SIZE, { graceMs: CUOTA_MATCH_GRACE_MS });
-    if (amount === null) {
-      logger.warn({ orderId: order.id }, 'cuotas breb: pool de montos lleno, se difiere a la próxima pasada');
-      break; // el pool es global: si está lleno, no insistir con las demás
-    }
-    acciones.push({ orderId: order.id, business: order.business_name, cuota: d.n, amount, accion: intentos === 0 ? 'recordatorio' : `reintento_${intentos + 1}` });
+    const lastAt = order.installment_reminder_at || 0;
+    if (now - lastAt < REMINDER_EVERY_MS) continue; // ya se le avisó hace poco
+    acciones.push({ orderId: order.id, business: order.business_name, cuota: d.n, accion: count === 0 ? 'recordatorio' : `reintento_${count + 1}` });
     if (dryRun) continue;
-    createPaymentIntent({ orderId: order.id, amount, ttlMs: CUOTA_INTENT_TTL_MS, kind: 'cuota', installmentN: d.n });
+    updateOrder(order.id, { installment_reminder_at: now, installment_reminder_count: count + 1 });
     enqueueWhatsAppForce(order, d.n === 3 ? 'cuota_3' : 'cuota_2');
-    logger.info({ orderId: order.id, cuota: d.n, amount, intento: intentos + 1 }, 'cuotas breb: recordatorio encolado');
+    logger.info({ orderId: order.id, cuota: d.n, intento: count + 1 }, 'cuotas breb: recordatorio encolado (sin monto reservado)');
   }
   return acciones;
 }

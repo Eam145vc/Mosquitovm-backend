@@ -289,6 +289,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
         updateOrder(order.id, {
           installments_paid: nowPaid,
           installment_fails: 0,
+          installment_reminder_at: null,
+          installment_reminder_count: 0,
           installments_state: done ? 'completado' : 'al_dia',
           installment_next_at: done ? null : Date.now() + 30 * 24 * 3600 * 1000,
         });
@@ -773,8 +775,11 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
   });
 
   // ── Cobro de cuotas 2-3 por Bre-B (página pública sono.lat/cuota/?order=ID) ──
-  // Devuelve (creando si toca) el intent de cuota vigente: monto único del pool,
-  // llave y QR. El cliente llega desde el botón de la plantilla de WhatsApp.
+  // Lectura SIN reservar nada: el cliente llega desde el botón de la plantilla y
+  // ve "debes la cuota N: $69.000" con un botón "Voy a pagar". El monto del pool
+  // solo se reserva al tocar ese botón (POST /cuota/:order/pagar, ventana corta).
+  // Si ya hay un intent vigente (recargó la página tras tocar pagar), se devuelve
+  // igual para no perder el QR ni reiniciar el contador.
   app.get('/cuota/:order', async (req, reply) => {
     if (!config.hasOwnBreb) return reply.code(503).send({ error: 'pagos no configurados' });
     const order = getOrder(req.params.order);
@@ -784,17 +789,44 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       const paid = order.installments_paid || 0;
       return { pendiente: false, cuotasPagadas: paid, cuotasTotal: order.installments_total || 3 };
     }
+    const intent = getActiveIntentByOrder(order.id, 'cuota');
+    if (intent) {
+      return {
+        pendiente: true, pagando: true,
+        cuota: intent.installment_n || due.n, cuotasTotal: order.installments_total || 3,
+        amount: intent.amount, remainingMs: Math.max(0, intent.expires_at - Date.now()),
+        qrData: config.SONO_BREB_EMVCO, key: config.SONO_BREB_KEY || null, business: order.business_name || null,
+      };
+    }
+    return {
+      pendiente: true, pagando: false,
+      cuota: due.n,
+      cuotasTotal: order.installments_total || 3,
+      // Monto plano informativo (aún sin reservar): lo real puede diferir en 1-19
+      // pesos cuando toque "Voy a pagar" (le tocará un slot libre del pool).
+      amount: Math.round(CUOTA_2_3_CENTS / 100),
+      business: order.business_name || null,
+    };
+  });
+
+  // Toca "Voy a pagar": reserva un monto del pool y abre la ventana corta (5 min).
+  app.post('/cuota/:order/pagar', async (req, reply) => {
+    if (!config.hasOwnBreb) return reply.code(503).send({ error: 'pagos no configurados' });
+    const order = getOrder(req.params.order);
+    if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
+    const due = installmentDue(order);
+    if (!due) return reply.code(409).send({ error: 'no tienes cuotas pendientes' });
     let intent = getActiveIntentByOrder(order.id, 'cuota');
     if (!intent) {
       const amount = claimPooledAmount(Math.round(CUOTA_2_3_CENTS / 100), CUOTA_POOL_SIZE, { graceMs: CUOTA_MATCH_GRACE_MS });
-      if (amount === null) return reply.code(202).send({ queued: true, retryInMs: 15000 });
+      if (amount === null) return reply.code(202).send({ queued: true, retryInMs: 4000 });
       intent = createPaymentIntent({
         orderId: order.id, amount, ttlMs: CUOTA_INTENT_TTL_MS, kind: 'cuota', installmentN: due.n,
       });
-      logger.info({ orderId: order.id, intentId: intent.id, amount, cuota: due.n }, 'cuota: intent creado (página)');
+      logger.info({ orderId: order.id, intentId: intent.id, amount, cuota: due.n }, 'cuota: ventana de pago abierta (voy a pagar)');
     }
     return {
-      pendiente: true,
+      pendiente: true, pagando: true,
       cuota: intent.installment_n || due.n,
       cuotasTotal: order.installments_total || 3,
       amount: intent.amount,

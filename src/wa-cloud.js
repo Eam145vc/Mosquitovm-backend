@@ -19,7 +19,7 @@ import { config } from './config.js';
 import { logger } from './logger.js';
 import {
   claimWaPending, markWaSent, getWaSettings, touchWaAgent, countWaSentSince,
-  getShipmentByOrder, getOrder, insertWaInbound, getActiveIntentByOrder,
+  getShipmentByOrder, getOrder, insertWaInbound,
 } from './storage.js';
 import { bogotaHour, startOfBogotaDay, withinActiveHours, randDelay, sleep } from './wa-shared.js';
 import { moneyCo, esCodPendiente, firstNameOf } from './wa-enqueue.js';
@@ -91,13 +91,10 @@ export function buildWaCloudPayload(order, kind, shipment = null) {
   if (kind === 'correo') return tpl('sono_correo', [nombre]);
   if (kind === 'libreta') return tpl('sono_libreta', [nombre]);
   if (kind === 'cuota_2' || kind === 'cuota_3') {
-    // El monto sale del intent de cuota vigente (monto único del pool). Si por
-    // carrera no hay intent, cae al valor pleno — el matcher igual concilia por
-    // el intent que exista al pagar.
-    const intent = getActiveIntentByOrder(order.id, 'cuota');
-    const montoPesos = intent ? intent.amount : 69000;
+    // El recordatorio SOLO avisa (monto plano de $69.000): el monto único del
+    // pool se reserva recién cuando el cliente toca "Voy a pagar" en la página.
     const n = kind === 'cuota_3' ? '3' : '2';
-    return tpl('sono_cuota', [nombre, n, moneyCo(montoPesos * 100), config.SONO_BREB_KEY || '0091787460']);
+    return tpl('sono_cuota_v2', [nombre, n, moneyCo(69_000 * 100)]);
   }
   if (kind === 'qr_problema') return tpl('sono_qr_problema', [nombre]);
   if (kind === 'conexion') return tpl('sono_conexion', [nombre]);

@@ -228,6 +228,11 @@ export function openDb() {
     ['installment_next_at', 'INTEGER'],// epoch ms de cuándo toca cobrar la próxima cuota (NULL si no quedan)
     ['installment_fails', 'INTEGER'],  // intentos fallidos consecutivos de la cuota pendiente
     ['installments_state', 'TEXT'],   // NULL | 'al_dia' | 'en_mora' | 'completado' | 'suspendido'
+    // Cobro Bre-B de cuotas (SIN tarjeta): el recordatorio por WhatsApp NO reserva
+    // monto (eso solo pasa cuando el cliente toca "Voy a pagar" en /cuota). Estos
+    // campos solo controlan la CADENCIA de recordatorios (~1 cada 3 días, máx 3).
+    ['installment_reminder_at', 'INTEGER'],
+    ['installment_reminder_count', 'INTEGER'],
     // payment_id de EfiPay del pago en curso (PSE/Bre-B/efectivo): permite consultar el
     // estado por API si el webhook no llega (red de seguridad anti-pagos-atascados).
     ['efi_payment_id', 'TEXT'],
@@ -837,6 +842,7 @@ export function updateOrder(id, patch) {
     // plan de cuotas
     'plan', 'card_token', 'installments_total', 'installments_paid',
     'installment_next_at', 'installment_fails', 'installments_state',
+    'installment_reminder_at', 'installment_reminder_count',
     'efi_payment_id',
     // llave Bre-B del QR (multipunto)
     'breb_key', 'breb_qr_json', 'local_name',
