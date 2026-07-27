@@ -72,7 +72,21 @@ jobs:
             set -e
             cd /home/sono/backend
             echo "==> sintaxis"
-            node --check src/http-server.js
+            # Con retry: el run 30278667516 (27-jul) murió acá con exit 1 sin mensaje,
+            # justo tras el scp — todo apunta a leer el archivo recién subido a medio
+            # flush. A mano, segundos después, el mismo check pasaba. drone-ssh además
+            # se traga el stderr, así que imprimimos el error real en el último intento.
+            ok=""
+            for i in 1 2 3; do
+              if node --check src/http-server.js; then ok=1; break; fi
+              echo "==> node --check falló (intento $i), reintento en 2s"
+              sleep 2
+            done
+            if [ -z "$ok" ]; then
+              echo "==> sintaxis inválida en src/http-server.js:"
+              node --check src/http-server.js 2>&1 || true
+              exit 1
+            fi
 
             # Instalar dependencias SOLO si package-lock cambió. La mayoría de deploys tocan
             # solo src/ y NO deben rozar node_modules: `npm ci` borra node_modules entero, así

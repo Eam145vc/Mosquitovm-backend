@@ -107,7 +107,10 @@ export function extractBrebKey(emvco) {
   const c = findNs('CO.COM.RBM.LLA');
   const cu = findNs('CO.COM.RBM.CU');
   const account = cu ? rawVal(cu['01']) : null;
-  const merchantName = (typeof tlv['59'] === 'string' ? tlv['59'] : null);
+  // tag 59 = nombre del comercio. Algunos bancos ponen basura ("0", un char):
+  // no sirve como nombre del local, mejor null y que caiga al business_name.
+  const rawName = typeof tlv['59'] === 'string' ? tlv['59'].trim() : '';
+  const merchantName = rawName.length > 1 ? rawName : null;
 
   // Variante sin template LLA: la llave es el número del namespace CU (coincide con lo
   // que Bancolombia imprime como "Llave: NNNN" bajo el QR).

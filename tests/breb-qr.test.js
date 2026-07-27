@@ -35,7 +35,9 @@ describe('extractBrebKey', () => {
     assert.equal(r.key, '@jhon437203');
     assert.equal(r.keyType, 'alias');
     assert.equal(r.routable, true);
-    assert.equal(r.merchantName, '0'); // este QR trae "0" como nombre
+    // este QR trae "0" como nombre (basura del banco) → se descarta, mejor null
+    // para que el local caiga al business_name de la orden.
+    assert.equal(r.merchantName, null);
   });
 
   test('QR con llave numérica → 0029353497, ruteable (Bancolombia la rotula "Llave")', () => {
