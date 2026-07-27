@@ -15,6 +15,7 @@
 
 import { Jimp } from 'jimp';
 import jsQR from 'jsqr';
+import { readBarcodes } from 'zxing-wasm/reader';
 
 // Tags EMVCo que son "templates" (contienen sub-TLV). 02-51 = merchant account info,
 // 62/64 = additional data, 80-99 = namespaces propietarios de Bre-B.
@@ -166,17 +167,56 @@ export function decodeBrebString(emvco) {
  * @returns {Promise<{qrText: string|null, decoded: object|null, isBreb: boolean}>}
  */
 export async function scanBrebImage(imageBuffer) {
+  let firstText = null;
+  // Registra el primer texto leído (para distinguir "foto ilegible" de "QR no-Bre-B")
+  // y devuelve el decode si el texto es un Bre-B parseable.
+  const tryText = (text) => {
+    if (!text) return null;
+    if (!firstText) firstText = text;
+    return decodeBrebString(text);
+  };
+
+  // Lector principal: zxing (motor zxing-cpp vía WASM). Lee QRs densos, chicos,
+  // rotados o con sombra que jsQR no puede (caso jul-2026: QR de 302px con marco
+  // "polaroid" que la app del banco leía perfecto y jsQR fallaba en toda la cascada).
+  // Primero el archivo tal cual — zxing decodifica el PNG/JPG por su cuenta.
+  const ZXING_OPTS = { formats: ['QRCode'], tryHarder: true };
+  try {
+    for (const code of await readBarcodes(new Blob([imageBuffer]), ZXING_OPTS)) {
+      const decoded = tryText(code.text);
+      if (decoded) return { qrText: code.text, decoded, isBreb: true };
+    }
+  } catch { /* seguir con las variantes */ }
+
   let base;
   try {
     base = await Jimp.read(imageBuffer);
   } catch {
-    return { qrText: null, decoded: null, isBreb: false };
+    return { qrText: firstText, decoded: null, isBreb: isBrebString(firstText) };
   }
-  // jsQR es sensible a la resolución y el contraste: el template oficial de
-  // Bancolombia (880px, QR con logo al centro) fallaba tal cual pero decodifica
-  // reescalado (visto jul-2026, orden de Vera Sáenz). Intentos en cascada; el
-  // primero que decodifique un Bre-B válido gana. Si ninguno decodifica Bre-B pero
-  // alguno SÍ leyó un QR, devolvemos ese texto (la foto era legible).
+
+  // Variantes preprocesadas para zxing: sharpen recupera QRs borrosos/reescalados
+  // (kernel unsharp 3x3), el upscale ayuda con módulos de ~3px.
+  const SHARPEN = [[-0.125, -0.125, -0.125], [-0.125, 2, -0.125], [-0.125, -0.125, -0.125]];
+  const zxingVariants = [
+    () => base.clone().greyscale().convolute(SHARPEN),
+    () => base.clone().resize({ w: base.bitmap.width * 2 }).greyscale().convolute(SHARPEN),
+    () => base.clone().greyscale().contrast(0.5),
+  ];
+  for (const make of zxingVariants) {
+    try {
+      const { data, width, height } = make().bitmap;
+      const codes = await readBarcodes({ data: new Uint8ClampedArray(data), width, height }, ZXING_OPTS);
+      for (const code of codes) {
+        const decoded = tryText(code.text);
+        if (decoded) return { qrText: code.text, decoded, isBreb: true };
+      }
+    } catch { /* siguiente variante */ }
+  }
+
+  // Último recurso: la cascada jsQR original (por si zxing no leyera algo que
+  // jsQR sí — p.ej. el template oficial de Bancolombia 880px reescalado, visto
+  // jul-2026, orden de Vera Sáenz).
   const attempts = [
     () => base,
     () => base.clone().greyscale().contrast(0.5),
@@ -185,14 +225,12 @@ export async function scanBrebImage(imageBuffer) {
     () => base.clone().resize({ w: 600 }),
     () => base.clone().resize({ w: 400 }),
   ];
-  let firstText = null;
   for (const make of attempts) {
     try {
       const { data, width, height } = make().bitmap;
       const code = jsQR(new Uint8ClampedArray(data), width, height);
       if (code && code.data) {
-        if (!firstText) firstText = code.data;
-        const decoded = decodeBrebString(code.data);
+        const decoded = tryText(code.data);
         if (decoded) return { qrText: code.data, decoded, isBreb: true };
       }
     } catch { /* siguiente intento */ }
