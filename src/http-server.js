@@ -57,7 +57,7 @@ import {
   insertWaInbound, listWaInbound, updateWaDeliveryByWamid, countWaSentSince, setWaInboundMedia,
   getShipmentByOrder, updateShipmentRow, renameDeviceLocal, listShipments,
   insertUgcApplication, listUgcApplications, countUgcNuevo, setUgcStatus, deleteUgcApplication,
-  createPaymentIntent, getPaymentIntent, matchPaymentIntent,
+  createPaymentIntent, getPaymentIntent, matchPaymentIntent, claimPooledAmount, getActiveIntentByOrder,
   speakersForBank,
 } from './storage.js';
 import { bogotaDayStart, bogotaDayStartFromKey, bogotaMonthStart, bogotaPrevMonthStart, DAY_MS } from './libreta-time.js';
@@ -76,11 +76,14 @@ import { generatePaymentLink, chargeCard, chargePse, chargeBreb, chargeCash, get
 import * as announceLog from './announce-log.js';
 import { sendActivationEmail } from './activation-email.js';
 import { enqueueWhatsApp, enqueueWhatsAppForce, normalizePhoneCO, ESTADOS_SIN_MENSAJES } from './wa-enqueue.js';
-import { isWaCloudActive, downloadWaMedia } from './wa-cloud.js';
+import { isWaCloudActive, downloadWaMedia, sendCloudText } from './wa-cloud.js';
 import { bogotaHour, startOfBogotaDay, withinActiveHours } from './wa-shared.js';
 import { notifyAdmins } from './support/webpush.js';
 import { notifySale } from './sale-push.js';
-import { CUOTA_2_3_CENTS } from './installments-scheduler.js';
+import {
+  CUOTA_2_3_CENTS, installmentDue, runBrebInstallmentReminders,
+  CUOTA_POOL_SIZE, CUOTA_INTENT_TTL_MS, CUOTA_MATCH_GRACE_MS,
+} from './installments-scheduler.js';
 import { publishVoice, publishCommand } from './mqtt-publisher.js';
 import { buildVoiceMessage } from './amount-to-wavs.js';
 import { startLatency, markVoicePublished } from './latency.js';
@@ -276,6 +279,34 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       }
       const order = getOrder(intent.order_id);
       if (!order) { logger.error({ intentId: intent.id, orderId: intent.order_id }, 'breb propio: intent sin orden'); return; }
+
+      // ── CUOTA 2/3: no toca el estado de la orden (ya está pagada/despachada);
+      // registra la cuota, confirma por WhatsApp y agenda la siguiente. ──
+      if (intent.kind === 'cuota') {
+        const total = order.installments_total || 3;
+        const nowPaid = Math.max(1, order.installments_paid || 0) + 1;
+        const done = nowPaid >= total;
+        updateOrder(order.id, {
+          installments_paid: nowPaid,
+          installment_fails: 0,
+          installments_state: done ? 'completado' : 'al_dia',
+          installment_next_at: done ? null : Date.now() + 30 * 24 * 3600 * 1000,
+        });
+        logger.info({ orderId: order.id, intentId: intent.id, cuota: intent.installment_n, amount: result.amount },
+          done ? 'cuota cobrada (breb propio) — plan COMPLETADO' : 'cuota cobrada (breb propio)');
+        notifySale(getOrder(order.id), `Cuota ${intent.installment_n || nowPaid} · QR Nequi`);
+        // Confirmación al cliente (texto libre; si la ventana de 24 h está cerrada,
+        // se omite en silencio — el cliente igual ve el pago en su banco).
+        const phone = normalizePhoneCO(order.phone);
+        if (phone) {
+          const msg = done
+            ? `✅ ¡Recibimos tu última cuota! Tu Sonó quedó pago por completo. Gracias por confiar en nosotros 💚`
+            : `✅ Recibimos tu cuota ${intent.installment_n || nowPaid} de ${total} ($${result.amount.toLocaleString('es-CO')}). ¡Gracias! La próxima te la recordamos por aquí.`;
+          sendCloudText(phone, msg).catch(() => {});
+        }
+        return;
+      }
+
       if (isPaid(order)) { logger.info({ orderId: order.id, intentId: intent.id }, 'breb propio: la orden ya estaba pagada'); return; }
       updateOrder(order.id, { status: 'pendiente_qr', wompi_txn_id: `breb-own-${intent.id}` });
       logger.info({ orderId: order.id, intentId: intent.id, amount: result.amount, bank: result.bank },
@@ -706,18 +737,71 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     const order = getOrder((req.body || {}).orderId);
     if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
     if (isPaid(order)) return { paid: true };
-    const amount = Math.round(order.amount_cents / 100);
-    const intent = createPaymentIntent({ orderId: order.id, amount, ttlMs: BREB_INTENT_TTL_MS });
-    logger.info({ orderId: order.id, intentId: intent.id, amount }, 'breb propio: intent creado');
+    const base = Math.round(order.amount_cents / 100);
+    // POOL de montos (3 slots: $X, $X-1, $X-2): dos clientes pagando a la vez reciben
+    // montos distintos y el correo del banco identifica solo cuál es cuál. Si la
+    // orden ya tiene intent vigente se reusa (mismo monto). Pool lleno → el front
+    // muestra "preparando tu QR…" y reintenta hasta que se libere un slot.
+    let intent = getActiveIntentByOrder(order.id, 'checkout');
+    if (!intent) {
+      const amount = claimPooledAmount(base, 3);
+      if (amount === null) {
+        logger.info({ orderId: order.id, base }, 'breb propio: pool de montos lleno, cliente en cola');
+        return reply.code(202).send({ queued: true, retryInMs: 5000 });
+      }
+      intent = createPaymentIntent({ orderId: order.id, amount, ttlMs: BREB_INTENT_TTL_MS });
+    }
+    logger.info({ orderId: order.id, intentId: intent.id, amount: intent.amount }, 'breb propio: intent creado');
     return {
       intentId: intent.id,
-      amount,
+      amount: intent.amount,
       expiresAt: intent.expires_at,
       // Para el contador del front: ms restantes según el RELOJ DEL SERVER (el del
       // cliente puede estar corrido; con esto el front arma su deadline local).
       remainingMs: Math.max(0, intent.expires_at - Date.now()),
       qrData: config.SONO_BREB_EMVCO,
       key: config.SONO_BREB_KEY || null,
+    };
+  });
+
+  // Dry-run del cobro de cuotas: muestra qué recordatorios saldrían SIN enviar nada.
+  // Para revisar la lista antes de encender CUOTAS_WA_ENABLED=1.
+  app.get('/admin/cuotas/dry-run', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const acciones = runBrebInstallmentReminders({ dryRun: true });
+    return { total: acciones.length, habilitado: process.env.CUOTAS_WA_ENABLED === '1', acciones };
+  });
+
+  // ── Cobro de cuotas 2-3 por Bre-B (página pública sono.lat/cuota/?order=ID) ──
+  // Devuelve (creando si toca) el intent de cuota vigente: monto único del pool,
+  // llave y QR. El cliente llega desde el botón de la plantilla de WhatsApp.
+  app.get('/cuota/:order', async (req, reply) => {
+    if (!config.hasOwnBreb) return reply.code(503).send({ error: 'pagos no configurados' });
+    const order = getOrder(req.params.order);
+    if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
+    const due = installmentDue(order);
+    if (!due) {
+      const paid = order.installments_paid || 0;
+      return { pendiente: false, cuotasPagadas: paid, cuotasTotal: order.installments_total || 3 };
+    }
+    let intent = getActiveIntentByOrder(order.id, 'cuota');
+    if (!intent) {
+      const amount = claimPooledAmount(Math.round(CUOTA_2_3_CENTS / 100), CUOTA_POOL_SIZE, { graceMs: CUOTA_MATCH_GRACE_MS });
+      if (amount === null) return reply.code(202).send({ queued: true, retryInMs: 15000 });
+      intent = createPaymentIntent({
+        orderId: order.id, amount, ttlMs: CUOTA_INTENT_TTL_MS, kind: 'cuota', installmentN: due.n,
+      });
+      logger.info({ orderId: order.id, intentId: intent.id, amount, cuota: due.n }, 'cuota: intent creado (página)');
+    }
+    return {
+      pendiente: true,
+      cuota: intent.installment_n || due.n,
+      cuotasTotal: order.installments_total || 3,
+      amount: intent.amount,
+      remainingMs: Math.max(0, intent.expires_at - Date.now()),
+      qrData: config.SONO_BREB_EMVCO,
+      key: config.SONO_BREB_KEY || null,
+      business: order.business_name || null,
     };
   });
 

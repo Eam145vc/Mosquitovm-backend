@@ -15,11 +15,41 @@
 
 import { config } from './config.js';
 import { logger } from './logger.js';
-import { listOrders, updateOrder, getOrder, setSubStatus } from './storage.js';
+import {
+  listOrders, updateOrder, getOrder, setSubStatus,
+  createPaymentIntent, claimPooledAmount, getActiveIntentByOrder, countIntentsFor,
+} from './storage.js';
 import { chargeWithToken } from './efipay.js';
+import { enqueueWhatsAppForce, orderSilenciada } from './wa-enqueue.js';
 
 const DAY = 24 * 3600 * 1000;
 const MAX_FAILS = 3; // al 3er fallo consecutivo se suspende el servicio
+
+// ── Cobro por Bre-B (órdenes SIN tarjeta tokenizada: Bre-B/PSE/contraentrega) ──
+// Pool de montos (idea del dueño): cada cobro activo reserva un monto único
+// ($69.000 → $68.999 → … → $68.951) y el correo de Nequi identifica quién pagó.
+export const CUOTA_POOL_SIZE = 50;               // hasta 50 cobros activos a la vez
+export const CUOTA_INTENT_TTL_MS = 72 * 3600 * 1000; // el cliente paga cuando pueda (3 días)
+export const CUOTA_MATCH_GRACE_MS = 45_000;      // misma gracia que el matcher del checkout
+const MAX_RECORDATORIOS = 3;                     // 3 intents vencidos sin pago → gestión manual
+
+/**
+ * ¿A esta orden le toca cobrar una cuota por Bre-B, y cuál? Devuelve { n } o null.
+ * Normalización clave: en órdenes pagadas/despachadas con installments_paid en 0,
+ * la 1ª cuota SÍ se pagó (en el checkout o al recibir) — solo el flujo de tarjeta
+ * la registraba. Acá se cuenta como pagada sin mutar la DB.
+ */
+export function installmentDue(order, now = Date.now()) {
+  if (!order || order.plan !== 'cuotas') return null;
+  if (order.card_token) return null; // con tarjeta va el cobro automático de arriba
+  if (order.archived_at || ['cancelada', 'declined', 'created'].includes(order.status)) return null;
+  if (order.installments_state === 'completado' || order.installments_state === 'suspendido') return null;
+  const total = order.installments_total || 3;
+  const paidEff = Math.max(1, order.installments_paid || 0);
+  if (paidEff >= total) return null;
+  if (now < order.created_at + 30 * DAY * paidEff) return null;
+  return { n: paidEff + 1, paidEff, total };
+}
 
 // Las cuotas 2 y 3 son $69.000 PLANAS: el envío ($12.000) y el recargo de
 // contraentrega ($5.000) van SOLO en la 1ª (el amount_cents del checkout).
@@ -151,11 +181,59 @@ async function runDueInstallments() {
   }
 }
 
+// Una pasada de RECORDATORIOS Bre-B: para cada orden con cuota vencida y sin
+// intent activo, reserva un monto del pool y (re)manda la plantilla sono_cuota.
+// Cada intent dura 72 h; si vence sin pago, la siguiente pasada crea otro y
+// re-manda (≈1 recordatorio cada 3 días, máx 3 → luego 'en_mora' manual).
+// Apagado por defecto: se enciende con CUOTAS_WA_ENABLED=1 en el .env, para que
+// el primer envío masivo sea una decisión consciente del dueño.
+export function runBrebInstallmentReminders({ dryRun = false } = {}) {
+  if (!dryRun && process.env.CUOTAS_WA_ENABLED !== '1') return [];
+  const now = Date.now();
+  const acciones = [];
+  let due;
+  try {
+    due = listOrders().filter((o) => !orderSilenciada(o) && installmentDue(o, now));
+  } catch (e) {
+    logger.error({ err: e.message }, 'cuotas breb: error listando vencidas');
+    return [];
+  }
+  for (const order of due) {
+    const d = installmentDue(order, now);
+    if (!d) continue;
+    if (getActiveIntentByOrder(order.id, 'cuota')) continue; // cobro en curso, no repetir
+    const intentos = countIntentsFor(order.id, 'cuota', d.n);
+    if (intentos >= MAX_RECORDATORIOS) {
+      if (order.installments_state !== 'en_mora') {
+        if (!dryRun) updateOrder(order.id, { installments_state: 'en_mora' });
+        acciones.push({ orderId: order.id, business: order.business_name, cuota: d.n, accion: 'en_mora' });
+        logger.warn({ orderId: order.id, cuota: d.n, intentos }, 'cuotas breb: sin pago tras recordatorios, EN MORA (gestión manual)');
+      }
+      continue;
+    }
+    const amount = claimPooledAmount(Math.round(CUOTA_2_3_CENTS / 100), CUOTA_POOL_SIZE, { graceMs: CUOTA_MATCH_GRACE_MS });
+    if (amount === null) {
+      logger.warn({ orderId: order.id }, 'cuotas breb: pool de montos lleno, se difiere a la próxima pasada');
+      break; // el pool es global: si está lleno, no insistir con las demás
+    }
+    acciones.push({ orderId: order.id, business: order.business_name, cuota: d.n, amount, accion: intentos === 0 ? 'recordatorio' : `reintento_${intentos + 1}` });
+    if (dryRun) continue;
+    createPaymentIntent({ orderId: order.id, amount, ttlMs: CUOTA_INTENT_TTL_MS, kind: 'cuota', installmentN: d.n });
+    enqueueWhatsAppForce(order, d.n === 3 ? 'cuota_3' : 'cuota_2');
+    logger.info({ orderId: order.id, cuota: d.n, amount, intento: intentos + 1 }, 'cuotas breb: recordatorio encolado');
+  }
+  return acciones;
+}
+
 /** Arranca el job: corre al inicio y cada hora. */
 export function startInstallmentsScheduler() {
-  runDueInstallments().catch((e) => logger.error({ err: e.message }, 'cuotas: primera pasada falló'));
+  const pass = async () => {
+    await runDueInstallments();
+    runBrebInstallmentReminders();
+  };
+  pass().catch((e) => logger.error({ err: e.message }, 'cuotas: primera pasada falló'));
   setInterval(() => {
-    runDueInstallments().catch((e) => logger.error({ err: e.message }, 'cuotas: pasada periódica falló'));
+    pass().catch((e) => logger.error({ err: e.message }, 'cuotas: pasada periódica falló'));
   }, 60 * 60 * 1000); // cada hora
   logger.info('cuotas: scheduler de cobro de cuotas iniciado (cada 1h)');
 }

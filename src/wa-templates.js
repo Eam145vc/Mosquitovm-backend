@@ -20,6 +20,7 @@ const BASE = (process.env.FRONTEND_BASE_URL || 'https://sono.lat').replace(/\/$/
 const ACTIVAR = `${BASE}/activar-pro?order=`;
 const ACTIVAR_CORREO = `${BASE}/activar-pro?correo=1&order=`;
 const LIBRETA = `${BASE}/libreta/?order=`;
+const CUOTA = `${BASE}/cuota/?order=`;
 
 const RASTREO_EJ = 'https://coordinadora.com/rastreo/240001234567';
 
@@ -67,6 +68,14 @@ export const WA_TEMPLATES = {
     body: 'Hola {{1}} 👋 ¿Ya tienes tu Sonó contigo? Falta un solo paso para que anuncie tus ventas: conecta el correo donde te avisan los pagos. Si te trabas, escríbenos por aquí.',
     bodyExample: ['Carlos'],
     button: { text: 'Conectar mi correo', urlBase: ACTIVAR_CORREO },
+  },
+  // Cobro de cuotas 2-3 por Bre-B: el monto es ÚNICO por cliente (pool de montos,
+  // $69.000 → $68.999 → …) y así el correo del banco identifica quién pagó. El
+  // botón lleva a la página con el QR + llave copiable + monto gigante.
+  sono_cuota: {
+    body: 'Hola {{1}} 👋 Te recordamos la cuota {{2}} de 3 de tu Sonó: {{3}}. La pagas con Bre-B desde tu banco enviando exactamente ese valor a nuestra llave de Nequi: {{4}} — así queda registrada solita. En el botón tienes el QR y la llave lista para copiar.',
+    bodyExample: ['Carlos', '2', '$69.000', '0091787460'],
+    button: { text: 'Ver QR y pagar', urlBase: CUOTA },
   },
   sono_libreta: {
     body: 'Hola {{1}} 📒 Esta es tu Libreta: ahí ves cada venta entrar en vivo, cuánto llevas hoy y tus mejores horas. Es tu enlace personal, guárdalo.',

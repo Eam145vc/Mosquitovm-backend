@@ -421,6 +421,14 @@ export function openDb() {
     CREATE INDEX IF NOT EXISTS idx_intents_match ON payment_intents(status, amount, created_at);
     CREATE INDEX IF NOT EXISTS idx_intents_order ON payment_intents(order_id, created_at DESC);
   `);
+  // Intents del pool de montos: 'checkout' (compra del dispositivo, ventana 2 min)
+  // o 'cuota' (cobro de cuotas 2-3 por WhatsApp, ventana 72 h). installment_n = qué
+  // cuota cobra este intent (2 o 3); NULL en checkout. (Después del DDL: en una DB
+  // nueva la tabla debe existir antes del ALTER.)
+  ensureColumns('payment_intents', [
+    ["kind", "TEXT NOT NULL DEFAULT 'checkout'"],
+    ['installment_n', 'INTEGER'],
+  ]);
 
   // OTP de confirmación del banco (cambio de correo). Persistido CIFRADO con TTL de
   // 10 min para sobrevivir reinicios de pm2 (antes vivía solo en RAM y cada deploy lo
@@ -1508,14 +1516,14 @@ export function cancelPendingWaByKinds(orderId, kinds) {
  * misma orden (idempotente: si el cliente recarga la página no se duplican intents
  * ni se reinicia la ventana). amount en pesos, ttlMs = ventana de matching.
  */
-export function createPaymentIntent({ orderId, amount, ttlMs }) {
+export function createPaymentIntent({ orderId, amount, ttlMs, kind = 'checkout', installmentN = null }) {
   openDb();
   const now = Date.now();
   const existing = db.prepare(
     `SELECT * FROM payment_intents
-     WHERE order_id = ? AND status = 'pending' AND expires_at > ?
+     WHERE order_id = ? AND kind = ? AND status = 'pending' AND expires_at > ?
      ORDER BY created_at DESC LIMIT 1`
-  ).get(orderId, now);
+  ).get(orderId, kind, now);
   if (existing) return existing;
   const intent = {
     id: randomBytes(16).toString('hex'),
@@ -1526,12 +1534,60 @@ export function createPaymentIntent({ orderId, amount, ttlMs }) {
     created_at: now,
     expires_at: now + ttlMs,
     paid_at: null,
+    kind,
+    installment_n: installmentN,
   };
   db.prepare(
-    `INSERT INTO payment_intents (id, order_id, amount, status, created_at, expires_at)
-     VALUES (@id, @order_id, @amount, @status, @created_at, @expires_at)`
+    `INSERT INTO payment_intents (id, order_id, amount, status, created_at, expires_at, kind, installment_n)
+     VALUES (@id, @order_id, @amount, @status, @created_at, @expires_at, @kind, @installment_n)`
   ).run(intent);
   return intent;
+}
+
+/**
+ * Pool de montos (idea del dueño, jul-2026): en vez de que todos los clientes usen
+ * el mismo valor, cada cobro activo "reserva" un monto único cercano al base
+ * ($69.000 → $68.999 → …) y así el correo del banco identifica solo QUIÉN pagó.
+ * Devuelve el monto MÁS ALTO libre (prioridad al valor completo) o null si el
+ * pool está lleno. La ocupación usa la misma gracia que el matcher para que un
+ * monto no se reasigne mientras su pago todavía podría matchear.
+ */
+export function claimPooledAmount(baseAmount, poolSize, { graceMs = 45_000 } = {}) {
+  openDb();
+  const now = Date.now();
+  const base = Math.round(baseAmount);
+  const min = base - poolSize + 1;
+  const taken = new Set(
+    db.prepare(
+      `SELECT amount FROM payment_intents
+       WHERE status = 'pending' AND amount BETWEEN ? AND ? AND expires_at + ? > ?`
+    ).all(min, base, graceMs, now).map((r) => r.amount)
+  );
+  for (let a = base; a >= min; a--) {
+    if (!taken.has(a)) return a;
+  }
+  return null;
+}
+
+/** Cuántos intents (de cualquier estado) lleva una orden para una cuota concreta.
+ *  Limita los recordatorios de cobro: tras N intents vencidos sin pago → gestión manual. */
+export function countIntentsFor(orderId, kind, installmentN) {
+  openDb();
+  return db.prepare(
+    'SELECT COUNT(*) c FROM payment_intents WHERE order_id = ? AND kind = ? AND installment_n = ?'
+  ).get(orderId, kind, installmentN).c;
+}
+
+/** Intent pendiente vigente de una orden (para la página /cuota y la plantilla WA). */
+export function getActiveIntentByOrder(orderId, kind = null) {
+  openDb();
+  const now = Date.now();
+  return db.prepare(
+    `SELECT * FROM payment_intents
+     WHERE order_id = ? AND status = 'pending' AND expires_at > ?
+       ${kind ? 'AND kind = ?' : ''}
+     ORDER BY created_at DESC LIMIT 1`
+  ).get(...(kind ? [orderId, now, kind] : [orderId, now])) || null;
 }
 
 export function getPaymentIntent(id) {
