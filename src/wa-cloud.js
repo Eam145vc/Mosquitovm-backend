@@ -48,9 +48,26 @@ function trackingDe(shipment, carrier) {
  *  plantilla (el enviador lo marca failed con error claro, nunca inventa texto). */
 export function buildWaCloudPayload(order, kind, shipment = null) {
   const nombre = sanitizeParam(firstNameOf(order), 'cliente');
-  const btn = (name) => WA_TEMPLATES[name].button
-    ? [{ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: order.id }] }]
-    : [];
+  const btn = (name) => {
+    const def = WA_TEMPLATES[name];
+    if (def.button) {
+      return [{ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: order.id }] }];
+    }
+    // Botón FLOW: el flow_token viaja al endpoint en cada acción y es como
+    // sabemos de qué orden es el pago (ver orderIdFromToken en wa-flow.js).
+    if (def.flowButton) {
+      return [{
+        type: 'button',
+        sub_type: 'flow',
+        index: '0',
+        parameters: [{
+          type: 'action',
+          action: { flow_token: `cuota_${order.id}` },
+        }],
+      }];
+    }
+    return [];
+  };
   const tpl = (name, params) => ({
     name,
     language: { code: 'es' },
@@ -94,7 +111,12 @@ export function buildWaCloudPayload(order, kind, shipment = null) {
     // El recordatorio SOLO avisa (monto plano de $69.000): el monto único del
     // pool se reserva recién cuando el cliente toca "Voy a pagar" en la página.
     const n = kind === 'cuota_3' ? '3' : '2';
-    return tpl('sono_cuota_v2', [nombre, n, moneyCo(69_000 * 100)]);
+    // Con el Flow publicado, la ventana de pago se abre DENTRO de WhatsApp; si no
+    // (aún sin aprobar), cae a la plantilla con botón URL que abre sono.lat/cuota.
+    const flowOk = config.hasWaFlow && approvedTemplates.has('sono_cuota_flow');
+    return flowOk
+      ? tpl('sono_cuota_flow', [nombre, n, moneyCo(69_000 * 100)])
+      : tpl('sono_cuota_v2', [nombre, n, moneyCo(69_000 * 100)]);
   }
   if (kind === 'qr_problema') return tpl('sono_qr_problema', [nombre]);
   if (kind === 'conexion') return tpl('sono_conexion', [nombre]);

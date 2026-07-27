@@ -80,6 +80,14 @@ export const WA_TEMPLATES = {
     bodyExample: ['Carlos', '2', '$69.000'],
     button: { text: 'Voy a pagar', urlBase: CUOTA },
   },
+  // Misma cuota pero con botón tipo FLOW: la ventana de pago (monto único + QR)
+  // se abre DENTRO de WhatsApp, sin mandar al cliente a la web. Es la preferida;
+  // sono_cuota_v2 (botón URL) queda de respaldo si el Flow no está publicado.
+  sono_cuota_flow: {
+    body: 'Hola {{1}} 👋 Te recordamos la cuota {{2}} de 3 de tu Sonó: {{3}}. Toca el botón cuando vayas a pagarla: te mostramos el QR de Bre-B aquí mismo, sin salir de WhatsApp.',
+    bodyExample: ['Carlos', '2', '$69.000'],
+    flowButton: { text: 'Voy a pagar', screen: 'AVISO' },
+  },
   sono_libreta: {
     body: 'Hola {{1}} 📒 Esta es tu Libreta: ahí ves cada venta entrar en vivo, cuánto llevas hoy y tus mejores horas. Es tu enlace personal, guárdalo.',
     bodyExample: ['Carlos'],

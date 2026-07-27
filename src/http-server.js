@@ -77,6 +77,7 @@ import * as announceLog from './announce-log.js';
 import { sendActivationEmail } from './activation-email.js';
 import { enqueueWhatsApp, enqueueWhatsAppForce, normalizePhoneCO, ESTADOS_SIN_MENSAJES } from './wa-enqueue.js';
 import { isWaCloudActive, downloadWaMedia, sendCloudText } from './wa-cloud.js';
+import { decryptFlowRequest, encryptFlowResponse, handleFlowAction } from './wa-flow.js';
 import { bogotaHour, startOfBogotaDay, withinActiveHours } from './wa-shared.js';
 import { notifyAdmins } from './support/webpush.js';
 import { notifySale } from './sale-push.js';
@@ -2798,6 +2799,35 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     if (!id) return reply.code(400).send({ error: 'falta id' });
     markWaSent(id, Boolean(ok), error || null);
     return { ok: true };
+  });
+
+  // ── Endpoint del WhatsApp Flow de cuotas (ventana de pago DENTRO de WhatsApp) ──
+  // Meta cifra cada request con una AES efímera envuelta en nuestra RSA pública; la
+  // respuesta va cifrada con la misma AES (IV invertido) y como TEXTO PLANO base64.
+  // No lleva ?key=: la autenticación ES el cifrado (solo quien tiene la privada
+  // puede leer/responder). Un 421 le pide a Meta reintentar con llaves frescas.
+  app.post('/webhook/wa-flow', async (req, reply) => {
+    if (!config.hasWaFlow) return reply.code(503).send('flow no configurado');
+    const b = req.body || {};
+    if (!b.encrypted_flow_data || !b.encrypted_aes_key || !b.initial_vector) {
+      return reply.code(400).send('payload inválido');
+    }
+    let decrypted;
+    try {
+      decrypted = decryptFlowRequest(b);
+    } catch (e) {
+      // Llave equivocada / payload corrupto: 421 hace que Meta reintente el handshake.
+      logger.error({ err: e.message }, 'wa-flow: no se pudo descifrar el request');
+      return reply.code(421).send('descifrado falló');
+    }
+    try {
+      const respuesta = await handleFlowAction(decrypted.body);
+      const cifrada = encryptFlowResponse(respuesta, decrypted.aesKey, decrypted.iv);
+      return reply.type('text/plain').send(cifrada);
+    } catch (e) {
+      logger.error({ err: e.message, action: decrypted.body?.action }, 'wa-flow: error resolviendo la pantalla');
+      return reply.code(500).send('error');
+    }
   });
 
   // ── WhatsApp Cloud API oficial: webhook de Meta (statuses reales + entrantes) ──

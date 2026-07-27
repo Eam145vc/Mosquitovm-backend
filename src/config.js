@@ -147,6 +147,13 @@ const ConfigSchema = z.object({
   // Fastify no conserva el raw body).
   WA_CLOUD_WEBHOOK_VERIFY_TOKEN: z.string().default(''),
   WA_CLOUD_GRAPH_VERSION: z.string().default('v25.0'),
+  // ---- WhatsApp Flow del cobro de cuotas (ventana de pago DENTRO de WhatsApp) ----
+  // Meta cifra cada request del Flow con una AES efímera, envuelta con nuestra llave
+  // pública RSA (la privada vive acá y NUNCA sale del server). Las \n del PEM van
+  // escapadas en el .env, por eso el replace.
+  WA_FLOW_PRIVATE_KEY: z.string().default('').transform((s) => s.replace(/\\n/g, '\n')),
+  WA_FLOW_PASSPHRASE: z.string().default(''),
+  WA_FLOW_ID: z.string().default(''),
 
   // ---- Skydropx (envíos / guías de paquetería, host api-pro) ----
   // OAuth2 client_credentials. Credenciales del panel pro.skydropx.com.
@@ -229,6 +236,8 @@ parsed.hasSkydropx = Boolean(parsed.SKYDROPX_CLIENT_ID && parsed.SKYDROPX_CLIENT
 parsed.hasEvolution = Boolean(parsed.EVOLUTION_API_URL && parsed.EVOLUTION_API_KEY);
 // Cloud API oficial configurada → wa-cloud envía desde la VM; misma exclusión.
 parsed.hasWaCloud = Boolean(parsed.WA_CLOUD_ACCESS_TOKEN && parsed.WA_CLOUD_PHONE_NUMBER_ID);
+// Flow de cuotas activo: hay llave privada para descifrar y Flow publicado al que apuntar.
+parsed.hasWaFlow = Boolean(parsed.hasWaCloud && parsed.WA_FLOW_PRIVATE_KEY && parsed.WA_FLOW_ID);
 parsed.hasTelegram = Boolean(parsed.TG_BOT_TOKEN && parsed.TG_CHAT_ID);
 
 export const config = parsed;

@@ -40,6 +40,20 @@ function toMetaComponents(def) {
       }],
     });
   }
+  // Botón que abre un WhatsApp Flow dentro del chat. El flow_id se resuelve por
+  // nombre contra la API (WA_FLOW_ID en el entorno) para no hardcodearlo acá.
+  if (def.flowButton) {
+    components.push({
+      type: 'BUTTONS',
+      buttons: [{
+        type: 'FLOW',
+        text: def.flowButton.text,
+        flow_id: process.env.WA_FLOW_ID,
+        navigate_screen: def.flowButton.screen,
+        flow_action: 'navigate',
+      }],
+    });
+  }
   return components;
 }
 
