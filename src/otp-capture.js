@@ -33,6 +33,12 @@ const waOtpSent = new Map(); // accountId → { codes: Set, ats: number[] }
 // Fire-and-forget: su fallo jamás bloquea la captura (la pantalla sigue siendo
 // la vía principal; esto es el refuerzo que le llega al celular).
 async function notifyOtpWa(accountId, code) {
+  // APAGADO (jul-2026): el regex OTP_CONTEXT dispara con cualquier correo del
+  // banco que mencione "código/verificación/confirma", no solo cuando el cliente
+  // está cambiando el correo en Sonó. Estaba mandando WhatsApp no solicitados y
+  // confundiendo clientes (caso Jaime). La pantalla de conexión ya muestra el
+  // código vigente sola (readOtp), así que este aviso no es necesario.
+  return;
   try {
     const now = Date.now();
     const e = waOtpSent.get(accountId) || { codes: new Set(), ats: [] };
