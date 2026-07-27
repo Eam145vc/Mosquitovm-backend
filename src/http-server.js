@@ -82,7 +82,7 @@ import { bogotaHour, startOfBogotaDay, withinActiveHours } from './wa-shared.js'
 import { notifyAdmins } from './support/webpush.js';
 import { notifySale } from './sale-push.js';
 import {
-  CUOTA_2_3_CENTS, installmentDue, runBrebInstallmentReminders,
+  CUOTA_2_3_CENTS, installmentDue, runBrebInstallmentReminders, fechaLimiteCuota, fechaLimiteTexto,
   CUOTA_POOL_SIZE, CUOTA_INTENT_TTL_MS, CUOTA_MATCH_GRACE_MS,
 } from './installments-scheduler.js';
 import { publishVoice, publishCommand } from './mqtt-publisher.js';
@@ -806,6 +806,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       // Monto plano informativo (aún sin reservar): lo real puede diferir en 1-19
       // pesos cuando toque "Voy a pagar" (le tocará un slot libre del pool).
       amount: Math.round(CUOTA_2_3_CENTS / 100),
+      fechaLimite: fechaLimiteTexto(fechaLimiteCuota(order)),
+      vencida: Date.now() > fechaLimiteCuota(order),
       business: order.business_name || null,
     };
   });

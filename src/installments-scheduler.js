@@ -36,6 +36,35 @@ export const CUOTA_INTENT_TTL_MS = 5 * 60 * 1000; // 5 min desde que toca "Voy a
 export const CUOTA_MATCH_GRACE_MS = 45_000;      // misma gracia que el matcher del checkout
 const MAX_RECORDATORIOS = 3;                     // 3 recordatorios sin pago → gestión manual
 const REMINDER_EVERY_MS = 3 * DAY;               // cadencia entre recordatorios
+// Gracia desde que la cuota vence hasta la fecha límite que se le anuncia al
+// cliente. FIJA a propósito: si el plazo se recalculara en cada recordatorio, la
+// fecha se correría sola y el cliente aprendería que el plazo es elástico.
+export const CUOTA_GRACIA_MS = 7 * DAY;
+
+/**
+ * Fecha límite que se le comunica al cliente ("tienes plazo hasta el 6 de agosto").
+ * Anclada al VENCIMIENTO real de la cuota (compra + 30 días por cuota ya pagada),
+ * no al recordatorio: así los 3 recordatorios repiten la MISMA fecha y el cierre
+ * es coherente con lo anunciado.
+ */
+export function fechaLimiteCuota(order, now = Date.now()) {
+  const due = installmentDue(order, now);
+  const paidEff = due ? due.paidEff : Math.max(1, order?.installments_paid || 0);
+  const vencimiento = (order?.created_at || now) + 30 * DAY * paidEff;
+  return vencimiento + CUOTA_GRACIA_MS;
+}
+
+/** ¿Ya se pasó la fecha límite anunciada? (base del corte de servicio). */
+export function cuotaVencidaConPlazo(order, now = Date.now()) {
+  return Boolean(installmentDue(order, now)) && now > fechaLimiteCuota(order, now);
+}
+
+/** "30 de julio" en horario de Bogotá (formato del mensaje y de la página). */
+export function fechaLimiteTexto(ms) {
+  return new Intl.DateTimeFormat('es-CO', {
+    day: 'numeric', month: 'long', timeZone: 'America/Bogota',
+  }).format(new Date(ms));
+}
 
 /**
  * ¿A esta orden le toca cobrar una cuota por Bre-B, y cuál? Devuelve { n } o null.

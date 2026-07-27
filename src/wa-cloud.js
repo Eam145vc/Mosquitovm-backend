@@ -23,6 +23,7 @@ import {
 } from './storage.js';
 import { bogotaHour, startOfBogotaDay, withinActiveHours, randDelay, sleep } from './wa-shared.js';
 import { moneyCo, esCodPendiente, firstNameOf } from './wa-enqueue.js';
+import { fechaLimiteCuota, fechaLimiteTexto } from './installments-scheduler.js';
 import { WA_TEMPLATES } from './wa-templates.js';
 
 const TICK_MS = 20 * 1000;
@@ -111,12 +112,14 @@ export function buildWaCloudPayload(order, kind, shipment = null) {
     // El recordatorio SOLO avisa (monto plano de $69.000): el monto único del
     // pool se reserva recién cuando el cliente toca "Voy a pagar" en la página.
     const n = kind === 'cuota_3' ? '3' : '2';
-    // Con el Flow publicado, la ventana de pago se abre DENTRO de WhatsApp; si no
-    // (aún sin aprobar), cae a la plantilla con botón URL que abre sono.lat/cuota.
-    const flowOk = config.hasWaFlow && approvedTemplates.has('sono_cuota_flow');
-    return flowOk
-      ? tpl('sono_cuota_flow', [nombre, n, moneyCo(69_000 * 100)])
-      : tpl('sono_cuota_v2', [nombre, n, moneyCo(69_000 * 100)]);
+    // La fecha límite se ancla al recordatorio (misma que ve en la página).
+    const limite = fechaLimiteTexto(fechaLimiteCuota(order));
+    const params = [nombre, n, moneyCo(69_000 * 100), limite];
+    // Preferencia: Flow (ventana dentro de WhatsApp) → v3 (fecha límite + aviso de
+    // interrupción) → v2 (texto suave, respaldo si v3 sigue en revisión).
+    if (config.hasWaFlow && approvedTemplates.has('sono_cuota_flow')) return tpl('sono_cuota_flow', params);
+    if (approvedTemplates.has('sono_cuota_v3')) return tpl('sono_cuota_v3', params);
+    return tpl('sono_cuota_v2', [nombre, n, moneyCo(69_000 * 100)]);
   }
   if (kind === 'qr_problema') return tpl('sono_qr_problema', [nombre]);
   if (kind === 'conexion') return tpl('sono_conexion', [nombre]);

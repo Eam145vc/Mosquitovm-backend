@@ -190,7 +190,13 @@ export function buildWaBody(order, kind) {
     const n = kind === 'cuota_3' ? 3 : 2;
     const monto = moneyCo(69_000 * 100);
     const base = (config.FRONTEND_BASE_URL || 'https://sono.lat').replace(/\/$/, '');
-    return `${hola} 👋 Te recordamos la cuota ${n} de 3 de tu Sonó: ${monto}. Toca el botón cuando vayas a pagarla: ${base}/cuota/?order=${order.id}`;
+    // Mismo cálculo que la plantilla (vencimiento de la cuota + 7 días de gracia),
+    // inline para no importar el scheduler acá (evita ciclo de imports).
+    const paidEff = Math.max(1, order.installments_paid || 0);
+    const limiteMs = order.created_at + 30 * 24 * 3600 * 1000 * paidEff + 7 * 24 * 3600 * 1000;
+    const limite = new Intl.DateTimeFormat('es-CO', { day: 'numeric', month: 'long', timeZone: 'America/Bogota' })
+      .format(new Date(limiteMs));
+    return `${hola} 👋 Tu cuota ${n} de 3 de Sonó por ${monto} está pendiente de pago. Tienes plazo hasta el ${limite} para ponerte al día y evitar la interrupción del servicio de anuncios de tu Sonó. Págala acá: ${base}/cuota/?order=${order.id}`;
   }
   // recordatorio_24h
   return pickVariant(order.id, [
