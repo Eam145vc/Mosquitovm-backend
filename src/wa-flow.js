@@ -153,7 +153,7 @@ export async function handleFlowAction(body) {
   const orderId = orderIdFromToken(flowToken);
   const order = orderId ? getOrder(orderId) : null;
   if (!order) return pantallaSinDeuda();
-  const due = installmentDue(order);
+  const due = installmentDue(order, Date.now(), { ignorePause: true });
   if (!due) return pantallaSinDeuda();
 
   if (action === 'INIT' || action === 'BACK') return pantallaAviso(order, due);

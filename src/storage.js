@@ -237,6 +237,9 @@ export function openDb() {
     // (primer aviso + 7 días) y no se mueve. Así los que ya venían vencidos
     // estrenan sus 7 días completos y el plazo no se corre en cada recordatorio.
     ['installment_plazo_at', 'INTEGER'],
+    // Pausa manual del cobro (sección Cobros del admin): 1 = no mandar recordatorios
+    // ni suspender esta orden. El cliente IGUAL puede pagar desde /cuota o el Flow.
+    ['installment_paused', 'INTEGER'],
     // payment_id de EfiPay del pago en curso (PSE/Bre-B/efectivo): permite consultar el
     // estado por API si el webhook no llega (red de seguridad anti-pagos-atascados).
     ['efi_payment_id', 'TEXT'],
@@ -847,6 +850,7 @@ export function updateOrder(id, patch) {
     'plan', 'card_token', 'installments_total', 'installments_paid',
     'installment_next_at', 'installment_fails', 'installments_state',
     'installment_reminder_at', 'installment_reminder_count', 'installment_plazo_at',
+    'installment_paused',
     'efi_payment_id',
     // llave Bre-B del QR (multipunto)
     'breb_key', 'breb_qr_json', 'local_name',
@@ -1637,6 +1641,23 @@ const WA_SETTINGS_DEFAULTS = {
   min_delay_ms: 8000,
   max_delay_ms: 20000,
 };
+
+// ── Interruptor del cobro de cuotas (sección Cobros del admin) ───────────────
+// Vive en la DB (no en el .env) para encender/apagar desde el panel sin deploy
+// ni reinicio. Fallback: si nunca se ha tocado desde el panel, manda el env
+// CUOTAS_WA_ENABLED (compat con el arranque original).
+export function getCuotasEnabled() {
+  openDb();
+  const row = db.prepare(`SELECT value FROM wa_meta WHERE key = 'cuotas_enabled'`).get();
+  if (!row) return process.env.CUOTAS_WA_ENABLED === '1';
+  return row.value === '1';
+}
+
+export function setCuotasEnabled(on) {
+  openDb();
+  db.prepare(`INSERT INTO wa_meta (key, value) VALUES ('cuotas_enabled', ?)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(on ? '1' : '0');
+}
 
 export function getWaSettings() {
   const row = db.prepare(`SELECT value FROM wa_meta WHERE key = 'settings'`).get();

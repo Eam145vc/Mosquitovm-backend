@@ -16,7 +16,7 @@
 import { config } from './config.js';
 import { logger } from './logger.js';
 import {
-  listOrders, updateOrder, getOrder, setSubStatus, getAccount,
+  listOrders, updateOrder, getOrder, setSubStatus, getAccount, getCuotasEnabled,
 } from './storage.js';
 import { chargeWithToken } from './efipay.js';
 import { enqueueWhatsAppForce, orderSilenciada } from './wa-enqueue.js';
@@ -69,11 +69,15 @@ export function fechaLimiteTexto(ms) {
  * la 1ª cuota SÍ se pagó (en el checkout o al recibir) — solo el flujo de tarjeta
  * la registraba. Acá se cuenta como pagada sin mutar la DB.
  */
-export function installmentDue(order, now = Date.now()) {
+export function installmentDue(order, now = Date.now(), { ignorePause = false } = {}) {
   if (!order || order.plan !== 'cuotas') return null;
   if (order.card_token) return null; // con tarjeta va el cobro automático de arriba
   if (order.archived_at || ['cancelada', 'declined', 'created'].includes(order.status)) return null;
-  if (order.installments_state === 'completado' || order.installments_state === 'suspendido') return null;
+  // Pausa manual (admin): frena recordatorios y suspensión. El flujo de PAGO
+  // (página /cuota, Flow) pasa ignorePause: si el cliente quiere pagar, se deja.
+  if (!ignorePause && order.installment_paused) return null;
+  if (order.installments_state === 'completado') return null;
+  if (!ignorePause && order.installments_state === 'suspendido') return null;
   const total = order.installments_total || 3;
   const paidEff = Math.max(1, order.installments_paid || 0);
   if (paidEff >= total) return null;
@@ -239,10 +243,11 @@ async function runDueInstallments() {
 // cliente toca "Voy a pagar" en /cuota (ver POST /cuota/:order/pagar en
 // http-server.js). Cadencia por installment_reminder_at/count (no por intents,
 // que ahora son efímeros): ~1 recordatorio cada 3 días, máx 3 → 'en_mora' manual.
-// Apagado por defecto: se enciende con CUOTAS_WA_ENABLED=1 en el .env, para que
+// Apagado por defecto: se enciende desde la sección Cobros del admin (o con
+// CUOTAS_WA_ENABLED=1 en el .env como arranque), para que
 // el primer envío masivo sea una decisión consciente del dueño.
 export function runBrebInstallmentReminders({ dryRun = false } = {}) {
-  if (!dryRun && process.env.CUOTAS_WA_ENABLED !== '1') return [];
+  if (!dryRun && !getCuotasEnabled()) return [];
   const now = Date.now();
   const acciones = [];
   let due;
@@ -287,7 +292,7 @@ export function runBrebInstallmentReminders({ dryRun = false } = {}) {
 // los 3 recordatorios enviados para nunca suspender a alguien a quien no se le
 // avisó (p. ej. si el flag estuvo apagado). Mismo flag que los recordatorios.
 export function runCuotaSuspensions({ dryRun = false } = {}) {
-  if (!dryRun && process.env.CUOTAS_WA_ENABLED !== '1') return [];
+  if (!dryRun && !getCuotasEnabled()) return [];
   const now = Date.now();
   const acciones = [];
   let vencidas;

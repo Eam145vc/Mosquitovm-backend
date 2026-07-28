@@ -58,6 +58,7 @@ import {
   getShipmentByOrder, updateShipmentRow, renameDeviceLocal, listShipments,
   insertUgcApplication, listUgcApplications, countUgcNuevo, setUgcStatus, deleteUgcApplication,
   createPaymentIntent, getPaymentIntent, matchPaymentIntent, claimPooledAmount, getActiveIntentByOrder,
+  getCuotasEnabled, setCuotasEnabled,
   speakersForBank,
 } from './storage.js';
 import { bogotaDayStart, bogotaDayStartFromKey, bogotaMonthStart, bogotaPrevMonthStart, DAY_MS } from './libreta-time.js';
@@ -786,21 +787,23 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     const recordatorios = runBrebInstallmentReminders({ dryRun: true });
     const suspensiones = runCuotaSuspensions({ dryRun: true });
     return {
-      habilitado: process.env.CUOTAS_WA_ENABLED === '1',
+      habilitado: getCuotasEnabled(),
       total: recordatorios.length + suspensiones.length,
       acciones: recordatorios, suspensiones,
     };
   });
 
-  // Tablero del cobro de cuotas: TODAS las órdenes en plan cuotas activas, con su
-  // etapa en la escalera, plazo, estado y si el corte tiene cuenta donde aplicarse.
+  // Tablero del cobro de cuotas (sección Cobros del admin): TODAS las órdenes en
+  // plan cuotas activas con su etapa, plazo, pausa y estado + estadísticas de plata.
   app.get('/admin/cuotas', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
     const now = Date.now();
+    const CUOTA_PESOS = Math.round(CUOTA_2_3_CENTS / 100);
     const rows = listOrders()
       .filter((o) => o.plan === 'cuotas' && !o.archived_at && !['cancelada', 'declined', 'created'].includes(o.status))
       .map((o) => {
-        const due = installmentDue(o, now);
+        // ignorePause: el admin ve la deuda real aunque el cobro esté pausado.
+        const due = installmentDue(o, now, { ignorePause: true });
         return {
           orderId: o.id,
           business: o.business_name,
@@ -811,22 +814,70 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
           estado: o.installments_state || (due ? 'pendiente' : 'al_dia'),
           cuotaDue: due ? due.n : null,
           auto: Boolean(o.card_token),
+          paused: Boolean(o.installment_paused),
           recordatorios: o.installment_reminder_count || 0,
           plazoAt: o.installment_plazo_at || null,
           plazoTexto: o.installment_plazo_at ? fechaLimiteTexto(o.installment_plazo_at) : null,
           plazoVencido: Boolean(o.installment_plazo_at && now > o.installment_plazo_at),
           accountId: o.account_id || null,
           compradaAt: o.created_at,
+          // Próximo vencimiento teórico (para "vencen esta semana" en el panel)
+          proximaAt: due ? null : o.created_at + 30 * 24 * 3600 * 1000 * Math.max(1, o.installments_paid || 0),
         };
       })
       .sort((a, b) => Number(b.plazoVencido) - Number(a.plazoVencido) || (a.plazoAt || Infinity) - (b.plazoAt || Infinity));
+    // ── Estadísticas de plata (cuotas 2-3; la 1ª va en el checkout) ──
+    const cobradas = rows.reduce((s, r) => s + Math.max(0, r.pagadas - 1), 0);
+    const porCobrar = rows.reduce((s, r) => s + Math.max(0, r.total - r.pagadas), 0);
+    const semana = rows.filter((r) => !r.cuotaDue && r.proximaAt && r.proximaAt - now < 7 * 24 * 3600 * 1000 && r.proximaAt > now).length;
     return {
-      habilitado: process.env.CUOTAS_WA_ENABLED === '1',
+      habilitado: getCuotasEnabled(),
       total: rows.length,
       conDeuda: rows.filter((r) => r.cuotaDue).length,
+      enMora: rows.filter((r) => r.estado === 'en_mora').length,
       suspendidas: rows.filter((r) => r.estado === 'suspendido').length,
+      pausadas: rows.filter((r) => r.paused).length,
+      completadas: rows.filter((r) => r.estado === 'completado').length,
+      vencenEstaSemana: semana,
+      recaudadoPesos: cobradas * CUOTA_PESOS,
+      porRecaudarPesos: porCobrar * CUOTA_PESOS,
+      deudaVencidaPesos: rows.filter((r) => r.cuotaDue).length * CUOTA_PESOS,
+      cuotaPesos: CUOTA_PESOS,
       orders: rows,
     };
+  });
+
+  // Interruptor del cobro automático (vive en la DB: sin .env ni reinicio).
+  app.patch('/admin/cuotas/settings', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const on = Boolean((req.body || {}).enabled);
+    setCuotasEnabled(on);
+    logger.warn({ enabled: on }, on ? 'cuotas: cobro automático ENCENDIDO desde el admin' : 'cuotas: cobro automático APAGADO desde el admin');
+    return { ok: true, habilitado: getCuotasEnabled() };
+  });
+
+  // "Correr pasada ahora": ejecuta recordatorios + suspensiones YA (sin esperar la
+  // pasada horaria). Exige el interruptor encendido — es el mismo motor.
+  app.post('/admin/cuotas/run', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    if (!getCuotasEnabled()) return reply.code(409).send({ error: 'el cobro automático está apagado; enciéndelo primero' });
+    const recordatorios = runBrebInstallmentReminders();
+    const suspensiones = runCuotaSuspensions();
+    logger.info({ recordatorios: recordatorios.length, suspensiones: suspensiones.length }, 'cuotas: pasada manual desde el admin');
+    return { ok: true, recordatorios, suspensiones };
+  });
+
+  // Pausa/reanuda el cobro de UNA orden (no recordar, no suspender). El cliente
+  // igual puede pagar desde su página si quiere.
+  app.post('/admin/orders/:order/cuotas-pausar', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const order = getOrder(req.params.order);
+    if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
+    if (order.plan !== 'cuotas') return reply.code(409).send({ error: 'la orden no es plan cuotas' });
+    const paused = Boolean((req.body || {}).paused);
+    updateOrder(order.id, { installment_paused: paused ? 1 : 0 });
+    logger.info({ orderId: order.id, paused }, paused ? 'cuotas: cobro PAUSADO (admin)' : 'cuotas: cobro reanudado (admin)');
+    return { ok: true, paused };
   });
 
   // Registra a mano una cuota pagada por fuera (efectivo, transferencia directa…):
@@ -865,7 +916,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     if (!config.hasOwnBreb) return reply.code(503).send({ error: 'pagos no configurados' });
     const order = getOrder(req.params.order);
     if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
-    const due = installmentDue(order);
+    const due = installmentDue(order, Date.now(), { ignorePause: true });
     if (!due) {
       const paid = order.installments_paid || 0;
       return { pendiente: false, cuotasPagadas: paid, cuotasTotal: order.installments_total || 3 };
@@ -897,7 +948,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     if (!config.hasOwnBreb) return reply.code(503).send({ error: 'pagos no configurados' });
     const order = getOrder(req.params.order);
     if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
-    const due = installmentDue(order);
+    const due = installmentDue(order, Date.now(), { ignorePause: true });
     if (!due) return reply.code(409).send({ error: 'no tienes cuotas pendientes' });
     let intent = getActiveIntentByOrder(order.id, 'cuota');
     if (!intent) {
