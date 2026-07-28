@@ -16,7 +16,7 @@
 import { config } from './config.js';
 import { logger } from './logger.js';
 import {
-  listOrders, updateOrder, getOrder, setSubStatus,
+  listOrders, updateOrder, getOrder, setSubStatus, getAccount,
 } from './storage.js';
 import { chargeWithToken } from './efipay.js';
 import { enqueueWhatsAppForce, orderSilenciada } from './wa-enqueue.js';
@@ -126,25 +126,21 @@ async function chargeOneInstallment(order) {
 
     if (res.approved) {
       const nowPaid = paid + 1;
-      if (nowPaid >= total) {
-        // última cuota: plan completado, ya no se cobra más.
-        updateOrder(orderId, {
-          installments_paid: nowPaid,
-          installment_next_at: null,
-          installment_fails: 0,
-          installments_state: 'completado',
-        });
-        logger.info({ orderId, cuota: nextNum, total }, 'cuotas: última cuota cobrada, plan COMPLETADO');
-      } else {
-        // quedan cuotas: programar la siguiente a +30d.
-        updateOrder(orderId, {
-          installments_paid: nowPaid,
-          installment_next_at: Date.now() + 30 * DAY,
-          installment_fails: 0,
-          installments_state: 'al_dia',
-        });
-        logger.info({ orderId, cuota: nextNum, total }, 'cuotas: cuota cobrada, siguiente programada (+30d)');
-      }
+      const done = nowPaid >= total;
+      updateOrder(orderId, {
+        installments_paid: nowPaid,
+        installment_next_at: done ? null : Date.now() + 30 * DAY,
+        installment_fails: 0,
+        installments_state: done ? 'completado' : 'al_dia',
+        // la próxima cuota estrena sus propios recordatorios y plazo
+        installment_reminder_at: null,
+        installment_reminder_count: 0,
+        installment_plazo_at: null,
+      });
+      logger.info({ orderId, cuota: nextNum, total },
+        done ? 'cuotas: última cuota cobrada, plan COMPLETADO' : 'cuotas: cuota cobrada, siguiente programada (+30d)');
+      // Si el servicio estaba suspendido por esta deuda, el pago lo reactiva solo.
+      reactivateIfSuspended(getOrder(orderId));
       return true;
     }
 
@@ -155,6 +151,35 @@ async function chargeOneInstallment(order) {
   }
 }
 
+/**
+ * Suspende el servicio de una orden en cuotas: marca la orden y, si tiene cuenta
+ * enlazada, corta los anuncios (setSubStatus). Si NO tiene cuenta todavía, deja
+ * la orden marcada — linkOrderToAccount reconcilia al conectar el correo (antes
+ * ese caso se perdía en silencio y el cliente seguía anunciando).
+ */
+export function suspendOrderService(order, motivo) {
+  updateOrder(order.id, { installments_state: 'suspendido' });
+  if (order.account_id) {
+    setSubStatus(order.account_id, 'suspendida');
+    logger.warn({ orderId: order.id, accountId: order.account_id, motivo }, 'cuotas: SERVICIO SUSPENDIDO');
+  } else {
+    logger.warn({ orderId: order.id, motivo },
+      'cuotas: orden suspendida SIN cuenta enlazada (se aplicará al conectar el correo)');
+  }
+  enqueueWhatsAppForce(order, 'suspension');
+}
+
+/** Al caer el pago de la cuota: si la cuenta estaba suspendida, revive sola. */
+export function reactivateIfSuspended(order) {
+  if (!order?.account_id) return false;
+  const acc = getAccount(order.account_id);
+  if (!acc || acc.sub_status !== 'suspendida') return false;
+  setSubStatus(order.account_id, 'activa');
+  logger.info({ orderId: order.id, accountId: order.account_id }, 'cuotas: pago recibido, servicio REACTIVADO');
+  enqueueWhatsAppForce(order, 'reactivacion');
+  return true;
+}
+
 // Suma un fallo; reintenta al día siguiente. Al 3er fallo, suspende el servicio.
 function handleFail(order, reason) {
   const orderId = order.id;
@@ -163,13 +188,10 @@ function handleFail(order, reason) {
 
   if (fails >= MAX_FAILS) {
     // corte de servicio: suspende la cuenta (si ya está enlazada) → deja de anunciar.
-    if (order.account_id) {
-      setSubStatus(order.account_id, 'suspendida');
-    }
+    suspendOrderService(order, `3 fallos de cobro con tarjeta (${reason})`);
     updateOrder(orderId, {
       installment_fails: fails,
       installment_next_at: null, // deja de reintentar solo; requiere acción manual
-      installments_state: 'suspendido',
     });
     logger.error({ orderId, cuota: nextNum, fails, reason }, 'cuotas: 3er fallo, SERVICIO SUSPENDIDO');
   } else {
@@ -260,11 +282,43 @@ export function runBrebInstallmentReminders({ dryRun = false } = {}) {
   return acciones;
 }
 
+// Una pasada de SUSPENSIONES: órdenes cuyo plazo anunciado ya venció (los 7 días
+// del primer aviso), con la escalera COMPLETA enviada y sin pago → corte. Exige
+// los 3 recordatorios enviados para nunca suspender a alguien a quien no se le
+// avisó (p. ej. si el flag estuvo apagado). Mismo flag que los recordatorios.
+export function runCuotaSuspensions({ dryRun = false } = {}) {
+  if (!dryRun && process.env.CUOTAS_WA_ENABLED !== '1') return [];
+  const now = Date.now();
+  const acciones = [];
+  let vencidas;
+  try {
+    vencidas = listOrders().filter((o) =>
+      !orderSilenciada(o) &&
+      o.installments_state !== 'suspendido' &&
+      (o.installment_reminder_count || 0) >= MAX_RECORDATORIOS &&
+      cuotaVencidaConPlazo(o, now),
+    );
+  } catch (e) {
+    logger.error({ err: e.message }, 'cuotas: error listando suspensiones');
+    return [];
+  }
+  for (const order of vencidas) {
+    acciones.push({
+      orderId: order.id, business: order.business_name, accion: 'suspender',
+      conCuenta: Boolean(order.account_id), plazo: fechaLimiteTexto(fechaLimiteCuota(order, now)),
+    });
+    if (dryRun) continue;
+    suspendOrderService(order, 'plazo de la escalera vencido sin pago');
+  }
+  return acciones;
+}
+
 /** Arranca el job: corre al inicio y cada hora. */
 export function startInstallmentsScheduler() {
   const pass = async () => {
     await runDueInstallments();
     runBrebInstallmentReminders();
+    runCuotaSuspensions();
   };
   pass().catch((e) => logger.error({ err: e.message }, 'cuotas: primera pasada falló'));
   setInterval(() => {

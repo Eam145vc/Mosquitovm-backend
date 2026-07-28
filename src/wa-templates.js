@@ -109,6 +109,18 @@ export const WA_TEMPLATES = {
     bodyExample: ['Carlos', '2', '$69.000', '3 de agosto'],
     button: { text: 'Pagar ahora', urlBase: CUOTA },
   },
+  // Suspensión ejecutada (día 7 sin pago, tras la escalera completa): informa el
+  // corte y deja claro que pagar lo revierte AL INSTANTE — la puerta queda abierta.
+  sono_suspendido: {
+    body: 'Hola {{1}}, no recibimos el pago de la cuota {{2}} de 3 de tu Sonó ({{3}}) y el servicio de anuncios quedó suspendido 😔 Tu equipo y tu historial siguen intactos: ponte al día y se reactiva solo, al instante.',
+    bodyExample: ['Carlos', '2', '$69.000'],
+    button: { text: 'Pagar y reactivar', urlBase: CUOTA },
+  },
+  // Reactivación: el pago entró y el servicio volvió. Cierra el ciclo en positivo.
+  sono_reactivado: {
+    body: 'Hola {{1}} 🎉 ¡Recibimos tu pago y el servicio de tu Sonó quedó reactivado! Tus ventas ya se anuncian de nuevo con normalidad. Gracias por ponerte al día.',
+    bodyExample: ['Carlos'],
+  },
   // Misma cuota pero con botón tipo FLOW: la ventana de pago (monto único + QR)
   // se abre DENTRO de WhatsApp, sin mandar al cliente a la web. Es la preferida;
   // sono_cuota_v3 (botón URL) queda de respaldo si el Flow no está publicado.

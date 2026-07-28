@@ -128,6 +128,11 @@ export function buildWaCloudPayload(order, kind, shipment = null) {
     if (approvedTemplates.has('sono_cuota_v3')) return tpl('sono_cuota_v3', params);
     return tpl('sono_cuota_v2', [nombre, n, moneyCo(69_000 * 100)]);
   }
+  if (kind === 'suspension') {
+    const n = String((order.installments_paid || 0) >= 2 ? 3 : 2);
+    return tpl('sono_suspendido', [nombre, n, moneyCo(69_000 * 100)]);
+  }
+  if (kind === 'reactivacion') return tpl('sono_reactivado', [nombre]);
   if (kind === 'qr_problema') return tpl('sono_qr_problema', [nombre]);
   if (kind === 'conexion') return tpl('sono_conexion', [nombre]);
   if (kind === 'qr_incompatible') return tpl('sono_qr_incompatible', [nombre]);

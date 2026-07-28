@@ -84,6 +84,7 @@ import { notifySale } from './sale-push.js';
 import {
   CUOTA_2_3_CENTS, installmentDue, runBrebInstallmentReminders, fechaLimiteCuota, fechaLimiteTexto,
   CUOTA_POOL_SIZE, CUOTA_INTENT_TTL_MS, CUOTA_MATCH_GRACE_MS,
+  runCuotaSuspensions, reactivateIfSuspended,
 } from './installments-scheduler.js';
 import { publishVoice, publishCommand } from './mqtt-publisher.js';
 import { buildVoiceMessage } from './amount-to-wavs.js';
@@ -218,6 +219,13 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
   // sistema empieza a anunciar sus pagos sin un paso manual extra.
   const linkOrderToAccount = (order, accountId, method) => {
     updateOrder(order.id, { account_id: accountId, email_method: method });
+    // Reconciliación de deuda: si la orden fue suspendida por cuotas ANTES de tener
+    // cuenta (el corte no tenía dónde aplicarse), se aplica ahora al enlazar. Sin
+    // esto, el moroso que conectaba el correo después quedaba anunciando gratis.
+    if (order.plan === 'cuotas' && order.installments_state === 'suspendido') {
+      setSubStatus(accountId, 'suspendida');
+      logger.warn({ orderId: order.id, accountId }, 'cuotas: cuenta enlazada con deuda suspendida — corte aplicado');
+    }
     const assignedDev = listDevices().find((d) => d.order_id === order.id);
     if (assignedDev) {
       setAccountSpeaker(accountId, assignedDev.spkr_id);
@@ -296,6 +304,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
           installments_state: done ? 'completado' : 'al_dia',
           installment_next_at: done ? null : Date.now() + 30 * 24 * 3600 * 1000,
         });
+        // Si el servicio estaba cortado por esta deuda, el pago lo revive solo
+        // (y le avisa por WhatsApp que su Sonó volvió a anunciar).
+        reactivateIfSuspended(getOrder(order.id));
         logger.info({ orderId: order.id, intentId: intent.id, cuota: intent.installment_n, amount: result.amount },
           done ? 'cuota cobrada (breb propio) — plan COMPLETADO' : 'cuota cobrada (breb propio)');
         notifySale(getOrder(order.id), `Cuota ${intent.installment_n || nowPaid} · QR Nequi`);
@@ -768,12 +779,80 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     };
   });
 
-  // Dry-run del cobro de cuotas: muestra qué recordatorios saldrían SIN enviar nada.
-  // Para revisar la lista antes de encender CUOTAS_WA_ENABLED=1.
+  // Dry-run del cobro de cuotas: qué recordatorios Y suspensiones saldrían, SIN
+  // ejecutar nada. Para revisar la lista antes de encender CUOTAS_WA_ENABLED=1.
   app.get('/admin/cuotas/dry-run', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
-    const acciones = runBrebInstallmentReminders({ dryRun: true });
-    return { total: acciones.length, habilitado: process.env.CUOTAS_WA_ENABLED === '1', acciones };
+    const recordatorios = runBrebInstallmentReminders({ dryRun: true });
+    const suspensiones = runCuotaSuspensions({ dryRun: true });
+    return {
+      habilitado: process.env.CUOTAS_WA_ENABLED === '1',
+      total: recordatorios.length + suspensiones.length,
+      acciones: recordatorios, suspensiones,
+    };
+  });
+
+  // Tablero del cobro de cuotas: TODAS las órdenes en plan cuotas activas, con su
+  // etapa en la escalera, plazo, estado y si el corte tiene cuenta donde aplicarse.
+  app.get('/admin/cuotas', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const now = Date.now();
+    const rows = listOrders()
+      .filter((o) => o.plan === 'cuotas' && !o.archived_at && !['cancelada', 'declined', 'created'].includes(o.status))
+      .map((o) => {
+        const due = installmentDue(o, now);
+        return {
+          orderId: o.id,
+          business: o.business_name,
+          phone: o.phone,
+          status: o.status,
+          pagadas: Math.max(1, o.installments_paid || 0),
+          total: o.installments_total || 3,
+          estado: o.installments_state || (due ? 'pendiente' : 'al_dia'),
+          cuotaDue: due ? due.n : null,
+          auto: Boolean(o.card_token),
+          recordatorios: o.installment_reminder_count || 0,
+          plazoAt: o.installment_plazo_at || null,
+          plazoTexto: o.installment_plazo_at ? fechaLimiteTexto(o.installment_plazo_at) : null,
+          plazoVencido: Boolean(o.installment_plazo_at && now > o.installment_plazo_at),
+          accountId: o.account_id || null,
+          compradaAt: o.created_at,
+        };
+      })
+      .sort((a, b) => Number(b.plazoVencido) - Number(a.plazoVencido) || (a.plazoAt || Infinity) - (b.plazoAt || Infinity));
+    return {
+      habilitado: process.env.CUOTAS_WA_ENABLED === '1',
+      total: rows.length,
+      conDeuda: rows.filter((r) => r.cuotaDue).length,
+      suspendidas: rows.filter((r) => r.estado === 'suspendido').length,
+      orders: rows,
+    };
+  });
+
+  // Registra a mano una cuota pagada por fuera (efectivo, transferencia directa…):
+  // mismos efectos que el matcher — avanza el plan, resetea la escalera y, si el
+  // servicio estaba suspendido por esta deuda, lo reactiva y avisa al cliente.
+  app.post('/admin/orders/:order/cuota-pagada', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const order = getOrder(req.params.order);
+    if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
+    if (order.plan !== 'cuotas') return reply.code(409).send({ error: 'la orden no es plan cuotas' });
+    const total = order.installments_total || 3;
+    const nowPaid = Math.max(1, order.installments_paid || 0) + 1;
+    if (nowPaid > total) return reply.code(409).send({ error: 'el plan ya está completo' });
+    const done = nowPaid >= total;
+    updateOrder(order.id, {
+      installments_paid: nowPaid,
+      installment_fails: 0,
+      installment_reminder_at: null,
+      installment_reminder_count: 0,
+      installment_plazo_at: null,
+      installments_state: done ? 'completado' : 'al_dia',
+      installment_next_at: done ? null : Date.now() + 30 * 24 * 3600 * 1000,
+    });
+    const reactivada = reactivateIfSuspended(getOrder(order.id));
+    logger.info({ orderId: order.id, cuota: nowPaid, total, reactivada, admin: true }, 'cuota registrada a mano desde el admin');
+    return { ok: true, pagadas: nowPaid, total, completado: done, reactivada };
   });
 
   // ── Cobro de cuotas 2-3 por Bre-B (página pública sono.lat/cuota/?order=ID) ──
@@ -1684,6 +1763,18 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       delivery: o.delivery || 'online',
       // plan elegido: 'contado' | 'cuotas' (para mostrarlo en el admin)
       plan: o.plan || null,
+      // Cuotas (solo plan 'cuotas'): estado del cobro para la sección del drawer.
+      cuotas: o.plan === 'cuotas' ? {
+        pagadas: Math.max(1, o.installments_paid || 0),
+        total: o.installments_total || 3,
+        estado: o.installments_state || 'al_dia',
+        auto: Boolean(o.card_token),
+        cuotaDue: (installmentDue(o) || {}).n || null,
+        recordatorios: o.installment_reminder_count || 0,
+        plazoAt: o.installment_plazo_at || null,
+        plazoVencido: Boolean(o.installment_plazo_at && Date.now() > o.installment_plazo_at),
+        sub_status: acc ? (acc.sub_status || 'activa') : null,
+      } : null,
       // llave Bre-B vigente del local (la del device asignado; la de la orden es respaldo)
       breb_key: (dev && dev.breb_key) || o.breb_key || null,
       // QR

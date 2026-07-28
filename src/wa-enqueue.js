@@ -203,6 +203,16 @@ export function buildWaBody(order, kind) {
     }
     return `${hola} 👋 Ya puedes pagar la cuota ${n} de 3 de tu Sonó: ${monto}. Tienes hasta el ${limite} y se paga en menos de un minuto: ${base}/cuota/?order=${order.id}`;
   }
+  // Suspensión/reactivación del servicio por cuotas (texto del CRM; el real va
+  // por las plantillas sono_suspendido / sono_reactivado).
+  if (kind === 'suspension') {
+    const n = (order.installments_paid || 0) >= 2 ? 3 : 2;
+    const base = (config.FRONTEND_BASE_URL || 'https://sono.lat').replace(/\/$/, '');
+    return `${hola}, no recibimos el pago de la cuota ${n} de 3 de tu Sonó (${moneyCo(69_000 * 100)}) y el servicio de anuncios quedó suspendido. Ponte al día y se reactiva solo: ${base}/cuota/?order=${order.id}`;
+  }
+  if (kind === 'reactivacion') {
+    return `${hola} 🎉 ¡Recibimos tu pago y el servicio de tu Sonó quedó reactivado! Tus ventas ya se anuncian de nuevo.`;
+  }
   // recordatorio_24h
   return pickVariant(order.id, [
     `${hola}, tu Sonó sigue esperando tu QR de Bre-B para poder despacharse. Súbelo aquí y lo enviamos: ${link}`,
