@@ -867,6 +867,62 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     return { ok: true, recordatorios, suspensiones };
   });
 
+  // Activa/desactiva el SERVICIO manualmente desde la sección Cobros.
+  // - activo:true sobre un suspendido → reactiva la cuenta Y resetea la escalera
+  //   (recordatorios y plazo en cero): vuelve a "deben ahora" y, cuando el cobro
+  //   automático esté encendido, el primer aviso estrena sus 7 días desde ahí.
+  // - activo:false → corte manual SIN WhatsApp (a diferencia del corte automático:
+  //   lo manual suele venir de una conversación que el dueño ya está teniendo).
+  app.post('/admin/orders/:order/servicio', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const order = getOrder(req.params.order);
+    if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
+    if (order.plan !== 'cuotas') return reply.code(409).send({ error: 'la orden no es plan cuotas' });
+    const activo = Boolean((req.body || {}).activo);
+    if (activo) {
+      updateOrder(order.id, {
+        installments_state: 'al_dia', // installmentDue recalcula: si debe, vuelve a "deben ahora"
+        installment_fails: 0,
+        installment_reminder_at: null,
+        installment_reminder_count: 0,
+        installment_plazo_at: null,
+      });
+      if (order.account_id) setSubStatus(order.account_id, 'activa');
+      logger.info({ orderId: order.id, admin: true }, 'cuotas: servicio ACTIVADO a mano (escalera en cero)');
+    } else {
+      updateOrder(order.id, { installments_state: 'suspendido' });
+      if (order.account_id) setSubStatus(order.account_id, 'suspendida');
+      logger.warn({ orderId: order.id, admin: true }, 'cuotas: servicio SUSPENDIDO a mano (sin WhatsApp)');
+    }
+    return { ok: true, activo };
+  });
+
+  // Prórroga del plazo (1..30 días): extiende la fecha límite desde HOY o desde el
+  // plazo vigente (lo que sea mayor). Sobre un suspendido, además reactiva el
+  // servicio y lo deja "en mora" con el nuevo plazo — al vencerse sin pago, la
+  // pasada lo vuelve a suspender sin repetir la escalera.
+  app.post('/admin/orders/:order/prorroga', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const order = getOrder(req.params.order);
+    if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
+    if (order.plan !== 'cuotas') return reply.code(409).send({ error: 'la orden no es plan cuotas' });
+    const dias = Math.round(Number((req.body || {}).dias));
+    if (!Number.isFinite(dias) || dias < 1 || dias > 30) {
+      return reply.code(400).send({ error: 'dias debe estar entre 1 y 30' });
+    }
+    const DAY = 24 * 3600 * 1000;
+    const base = Math.max(Date.now(), order.installment_plazo_at || 0);
+    const nuevoPlazo = base + dias * DAY;
+    const patch = { installment_plazo_at: nuevoPlazo };
+    if (order.installments_state === 'suspendido') {
+      patch.installments_state = 'en_mora';
+      if (order.account_id) setSubStatus(order.account_id, 'activa');
+    }
+    updateOrder(order.id, patch);
+    logger.info({ orderId: order.id, dias, nuevoPlazo: fechaLimiteTexto(nuevoPlazo), admin: true }, 'cuotas: PRÓRROGA otorgada');
+    return { ok: true, dias, plazoAt: nuevoPlazo, plazoTexto: fechaLimiteTexto(nuevoPlazo) };
+  });
+
   // Pausa/reanuda el cobro de UNA orden (no recordar, no suspender). El cliente
   // igual puede pagar desde su página si quiere.
   app.post('/admin/orders/:order/cuotas-pausar', async (req, reply) => {
