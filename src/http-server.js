@@ -85,7 +85,7 @@ import { notifySale } from './sale-push.js';
 import {
   CUOTA_2_3_CENTS, installmentDue, runBrebInstallmentReminders, fechaLimiteCuota, fechaLimiteTexto,
   CUOTA_POOL_SIZE, CUOTA_INTENT_TTL_MS, CUOTA_MATCH_GRACE_MS,
-  runCuotaSuspensions, reactivateIfSuspended,
+  runCuotaSuspensions, reactivateIfSuspended, enviarRecordatorioCuota,
 } from './installments-scheduler.js';
 import { publishVoice, publishCommand } from './mqtt-publisher.js';
 import { buildVoiceMessage } from './amount-to-wavs.js';
@@ -921,6 +921,20 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     updateOrder(order.id, patch);
     logger.info({ orderId: order.id, dias, nuevoPlazo: fechaLimiteTexto(nuevoPlazo), admin: true }, 'cuotas: PRÓRROGA otorgada');
     return { ok: true, dias, plazoAt: nuevoPlazo, plazoTexto: fechaLimiteTexto(nuevoPlazo) };
+  });
+
+  // "Enviar aviso ya" a UNA orden: dispara su plantilla de cuota (siguiente
+  // peldaño de la escalera). Es plantilla aprobada → SIEMPRE llega, sin depender
+  // de la ventana de 24 h; cuando el cliente responda, el chat del CRM se abre.
+  app.post('/admin/orders/:order/cuota-aviso', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const order = getOrder(req.params.order);
+    if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
+    if (order.plan !== 'cuotas') return reply.code(409).send({ error: 'la orden no es plan cuotas' });
+    const r = enviarRecordatorioCuota(order);
+    if (!r.ok) return reply.code(409).send({ error: r.error });
+    logger.info({ orderId: order.id, etapa: r.etapa, admin: true }, 'cuotas: aviso individual enviado desde el admin');
+    return r;
   });
 
   // Pausa/reanuda el cobro de UNA orden (no recordar, no suspender). El cliente

@@ -241,6 +241,27 @@ async function runDueInstallments() {
   }
 }
 
+/**
+ * Envía el recordatorio de cuota a UNA orden (siguiente peldaño de su escalera).
+ * Lo usan el loop automático y el botón "Enviar aviso ya" del admin (el manual
+ * ignora pausa, cadencia y el flag global: si el dueño lo manda, sale).
+ * Sube el contador y fija el plazo si es el primer aviso — el enviador Cloud
+ * elige la plantilla (aviso/recordatorio/final) según el contador ya subido.
+ */
+export function enviarRecordatorioCuota(order, { now = Date.now() } = {}) {
+  const d = installmentDue(order, now, { ignorePause: true });
+  if (!d) return { ok: false, error: 'no tiene cuota pendiente' };
+  const count = order.installment_reminder_count || 0;
+  const etapa = ['aviso', 'recordatorio', 'final'][Math.min(count, 2)];
+  const patch = { installment_reminder_at: now, installment_reminder_count: count + 1 };
+  if (!order.installment_plazo_at) patch.installment_plazo_at = now + CUOTA_GRACIA_MS;
+  updateOrder(order.id, patch);
+  enqueueWhatsAppForce(order, d.n === 3 ? 'cuota_3' : 'cuota_2');
+  const plazoAt = order.installment_plazo_at || patch.installment_plazo_at;
+  logger.info({ orderId: order.id, cuota: d.n, etapa, intento: count + 1 }, 'cuotas breb: recordatorio encolado');
+  return { ok: true, etapa, cuota: d.n, intento: count + 1, plazoTexto: fechaLimiteTexto(plazoAt) };
+}
+
 // Una pasada de RECORDATORIOS Bre-B: para cada orden con cuota vencida, manda
 // (o remanda) la plantilla sono_cuota SIN reservar monto ni crear intent — es
 // solo un aviso ("debes la cuota N"). El monto se reserva únicamente cuando el
@@ -275,18 +296,16 @@ export function runBrebInstallmentReminders({ dryRun = false } = {}) {
     }
     const lastAt = order.installment_reminder_at || 0;
     if (now - lastAt < REMINDER_EVERY_MS) continue; // ya se le avisó hace poco
-    const etapa = ['aviso', 'recordatorio', 'final'][count] || 'final';
-    acciones.push({
-      orderId: order.id, business: order.business_name, cuota: d.n, etapa,
-      plazo: fechaLimiteTexto(order.installment_plazo_at || (now + CUOTA_GRACIA_MS)),
-    });
-    if (dryRun) continue;
-    const patch = { installment_reminder_at: now, installment_reminder_count: count + 1 };
-    // El plazo se fija con el PRIMER aviso y ya no se toca (ni al reintentar).
-    if (!order.installment_plazo_at) patch.installment_plazo_at = now + CUOTA_GRACIA_MS;
-    updateOrder(order.id, patch);
-    enqueueWhatsAppForce(order, d.n === 3 ? 'cuota_3' : 'cuota_2');
-    logger.info({ orderId: order.id, cuota: d.n, etapa, intento: count + 1 }, 'cuotas breb: recordatorio encolado (sin monto reservado)');
+    if (dryRun) {
+      acciones.push({
+        orderId: order.id, business: order.business_name, cuota: d.n,
+        etapa: ['aviso', 'recordatorio', 'final'][count] || 'final',
+        plazo: fechaLimiteTexto(order.installment_plazo_at || (now + CUOTA_GRACIA_MS)),
+      });
+      continue;
+    }
+    const r = enviarRecordatorioCuota(order, { now });
+    if (r.ok) acciones.push({ orderId: order.id, business: order.business_name, cuota: r.cuota, etapa: r.etapa, plazo: r.plazoTexto });
   }
   return acciones;
 }
