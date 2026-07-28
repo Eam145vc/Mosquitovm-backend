@@ -344,10 +344,11 @@ export function registerSupportRoutes(app) {
   // ---------------------------------------------------------------- ADMIN
 
   // Nombre a mostrar de un chat de WhatsApp: negocio de la orden con ese teléfono,
-  // o el nombre de perfil de WhatsApp, o el número.
-  const negocioPorTelefono = () => {
+  // o el nombre de perfil de WhatsApp, o el número. Acepta las orders precargadas
+  // para no repetir el SELECT completo dentro del mismo request.
+  const negocioPorTelefono = (orders) => {
     const m = new Map();
-    for (const o of listOrders()) {
+    for (const o of orders || listOrders()) {
       const p = normalizePhoneCO(o.phone);
       if (p && o.business_name && !m.has(p)) m.set(p, o.business_name);
     }
@@ -357,10 +358,10 @@ export function registerSupportRoutes(app) {
   // El pedido más reciente (no archivado) de un teléfono → para el botón "Abrir
   // pedido" del chat y el atajo de plantillas de WhatsApp. Devuelve {id, business,
   // account_id} o null.
-  const orderByPhone = (phone) => {
+  const orderByPhone = (phone, orders) => {
     const p = normalizePhoneCO(phone);
     if (!p) return null;
-    const cand = listOrders()
+    const cand = (orders || listOrders())
       .filter((o) => !o.archived_at && normalizePhoneCO(o.phone) === p)
       .sort((a, b) => (b.created_at || 0) - (a.created_at || 0))[0];
     return cand ? { id: cand.id, business: cand.business_name || null, account_id: cand.account_id || null } : null;
@@ -443,14 +444,15 @@ export function registerSupportRoutes(app) {
     if (isWaId(req.params.id)) {
       const phone = waPhone(req.params.id);
       markWaChatRead(phone); // abrir = leer
-      const negocios = negocioPorTelefono();
+      const orders = listOrders(); // una sola pasada para nombre + link al pedido
+      const negocios = negocioPorTelefono(orders);
       const msgs = listWaChatMessages(phone, 300);
       const name = negocios.get(phone) || msgs.findLast?.((m) => m.name)?.name || `+${phone}`;
       return {
         conversation: {
           id: `wa:${phone}`, channel: 'wa', name, contact: `+${phone}`,
           page: 'WhatsApp', mode: 'human', status: 'open',
-          order: orderByPhone(phone), // link al pedido para "Abrir pedido" + plantillas
+          order: orderByPhone(phone, orders), // link al pedido para "Abrir pedido" + plantillas
         },
         // Mapeo al formato del panel: entrante=user, plantilla automática=bot, tú=human.
         messages: msgs.map((m) => ({
