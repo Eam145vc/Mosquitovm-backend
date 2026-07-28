@@ -71,7 +71,11 @@ export function fechaLimiteTexto(ms) {
  */
 export function installmentDue(order, now = Date.now(), { ignorePause = false } = {}) {
   if (!order || order.plan !== 'cuotas') return null;
-  if (order.card_token) return null; // con tarjeta va el cobro automático de arriba
+  // Con tarjeta Y cobro programado va el cobro automático. Si installment_next_at
+  // quedó en null (3 fallos → suspensión, luego reactivada a mano), la tarjeta ya
+  // demostró no servir: la orden cae SOLA a esta escalera Bre-B. Nunca corren las
+  // dos rutas a la vez (runDueInstallments exige installment_next_at).
+  if (order.card_token && order.installment_next_at) return null;
   if (order.archived_at || ['cancelada', 'declined', 'created'].includes(order.status)) return null;
   // Pausa manual (admin): frena recordatorios y suspensión. El flujo de PAGO
   // (página /cuota, Flow) pasa ignorePause: si el cliente quiere pagar, se deja.

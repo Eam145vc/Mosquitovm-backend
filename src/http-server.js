@@ -813,7 +813,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
           total: o.installments_total || 3,
           estado: o.installments_state || (due ? 'pendiente' : 'al_dia'),
           cuotaDue: due ? due.n : null,
-          auto: Boolean(o.card_token),
+          auto: Boolean(o.card_token && o.installment_next_at),
           paused: Boolean(o.installment_paused),
           recordatorios: o.installment_reminder_count || 0,
           plazoAt: o.installment_plazo_at || null,
@@ -1875,7 +1875,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
         pagadas: Math.max(1, o.installments_paid || 0),
         total: o.installments_total || 3,
         estado: o.installments_state || 'al_dia',
-        auto: Boolean(o.card_token),
+        auto: Boolean(o.card_token && o.installment_next_at),
         cuotaDue: (installmentDue(o) || {}).n || null,
         recordatorios: o.installment_reminder_count || 0,
         plazoAt: o.installment_plazo_at || null,
@@ -3514,7 +3514,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
           // fecha programada por el scheduler; si no hay, la teórica del plan
           // (cuota 2 = orden+30d, cuota 3 = orden+60d)
           proximaAt: o.installment_next_at || (o.created_at + (n - 1) * 30 * DAY_MS),
-          auto: Boolean(o.card_token),               // true = se cobra sola con la tarjeta
+          auto: Boolean(o.card_token && o.installment_next_at), // true = se cobra sola con la tarjeta
           estado: o.installments_state || 'al_dia',  // al_dia | en_mora | suspendido | sin_token
         };
       });
