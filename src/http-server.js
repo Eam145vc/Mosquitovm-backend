@@ -811,7 +811,14 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
           status: o.status,
           pagadas: Math.max(1, o.installments_paid || 0),
           total: o.installments_total || 3,
-          estado: o.installments_state || (due ? 'pendiente' : 'al_dia'),
+          // La DEUDA manda sobre el estado persistido: una orden con cuota vencida
+          // jamás se muestra "al día" (p. ej. tras reactivarla a mano). Solo
+          // en_mora/suspendido pintan por encima de "Debe".
+          estado: !due
+            ? (o.installments_state || 'al_dia')
+            : (o.installments_state === 'en_mora' || o.installments_state === 'suspendido')
+              ? o.installments_state
+              : 'pendiente',
           cuotaDue: due ? due.n : null,
           auto: Boolean(o.card_token && o.installment_next_at),
           paused: Boolean(o.installment_paused),
@@ -1885,10 +1892,15 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       // plan elegido: 'contado' | 'cuotas' (para mostrarlo en el admin)
       plan: o.plan || null,
       // Cuotas (solo plan 'cuotas'): estado del cobro para la sección del drawer.
+      // La deuda manda: con cuota vencida nunca se muestra "al día".
       cuotas: o.plan === 'cuotas' ? {
         pagadas: Math.max(1, o.installments_paid || 0),
         total: o.installments_total || 3,
-        estado: o.installments_state || 'al_dia',
+        estado: !installmentDue(o, Date.now(), { ignorePause: true })
+          ? (o.installments_state || 'al_dia')
+          : (o.installments_state === 'en_mora' || o.installments_state === 'suspendido')
+            ? o.installments_state
+            : 'pendiente',
         auto: Boolean(o.card_token && o.installment_next_at),
         cuotaDue: (installmentDue(o) || {}).n || null,
         recordatorios: o.installment_reminder_count || 0,
