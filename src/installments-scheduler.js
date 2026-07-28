@@ -36,22 +36,19 @@ export const CUOTA_INTENT_TTL_MS = 5 * 60 * 1000; // 5 min desde que toca "Voy a
 export const CUOTA_MATCH_GRACE_MS = 45_000;      // misma gracia que el matcher del checkout
 const MAX_RECORDATORIOS = 3;                     // 3 recordatorios sin pago → gestión manual
 const REMINDER_EVERY_MS = 3 * DAY;               // cadencia entre recordatorios
-// Gracia desde que la cuota vence hasta la fecha límite que se le anuncia al
-// cliente. FIJA a propósito: si el plazo se recalculara en cada recordatorio, la
-// fecha se correría sola y el cliente aprendería que el plazo es elástico.
+// Plazo que se le da al cliente desde el PRIMER aviso. Se ancla a ese primer
+// mensaje (no al vencimiento de la cuota) para que quien ya venía vencido estrene
+// sus 7 días completos; y se congela en installment_plazo_at para que no se corra
+// en cada recordatorio (si se recalculara, el cliente aprende que es elástico).
 export const CUOTA_GRACIA_MS = 7 * DAY;
 
 /**
- * Fecha límite que se le comunica al cliente ("tienes plazo hasta el 6 de agosto").
- * Anclada al VENCIMIENTO real de la cuota (compra + 30 días por cuota ya pagada),
- * no al recordatorio: así los 3 recordatorios repiten la MISMA fecha y el cierre
- * es coherente con lo anunciado.
+ * Fecha límite que se le comunica al cliente ("tienes hasta el 3 de agosto").
+ * Sale de installment_plazo_at (fijado con el primer aviso). Si todavía no se ha
+ * mandado ninguno, se proyecta desde ahora — es solo vista previa.
  */
 export function fechaLimiteCuota(order, now = Date.now()) {
-  const due = installmentDue(order, now);
-  const paidEff = due ? due.paidEff : Math.max(1, order?.installments_paid || 0);
-  const vencimiento = (order?.created_at || now) + 30 * DAY * paidEff;
-  return vencimiento + CUOTA_GRACIA_MS;
+  return order?.installment_plazo_at || (now + CUOTA_GRACIA_MS);
 }
 
 /** ¿Ya se pasó la fecha límite anunciada? (base del corte de servicio). */
@@ -247,11 +244,18 @@ export function runBrebInstallmentReminders({ dryRun = false } = {}) {
     }
     const lastAt = order.installment_reminder_at || 0;
     if (now - lastAt < REMINDER_EVERY_MS) continue; // ya se le avisó hace poco
-    acciones.push({ orderId: order.id, business: order.business_name, cuota: d.n, accion: count === 0 ? 'recordatorio' : `reintento_${count + 1}` });
+    const etapa = ['aviso', 'recordatorio', 'final'][count] || 'final';
+    acciones.push({
+      orderId: order.id, business: order.business_name, cuota: d.n, etapa,
+      plazo: fechaLimiteTexto(order.installment_plazo_at || (now + CUOTA_GRACIA_MS)),
+    });
     if (dryRun) continue;
-    updateOrder(order.id, { installment_reminder_at: now, installment_reminder_count: count + 1 });
+    const patch = { installment_reminder_at: now, installment_reminder_count: count + 1 };
+    // El plazo se fija con el PRIMER aviso y ya no se toca (ni al reintentar).
+    if (!order.installment_plazo_at) patch.installment_plazo_at = now + CUOTA_GRACIA_MS;
+    updateOrder(order.id, patch);
     enqueueWhatsAppForce(order, d.n === 3 ? 'cuota_3' : 'cuota_2');
-    logger.info({ orderId: order.id, cuota: d.n, intento: count + 1 }, 'cuotas breb: recordatorio encolado (sin monto reservado)');
+    logger.info({ orderId: order.id, cuota: d.n, etapa, intento: count + 1 }, 'cuotas breb: recordatorio encolado (sin monto reservado)');
   }
   return acciones;
 }

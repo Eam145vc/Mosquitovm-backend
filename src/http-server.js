@@ -292,6 +292,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
           installment_fails: 0,
           installment_reminder_at: null,
           installment_reminder_count: 0,
+          installment_plazo_at: null, // la próxima cuota estrena su propio plazo
           installments_state: done ? 'completado' : 'al_dia',
           installment_next_at: done ? null : Date.now() + 30 * 24 * 3600 * 1000,
         });

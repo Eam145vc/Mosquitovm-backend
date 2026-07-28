@@ -112,11 +112,18 @@ export function buildWaCloudPayload(order, kind, shipment = null) {
     // El recordatorio SOLO avisa (monto plano de $69.000): el monto único del
     // pool se reserva recién cuando el cliente toca "Voy a pagar" en la página.
     const n = kind === 'cuota_3' ? '3' : '2';
-    // La fecha límite se ancla al recordatorio (misma que ve en la página).
+    // La fecha límite sale del plazo congelado en el primer aviso (misma que ve
+    // en la página y en los 3 mensajes de la escalera).
     const limite = fechaLimiteTexto(fechaLimiteCuota(order));
     const params = [nombre, n, moneyCo(69_000 * 100), limite];
-    // Preferencia: Flow (ventana dentro de WhatsApp) → v3 (fecha límite + aviso de
-    // interrupción) → v2 (texto suave, respaldo si v3 sigue en revisión).
+    // Escalera de cobro por nº de recordatorio ya enviado (el scheduler lo sube
+    // ANTES de encolar, así que acá 1=primer aviso, 2=intermedio, 3=último).
+    const etapa = order.installment_reminder_count || 1;
+    const plantilla = etapa >= 3 ? 'sono_cuota_final'
+      : etapa === 2 ? 'sono_cuota_recordatorio'
+      : 'sono_cuota_aviso';
+    if (approvedTemplates.has(plantilla)) return tpl(plantilla, params);
+    // Respaldos mientras Meta revisa la escalera: Flow → v3 → v2.
     if (config.hasWaFlow && approvedTemplates.has('sono_cuota_flow')) return tpl('sono_cuota_flow', params);
     if (approvedTemplates.has('sono_cuota_v3')) return tpl('sono_cuota_v3', params);
     return tpl('sono_cuota_v2', [nombre, n, moneyCo(69_000 * 100)]);

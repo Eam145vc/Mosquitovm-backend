@@ -190,13 +190,18 @@ export function buildWaBody(order, kind) {
     const n = kind === 'cuota_3' ? 3 : 2;
     const monto = moneyCo(69_000 * 100);
     const base = (config.FRONTEND_BASE_URL || 'https://sono.lat').replace(/\/$/, '');
-    // Mismo cálculo que la plantilla (vencimiento de la cuota + 7 días de gracia),
-    // inline para no importar el scheduler acá (evita ciclo de imports).
-    const paidEff = Math.max(1, order.installments_paid || 0);
-    const limiteMs = order.created_at + 30 * 24 * 3600 * 1000 * paidEff + 7 * 24 * 3600 * 1000;
+    // Plazo congelado en el primer aviso (installment_plazo_at); inline para no
+    // importar el scheduler acá (evita ciclo de imports).
     const limite = new Intl.DateTimeFormat('es-CO', { day: 'numeric', month: 'long', timeZone: 'America/Bogota' })
-      .format(new Date(limiteMs));
-    return `${hola} 👋 Tu cuota ${n} de 3 de Sonó por ${monto} está pendiente de pago. Tienes plazo hasta el ${limite} para ponerte al día y evitar la interrupción del servicio de anuncios de tu Sonó. Págala acá: ${base}/cuota/?order=${order.id}`;
+      .format(new Date(order.installment_plazo_at || (Date.now() + 7 * 24 * 3600 * 1000)));
+    const etapa = order.installment_reminder_count || 1;
+    if (etapa >= 3) {
+      return `${hola}, este es el último aviso por la cuota ${n} de 3 de tu Sonó, por ${monto}. El plazo vence el ${limite} y, si no recibimos el pago, el servicio de anuncios queda suspendido hasta que te pongas al día. Págala acá: ${base}/cuota/?order=${order.id}`;
+    }
+    if (etapa === 2) {
+      return `${hola} 👋 Te recordamos que la cuota ${n} de 3 de tu Sonó, por ${monto}, sigue pendiente. El plazo va hasta el ${limite}. Págala acá: ${base}/cuota/?order=${order.id}`;
+    }
+    return `${hola} 👋 Ya puedes pagar la cuota ${n} de 3 de tu Sonó: ${monto}. Tienes hasta el ${limite} y se paga en menos de un minuto: ${base}/cuota/?order=${order.id}`;
   }
   // recordatorio_24h
   return pickVariant(order.id, [

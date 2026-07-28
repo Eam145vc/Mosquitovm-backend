@@ -233,6 +233,10 @@ export function openDb() {
     // campos solo controlan la CADENCIA de recordatorios (~1 cada 3 días, máx 3).
     ['installment_reminder_at', 'INTEGER'],
     ['installment_reminder_count', 'INTEGER'],
+    // Fecha límite REAL anunciada al cliente: se fija al mandar el PRIMER aviso
+    // (primer aviso + 7 días) y no se mueve. Así los que ya venían vencidos
+    // estrenan sus 7 días completos y el plazo no se corre en cada recordatorio.
+    ['installment_plazo_at', 'INTEGER'],
     // payment_id de EfiPay del pago en curso (PSE/Bre-B/efectivo): permite consultar el
     // estado por API si el webhook no llega (red de seguridad anti-pagos-atascados).
     ['efi_payment_id', 'TEXT'],
@@ -842,7 +846,7 @@ export function updateOrder(id, patch) {
     // plan de cuotas
     'plan', 'card_token', 'installments_total', 'installments_paid',
     'installment_next_at', 'installment_fails', 'installments_state',
-    'installment_reminder_at', 'installment_reminder_count',
+    'installment_reminder_at', 'installment_reminder_count', 'installment_plazo_at',
     'efi_payment_id',
     // llave Bre-B del QR (multipunto)
     'breb_key', 'breb_qr_json', 'local_name',

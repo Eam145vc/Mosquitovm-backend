@@ -80,14 +80,34 @@ export const WA_TEMPLATES = {
     bodyExample: ['Carlos', '2', '$69.000'],
     button: { text: 'Voy a pagar', urlBase: CUOTA },
   },
-  // _v3 (27-jul, decisión del dueño): la v2 era "muy suave" — solo recordaba. Esta
-  // COBRA: fecha límite explícita ({{4}}) y aviso de interrupción del servicio.
-  // ⚠️ El aviso debe respaldarse: si no se suspende de verdad al vencer el plazo,
-  // el mensaje pierde fuerza y queda desalineado con los Términos.
+  // _v3 (27-jul): primer intento de tono firme. Quedó DEPRECADA en favor de la
+  // escalera de 3 mensajes de abajo (era muy dura para un primer cobro), pero se
+  // deja registrada porque ya está en revisión en Meta y no se puede borrar.
   sono_cuota_v3: {
     body: 'Hola {{1}} 👋 Tu cuota {{2}} de 3 de Sonó por {{3}} está pendiente de pago. Tienes plazo hasta el {{4}} para ponerte al día y evitar la interrupción del servicio de anuncios de tu Sonó. Toca el botón y págala en un minuto con Bre-B.',
     bodyExample: ['Carlos', '2', '$69.000', '30 de julio'],
     button: { text: 'Pagar mi cuota', urlBase: CUOTA },
+  },
+  // ── Escalera de cobro (decisión del dueño 27-jul): 3 mensajes en 7 días, de
+  // relajado a directo. El plazo ({{4}}) se cuenta desde el PRIMER aviso, así que
+  // los clientes ya vencidos también estrenan sus 7 días completos.
+  // 1º (día 0) — relajado: avisa que ya está lista para pago, sin presionar.
+  sono_cuota_aviso: {
+    body: 'Hola {{1}} 👋 Ya puedes pagar la cuota {{2}} de 3 de tu Sonó: {{3}}. Tienes hasta el {{4}} y se paga en menos de un minuto con Bre-B. Si ya la pagaste, ignora este mensaje 🙌',
+    bodyExample: ['Carlos', '2', '$69.000', '3 de agosto'],
+    button: { text: 'Pagar mi cuota', urlBase: CUOTA },
+  },
+  // 2º (día 3) — intermedio: recuerda que sigue pendiente y que el plazo corre.
+  sono_cuota_recordatorio: {
+    body: 'Hola {{1}} 👋 Te recordamos que la cuota {{2}} de 3 de tu Sonó, por {{3}}, sigue pendiente. El plazo va hasta el {{4}}. Pagarla toma menos de un minuto con Bre-B, toca el botón y listo.',
+    bodyExample: ['Carlos', '2', '$69.000', '3 de agosto'],
+    button: { text: 'Pagar mi cuota', urlBase: CUOTA },
+  },
+  // 3º (día 6) — último aviso, directo: nombra la consecuencia real.
+  sono_cuota_final: {
+    body: 'Hola {{1}}, este es el último aviso por la cuota {{2}} de 3 de tu Sonó, por {{3}}. El plazo vence el {{4}} y, si no recibimos el pago, el servicio de anuncios de tu Sonó queda suspendido hasta que te pongas al día. Puedes pagarla ahora mismo con Bre-B.',
+    bodyExample: ['Carlos', '2', '$69.000', '3 de agosto'],
+    button: { text: 'Pagar ahora', urlBase: CUOTA },
   },
   // Misma cuota pero con botón tipo FLOW: la ventana de pago (monto único + QR)
   // se abre DENTRO de WhatsApp, sin mandar al cliente a la web. Es la preferida;
