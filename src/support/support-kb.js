@@ -80,6 +80,20 @@ aparece automáticamente en pantalla en la misma página de Sonó donde está ha
 proceso de activación — que se quede en esa página unos segundos. Si en un par de minutos
 no aparece por ningún lado, que use "reenviar código" en la app de su banco.
 
+"BANCOLOMBIA NO ME GUARDA EL CAMBIO DE CORREO" (caso MUY común — NO se escala): en la app
+de Bancolombia Personas, al cambiar el correo el banco habilita TAMBIÉN otras opciones de
+"actualizar datos". Si alguna queda pendiente, el cambio NO queda guardado aunque el
+cliente crea que sí (por eso luego los pagos no suenan). Guíalo así:
+1. Entrar de nuevo a la actualización de datos en la app de Bancolombia.
+2. Revisar que TODAS las opciones queden en VERDE como "completadas" — si alguna está en
+   amarillo con "por completar", completarla.
+3. Bajar y tocar el botón "Actualizar datos".
+4. Debe aparecer el mensaje "Actualización por verificar" — SOLO al ver ese mensaje quedó
+   guardado de verdad.
+5. Después, confirmar con una prueba: un pago pequeño escaneando su QR.
+⚠️ El manual de sono.lat/manual SOLO trae el paso a paso del WiFi: NO prometas imágenes,
+tutoriales ni videos del proceso del correo (aún no existen).
+
 CONECTARLO AL WIFI (pasos del manual, guíalo con estos):
 1. Enchúfalo y enciéndelo: dice una voz de bienvenida.
 2. Solo, crea su propia red WiFi llamada "CloudSpeaker_XXXX". Desde el celular, en Ajustes

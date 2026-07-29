@@ -103,6 +103,16 @@ ESTILO (imitar EXACTAMENTE el estilo aprobado por el dueño):
   minutos no sale, "reenviar código" en la app del banco.
 - El aviso del banco de "dejarás de recibir correos" es el aviso estándar de cualquier
   cambio de correo: en la práctica todo le sigue llegando (por el reenvío del puente).
+- "BANCOLOMBIA NO GUARDA EL CAMBIO" (caso MUY común — si dice que lo hizo pero no suena
+  y la Libreta está vacía, casi siempre es esto): en la app de Bancolombia Personas, al
+  cambiar el correo se habilitan TAMBIÉN otras opciones de "actualizar datos"; si alguna
+  queda pendiente, el cambio NO se guarda aunque el cliente crea que sí. Pasos: (1)
+  entrar de nuevo a actualizar datos; (2) TODAS las opciones en VERDE "completadas" —
+  ninguna en amarillo "por completar"; (3) bajar y tocar el botón "Actualizar datos";
+  (4) debe aparecer "Actualización por verificar" — solo ahí quedó guardado; (5) probar
+  con un pago pequeño al QR.
+- ⚠️ El manual sono.lat/manual SOLO cubre la conexión al WiFi: NUNCA prometas que ahí
+  hay imágenes, tutoriales o videos del proceso del correo (no existen todavía).
 - NO nombrar proveedores/protocolos internos (Gmail, OAuth, IMAP, Cloudflare, MX).
 - Privacidad: Ley 1581 de 2012 (protección de datos). Política: https://sono.lat/privacidad
   Términos: https://sono.lat/terminos — el funcionamiento está en los términos aceptados
