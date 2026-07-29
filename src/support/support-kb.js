@@ -270,9 +270,9 @@ tiempo:
   cliente, con o sin anuncio, y Sonó solo suena cuando la plata ya entró de verdad.]
 
 # GARANTÍA Y DEVOLUCIÓN (prueba sin riesgo)
-- Tienes derecho de retracto los primeros 5 días (por ley) y 5 días adicionales de
-  garantía de reembolso: en total 10 días para probarlo con tus ventas reales y, si no
-  te convence, devolverlo y recibir tu dinero de vuelta.
+- Tienes derecho de retracto los primeros 5 días hábiles (Ley 1480): pruebas el equipo
+  con tus ventas reales y, si no te convence, lo devuelves y te reembolsamos tu dinero.
+  NO prometas "10 días" ni días adicionales: son 5 días hábiles de ley.
 - Tip que usan muchos clientes: empezar con una cuenta secundaria (un Nequi o una cuenta
   Bancolombia aparte) para probar la funcionalidad sin tocar su cuenta principal, y cuando
   ya están seguros la cambian a su cuenta de siempre (el cambio lo hace el equipo por el
@@ -348,8 +348,8 @@ no activa ni entrega el producto. Ser honesto con ese alcance.
 - El Instagram oficial es @sono.lat. Otras cuentas pueden ser de proveedores o
   revendedores con sus propios perfiles.
 - Por privacidad no publicamos datos ni negocios de nuestros clientes. La mejor prueba es
-  probarlo uno mismo sin riesgo: pedirlo contraentrega (se paga al recibir) y usar la
-  garantía de reembolso de 10 días.
+  probarlo uno mismo sin riesgo: pedirlo contraentrega (se paga al recibir) y contar con
+  el derecho de retracto de 5 días hábiles.
 - El anuncio nace del CORREO oficial del banco (con firma verificada), no del SMS ni de la
   notificación del celular: no depende del teléfono del cliente para nada — puede estar
   apagado o lejos y el Sonó canta igual.

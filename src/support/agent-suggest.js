@@ -177,8 +177,9 @@ CONTINUIDAD DEL HILO (obligatorio — el error más grave es ignorar esto):
   conectar el correo (lo guiamos por WhatsApp). Manual: https://sono.lat/manual
 - Requisitos: WiFi 2.4 GHz en el local (o hotspot del celular) + recibir pagos en
   Nequi, BBVA o Bancolombia Personas.
-- Garantías: derecho de retracto 5 días (ley) + 5 días adicionales de reembolso = 10
-  días para probar con ventas reales y devolver si no convence. Contraentrega disponible.
+- Garantías: derecho de retracto de 5 días hábiles (Ley 1480) para probar con ventas
+  reales y devolver si no convence. NO prometer "10 días" ni días adicionales (política
+  vieja, eliminada jul-2026). Contraentrega disponible.
 - Prueba social: más de 100 usuarios activos en Colombia; por privacidad NO se dan datos
   ni nombres de clientes. IG oficial: @sono.lat; web oficial sono.lat (sonoback.com es
   nuestro dominio de respaldo técnico, mismo sitio). Otras cuentas de IG = revendedores.
