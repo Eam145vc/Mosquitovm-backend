@@ -839,7 +839,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     // ── Estadísticas de plata (cuotas 2-3; la 1ª va en el checkout) ──
     const cobradas = rows.reduce((s, r) => s + Math.max(0, r.pagadas - 1), 0);
     const porCobrar = rows.reduce((s, r) => s + Math.max(0, r.total - r.pagadas), 0);
-    const semana = rows.filter((r) => !r.cuotaDue && r.proximaAt && r.proximaAt - now < 7 * 24 * 3600 * 1000 && r.proximaAt > now).length;
+    // Solo shipped: los no despachados no se cobran (gate de installmentDue), así
+    // que contarlos acá inflaba la carga de cobro de la semana.
+    const semana = rows.filter((r) => r.status === 'shipped' && !r.cuotaDue && r.proximaAt && r.proximaAt - now < 7 * 24 * 3600 * 1000 && r.proximaAt > now).length;
     return {
       habilitado: getCuotasEnabled(),
       total: rows.length,
