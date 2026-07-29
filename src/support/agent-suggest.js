@@ -219,10 +219,11 @@ export async function suggestAgentReply(messages, ctx = {}) {
   const body = {
     systemInstruction: { parts: [{ text: AGENT_PLAYBOOK }] },
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    // Sin thinkingConfig: desde jul-2026 gemini-flash-latest devuelve 400
+    // INVALID_ARGUMENT si se manda thinkingBudget (Google movió el alias).
     generationConfig: {
       temperature: 0.4,
       maxOutputTokens: 2048,
-      thinkingConfig: { thinkingBudget: 0 },
     },
   };
 
