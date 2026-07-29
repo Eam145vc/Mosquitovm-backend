@@ -271,7 +271,10 @@ export async function suggestAgentReply(messages, ctx = {}) {
     (ctx.page ? `PÁGINA DESDE LA QUE ESCRIBE: ${ctx.page}\n\n` : '') +
     `FECHA Y HORA ACTUAL (Bogotá): ${ahora}\n\n` +
     `CONVERSACIÓN HASTA AHORA:\n${transcript}\n\n` +
-    `Escribe la mejor respuesta del AGENTE al último mensaje del cliente.`;
+    (ctx.draft
+      ? `INSTRUCCIÓN DEL AGENTE (esto es LO QUE el agente quiere decirle al cliente — tu tarea es redactarlo bien): «${ctx.draft}»\n\n` +
+        `Convierte esa instrucción en el mensaje final para el cliente: mismo fondo que indicó el agente, pulido con el estilo de la casa y aterrizado al contexto del hilo. NO agregues temas que el agente no indicó ni cambies su decisión.`
+      : `Escribe la mejor respuesta del AGENTE al último mensaje del cliente.`);
 
   const body = {
     systemInstruction: { parts: [{ text: AGENT_PLAYBOOK }] },

@@ -614,6 +614,10 @@ export function registerSupportRoutes(app) {
       } catch { /* señal opcional */ }
     }
     if (!messages.length) return reply.code(400).send({ error: 'conversación vacía' });
+    // draft: instrucción/borrador que el agente escribió en el campo — la IA redacta
+    // el mensaje final a partir de esa idea en vez de generar desde cero.
+    const draft = String(req.body?.draft || '').trim();
+    if (draft) ctx.draft = draft.slice(0, 1000);
     const r = await suggestAgentReply(messages, ctx);
     if (!r.ok) return reply.code(502).send({ error: r.error || 'no se pudo generar' });
     return { ok: true, suggestion: r.suggestion };
