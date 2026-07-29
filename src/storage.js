@@ -990,12 +990,14 @@ export function listDevicesByAccount(accountId) {
 }
 
 /**
- * Busca el device de una cuenta cuya llave Bre-B coincide (para rutear un pago).
- * `key` debe venir normalizada. Devuelve el device o null.
+ * Busca TODOS los devices de una cuenta cuya llave Bre-B coincide (para rutear
+ * un pago). Varios matches = misma llave en varios speakers (modo eco: un local
+ * con 2+ bocinas, o 2 órdenes del mismo dueño con el mismo QR) → el pago debe
+ * sonar en todos. `key` debe venir normalizada. Devuelve [] si no hay match.
  */
-export function findDeviceByKey(accountId, key) {
+export function findDevicesByKey(accountId, key) {
   openDb();
-  if (!accountId || !key) return null;
+  if (!accountId || !key) return [];
   // Matchea la llave principal (devices.breb_key) O una adicional (device_keys).
   return db.prepare(`
     SELECT d.* FROM devices d
@@ -1004,8 +1006,13 @@ export function findDeviceByKey(accountId, key) {
       AND (d.breb_key = ? OR EXISTS (
         SELECT 1 FROM device_keys k WHERE k.spkr_id = d.spkr_id AND k.breb_key = ?
       ))
-    LIMIT 1
-  `).get(accountId, key, key) || null;
+    ORDER BY d.spkr_id
+  `).all(accountId, key, key);
+}
+
+/** Primer device que matchea la llave, o null (conveniencia sobre findDevicesByKey). */
+export function findDeviceByKey(accountId, key) {
+  return findDevicesByKey(accountId, key)[0] || null;
 }
 
 /** Llaves Bre-B adicionales de un device (las manuales del admin, sin la principal). */

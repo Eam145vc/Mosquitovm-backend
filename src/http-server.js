@@ -42,7 +42,7 @@ import {
   upsertAccount, listAccounts, getAccount, getAccountByEmail, getAccountByAlias, setAccountSpeaker,
   createOrder, getOrder, getOrderByPlanId, updateOrder, listOrders, findDuplicateOrder,
   createDevice, getDevice, listDevices, assignDevice, unassignDevice, setDeviceStatus,
-  setDeviceBrebKey, listDevicesByAccount, findDeviceByKey,
+  setDeviceBrebKey, listDevicesByAccount, findDeviceByKey, findDevicesByKey,
   listDeviceKeys, addDeviceKey, removeDeviceKey,
   updateAccountHistory, updateAccountWatch, setAccountForward, findAccountByForward, markChangeConfirmed,
   setAccountOnlyBreb, getAccountByEmailCI,
@@ -235,11 +235,15 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     }
   };
 
-  // RUTEO MULTIPUNTO: decide en QUÉ speaker suena un pago.
+  // RUTEO MULTIPUNTO + MODO ECO: decide en QUÉ speaker(s) suena un pago.
   //  - Cuenta con 1 (o 0) device → el speaker de la cuenta (comportamiento de siempre).
-  //  - Cuenta con 2+ devices (varios locales) → match por la llave Bre-B del pago:
-  //      match → el speaker de ese local; sin match → null (NO suena, para no confundir).
-  // Devuelve { speakerId } si hay que anunciar, o { speakerId: null, unrouted: true } si no.
+  //  - Cuenta con 2+ devices pero UNA sola llave distinta (o ninguna) → MODO ECO:
+  //      es un solo local con varias bocinas (2ª compra, misma llave) → suenan TODAS,
+  //      incluso con pagos sin llave en el correo (Nequi/BBVA), igual que mono-local.
+  //  - Cuenta con 2+ llaves distintas (varios locales) → match por la llave Bre-B del
+  //      pago: match → el/los speaker(s) de esa llave; sin match → null (NO suena).
+  // Devuelve { speakerId, speakerIds } si hay que anunciar (speakerId = el primero,
+  // para logs/persistencia), o { speakerId: null, unrouted: true } si no.
   // `deviceKey` = llave Bre-B registrada del local que sonó (del QR subido): sirve para
   // atribuir la llave a pagos cuyo correo no la trae (Nequi/Daviplata no la incluyen).
   const pickSpeaker = (account, payment) => {
@@ -247,20 +251,41 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     if (devices.length <= 1) {
       // un solo local: suena en su speaker (el de la cuenta o el único device).
       // localName acompaña al pago hasta La Libreta (etiqueta del local).
+      const speakerId = account.speaker_id || (devices[0] && devices[0].spkr_id) || null;
       return {
-        speakerId: account.speaker_id || (devices[0] && devices[0].spkr_id) || null,
+        speakerId,
+        speakerIds: speakerId ? [speakerId] : [],
         deviceKey: (devices[0] && devices[0].breb_key) || null,
         localName: (devices[0] && devices[0].local_name) || null,
       };
     }
-    // multipunto: rutear por llave.
+    // ¿Cuántas llaves DISTINTAS hay entre los devices? 0-1 → modo eco (un solo local).
+    const distinctKeys = new Set(devices.map((d) => d.breb_key || ''));
+    if (distinctKeys.size <= 1) {
+      return {
+        speakerId: devices[0].spkr_id,
+        speakerIds: devices.map((d) => d.spkr_id),
+        deviceKey: devices[0].breb_key || null,
+        localName: devices[0].local_name || null,
+        echo: true,
+      };
+    }
+    // multipunto real: rutear por llave (si varios devices comparten la llave, eco entre ellos).
     const key = payment.brebKey ? normalizeKey(payment.brebKey) : null;
     if (key) {
-      const dev = findDeviceByKey(account.id, key);
-      if (dev) return { speakerId: dev.spkr_id, localName: dev.local_name, deviceKey: dev.breb_key };
+      const devs = findDevicesByKey(account.id, key);
+      if (devs.length) {
+        return {
+          speakerId: devs[0].spkr_id,
+          speakerIds: devs.map((d) => d.spkr_id),
+          localName: devs[0].local_name,
+          deviceKey: devs[0].breb_key,
+          echo: devs.length > 1,
+        };
+      }
     }
     // sin llave parseable o llave que no coincide con ningún local → NO suena + aviso.
-    return { speakerId: null, unrouted: true, key };
+    return { speakerId: null, speakerIds: [], unrouted: true, key };
   };
 
   // FILTRO "solo pagos por llave Bre-B" (account.only_breb): cuando el cliente quiere
@@ -2080,6 +2105,50 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     return { ok: true, spkr_id, account_id: o.account_id || null };
   });
 
+  // Vincular una orden a una cuenta EXISTENTE (2ª compra del mismo cliente: su correo
+  // ya está conectado en la 1ª orden y no va a repetir el onboarding). Las órdenes
+  // quedan SEPARADAS (trazabilidad/cuotas) pero ambas cuelgan de la misma cuenta →
+  // el ruteo ve todos sus speakers: misma llave = modo eco (suenan todos), llaves
+  // distintas = multipunto normal. body: { account_id } o { email }, force para
+  // re-vincular una orden que ya tenía otra cuenta.
+  app.post('/admin/orders/:order/link-account', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const o = getOrder(req.params.order);
+    if (!o) return reply.code(404).send({ error: 'orden no encontrada' });
+    const { account_id, email, force } = req.body || {};
+    let account = null;
+    if (account_id) account = getAccount(String(account_id).trim());
+    else if (email) {
+      const mail = String(email).trim().toLowerCase();
+      // 1º por email de la cuenta (Gmail/Outlook o alias@sono.lat completo),
+      // 2º por el correo PERSONAL del cliente (forward_to de correo redirigido),
+      // que es el que el admin normalmente conoce.
+      account = getAccountByEmailCI(mail) || findAccountByForward(mail);
+    }
+    if (!account) return reply.code(404).send({ error: 'cuenta no encontrada' });
+    if (o.account_id && o.account_id !== account.id && !force) {
+      return reply.code(409).send({ error: 'la orden ya tiene otra cuenta vinculada', current: o.account_id });
+    }
+    updateOrder(o.id, { account_id: account.id });
+    // Mismo guard que linkOrderToAccount: si ESTA orden está suspendida por cuotas,
+    // el corte aplica a la cuenta al enlazar (que no anuncie gratis con deuda).
+    if (o.plan === 'cuotas' && o.installments_state === 'suspendido') {
+      setSubStatus(account.id, 'suspendida');
+      logger.warn({ orderId: o.id, accountId: account.id }, 'link-account: orden con deuda suspendida — corte aplicado');
+    }
+    const devices = listDevicesByAccount(account.id);
+    const distinct = new Set(devices.map((d) => d.breb_key || ''));
+    logger.info({ orderId: o.id, accountId: account.id, devices: devices.map((d) => d.spkr_id) },
+      'admin: orden vinculada a cuenta existente');
+    return {
+      ok: true,
+      account_id: account.id,
+      email: account.email || null,
+      devices: devices.map((d) => ({ spkr_id: d.spkr_id, breb_key: d.breb_key, local_name: d.local_name })),
+      echo: devices.length > 1 && distinct.size <= 1,
+    };
+  });
+
   // Vincular / editar / borrar MANUALMENTE la llave Bre-B de un local desde el admin.
   // key vacío o null → borrar. Se guarda en el device asignado (lo que rutea) Y en la
   // orden (respaldo que se transfiere si se reasigna speaker). qrJson va null: es un
@@ -3034,6 +3103,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
             brebKey: result.brebKey || route.deviceKey || null,
             accountId: account.id,
             speakerId: route.speakerId,
+            speakerIds: route.speakerIds,
             localName: route.localName || null,
             messageId,
             alias,
@@ -3525,6 +3595,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
               // Nequi/Daviplata no traen llave en el correo: heredar la del QR del local que sonó.
               brebKey: result.brebKey || route.deviceKey || null,
               accountId: account.id, speakerId: route.speakerId,
+              speakerIds: route.speakerIds,
               localName: route.localName || null, messageId,
               alias, from, subject, _lat: lat,
             });

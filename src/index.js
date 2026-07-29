@@ -37,6 +37,13 @@ import * as announceLog from './announce-log.js';
 const watchers = new Map();   // id -> ImapWatcher (modo IMAP)
 
 async function announcePayment(payment) {
+  // MODO ECO: un pago puede sonar en VARIOS speakers (misma llave en 2+ bocinas).
+  // speakerIds viene del ruteo (pickSpeaker); si no viene (Gmail/pubsub mono-local),
+  // se cae al speakerId único de siempre.
+  const speakerIds = (payment.speakerIds && payment.speakerIds.length)
+    ? payment.speakerIds
+    : (payment.speakerId ? [payment.speakerId] : []);
+
   // EGRESOS ("Transferiste $X"): solo se anuncian si la cuenta tiene activada
   // la flag announce_outgoing (futuro toggle en el panel de usuario). No se
   // registran en el historial de pagos (son plata que sale, no ventas).
@@ -49,8 +56,10 @@ async function announcePayment(payment) {
     }
     try {
       const playAudibleMsg = buildVoiceMessage({ amount: payment.amount, direction: 'out', includeBank: false });
-      logger.info({ playAudibleMsg, speakerId: payment.speakerId, ...payment }, 'announcing OUTGOING transfer');
-      await publishVoice(playAudibleMsg, { amount: payment.amount, speakerId: payment.speakerId });
+      logger.info({ playAudibleMsg, speakerIds, ...payment }, 'announcing OUTGOING transfer');
+      for (const sid of speakerIds) {
+        await publishVoice(playAudibleMsg, { amount: payment.amount, speakerId: sid });
+      }
     } catch (e) {
       logger.error({ err: e.message }, 'announce outgoing failed');
     }
@@ -90,11 +99,18 @@ async function announcePayment(payment) {
       bank: payment.bank,
       includeBank: false,   // NO decir el banco: solo "Recibiste X pesos" (+ earcon)
     });
-    logger.info({ playAudibleMsg, speakerId: payment.speakerId, ...payment }, 'announcing payment');
+    logger.info({ playAudibleMsg, speakerIds, ...payment }, 'announcing payment');
     // Este pago pasa a ser "el último": invalida cualquier pendiente anterior
-    // del speaker (al encender solo debe sonar el último, no los viejos).
-    if (payment.speakerId) clearPending(payment.speakerId);
-    await publishVoice(playAudibleMsg, { amount: payment.amount, speakerId: payment.speakerId });
+    // de cada speaker (al encender solo debe sonar el último, no los viejos).
+    for (const sid of speakerIds) clearPending(sid);
+    if (speakerIds.length) {
+      for (const sid of speakerIds) {
+        await publishVoice(playAudibleMsg, { amount: payment.amount, speakerId: sid });
+      }
+    } else {
+      // sin speaker resuelto: publishVoice loguea el warn y no publica (guard interno)
+      await publishVoice(playAudibleMsg, { amount: payment.amount, speakerId: payment.speakerId });
+    }
     // Cierra la medición de latencia del pipeline (solo si vino del webhook FE).
     if (payment._lat) {
       markVoicePublished(payment._lat, {
@@ -102,14 +118,17 @@ async function announcePayment(payment) {
         brebKey: payment.brebKey || null, alias: payment.alias || null, account: payment.account || null,
       });
     }
-    // ¿El speaker estaba apagado? El voice fue qos 0 (no queda encolado), así
-    // que se guarda como pendiente y sonará UNA vez cuando responda un getinfo.
-    if (payment.speakerId) {
-      const online = await filterOnline([payment.speakerId]);
-      if (!online.length) {
-        setPending(payment.speakerId, { playAudibleMsg, amount: payment.amount });
-        logger.info({ speakerId: payment.speakerId, amount: payment.amount },
-          'speaker offline: pago guardado como último pendiente');
+    // ¿Algún speaker estaba apagado? El voice fue qos 0 (no queda encolado), así
+    // que se guarda como pendiente POR SPEAKER y sonará UNA vez cuando responda
+    // un getinfo (en eco, cada bocina apagada recibe su propio pendiente).
+    if (speakerIds.length) {
+      const online = await filterOnline(speakerIds);
+      for (const sid of speakerIds) {
+        if (!online.includes(sid)) {
+          setPending(sid, { playAudibleMsg, amount: payment.amount });
+          logger.info({ speakerId: sid, amount: payment.amount },
+            'speaker offline: pago guardado como último pendiente');
+        }
       }
     }
   } catch (e) {
