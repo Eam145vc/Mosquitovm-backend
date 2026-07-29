@@ -546,6 +546,8 @@ export function registerSupportRoutes(app) {
           media: Boolean(m.has_media),
           mime: m.media_mime || null,
           media_url: m.has_media ? `/soporte/admin/wa-media/${encodeURIComponent(m.id)}` : null,
+          // Quote de WhatsApp: texto del mensaje al que este respondió (si aplica).
+          reply_to: m.reply_to_body || null,
         })),
       };
     }
@@ -577,7 +579,8 @@ export function registerSupportRoutes(app) {
       const orders = listOrders();
       messages = listWaChatMessages(phone, 300).map((m) => ({
         role: m.direction === 'in' ? 'user' : (m.type === 'template' ? 'bot' : 'human'),
-        text: m.body || `[${m.type}]`,
+        // El quote va inline para que la IA sepa a QUÉ respondió el cliente.
+        text: (m.reply_to_body ? `[respondiendo a: «${String(m.reply_to_body).slice(0, 120)}»] ` : '') + (m.body || `[${m.type}]`),
       }));
       const ord = orderByPhone(phone, orders);
       if (ord) {

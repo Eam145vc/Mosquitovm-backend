@@ -3223,7 +3223,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
             const media = MEDIA_TYPES.includes(msg.type) ? msg[msg.type] : null;
             const body = msg.text?.body || msg.button?.text || msg.interactive?.button_reply?.title
               || media?.caption || (media ? `[${msg.type}]` : `[${msg.type}]`);
-            if (insertWaInbound({ id: msg.id, phone: msg.from, name, type: msg.type, body })) {
+            // msg.context.id = wamid del mensaje CITADO cuando el cliente responde a
+            // un mensaje específico (quote de WhatsApp) → el panel muestra el quote.
+            if (insertWaInbound({ id: msg.id, phone: msg.from, name, type: msg.type, body, replyToId: msg.context?.id || null })) {
               logger.info({ from: msg.from, type: msg.type, hasMedia: Boolean(media?.id) }, 'wa-cloud: mensaje entrante');
               // Media: descargar YA en background (el link de Graph expira en ~5 min)
               // y colgar el archivo al mensaje; el panel lo pinta al siguiente poll.

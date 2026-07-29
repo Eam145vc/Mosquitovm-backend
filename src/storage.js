@@ -279,6 +279,9 @@ export function openDb() {
     // (los links de Graph expiran en ~5 min, por eso se persiste local).
     ['media_path', 'TEXT'],
     ['media_mime', 'TEXT'],
+    // Quote de WhatsApp: wamid del mensaje al que este responde (msg.context.id del
+    // webhook). Permite mostrar en el panel A QUÉ mensaje respondió el cliente.
+    ['reply_to_id', 'TEXT'],
   ]);
   db.exec('CREATE INDEX IF NOT EXISTS idx_wa_inbound_phone ON wa_inbound(phone, received_at DESC)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_wa_outbox_wamid ON wa_outbox(wamid)');
@@ -1780,12 +1783,12 @@ export function updateWaDeliveryByWamid(wamid, delivery, error = null) {
 
 /** Mensaje del hilo de chat (entrante del webhook o saliente del CRM/plantillas).
  *  Idempotente por id (wamid). direction: 'in' | 'out'. */
-export function insertWaInbound({ id, phone, name, type, body, direction = 'in', delivery = null }) {
+export function insertWaInbound({ id, phone, name, type, body, direction = 'in', delivery = null, replyToId = null }) {
   openDb();
   const info = db.prepare(
-    `INSERT OR IGNORE INTO wa_inbound (id, phone, name, type, body, direction, delivery, received_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, phone, name || null, type, body || null, direction, delivery, Date.now());
+    `INSERT OR IGNORE INTO wa_inbound (id, phone, name, type, body, direction, delivery, received_at, reply_to_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, phone, name || null, type, body || null, direction, delivery, Date.now(), replyToId || null);
   return info.changes > 0;
 }
 
@@ -1815,10 +1818,14 @@ export function listWaChats(limit = 100) {
 /** Hilo completo de una conversación (ascendente para pintar el chat). */
 export function listWaChatMessages(phone, limit = 200) {
   openDb();
+  // reply_to_body: texto del mensaje citado (quote de WhatsApp), para que el panel
+  // muestre a qué respondió el cliente sin otra ida a la DB.
   return db.prepare(
-    `SELECT id, phone, name, type, body, direction, delivery, read_at, received_at, media_mime,
-            (media_path IS NOT NULL) AS has_media
-     FROM wa_inbound WHERE phone = ? ORDER BY received_at DESC, rowid DESC LIMIT ?`
+    `SELECT m.id, m.phone, m.name, m.type, m.body, m.direction, m.delivery, m.read_at,
+            m.received_at, m.media_mime, (m.media_path IS NOT NULL) AS has_media,
+            m.reply_to_id,
+            (SELECT q.body FROM wa_inbound q WHERE q.id = m.reply_to_id) AS reply_to_body
+     FROM wa_inbound m WHERE m.phone = ? ORDER BY m.received_at DESC, m.rowid DESC LIMIT ?`
   ).all(phone, limit).reverse();
 }
 
