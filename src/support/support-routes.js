@@ -579,6 +579,7 @@ export function registerSupportRoutes(app) {
       const orders = listOrders();
       messages = listWaChatMessages(phone, 300).map((m) => ({
         role: m.direction === 'in' ? 'user' : (m.type === 'template' ? 'bot' : 'human'),
+        ts: m.received_at,
         // El quote va inline para que la IA sepa a QUÉ respondió el cliente.
         text: (m.reply_to_body ? `[respondiendo a: «${String(m.reply_to_body).slice(0, 120)}»] ` : '') + (m.body || `[${m.type}]`),
       }));
@@ -598,7 +599,7 @@ export function registerSupportRoutes(app) {
       if (!conv) return reply.code(404).send({ error: 'no encontrada' });
       messages = listMessages(conv.id, 0)
         .filter((m) => m.role !== 'system')
-        .map((m) => ({ role: m.role, text: m.text }));
+        .map((m) => ({ role: m.role, text: m.text, ts: m.created_at }));
       ctx = { name: conv.name || null, page: conv.page || null };
     }
     // En ambos canales: si el cliente dio un correo en el chat y aún no hay resumen,

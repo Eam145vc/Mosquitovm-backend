@@ -45,6 +45,10 @@ CONTINUIDAD DEL HILO (obligatorio — el error más grave es ignorar esto):
 - Si el cliente SOLO saluda o escribe algo corto sin pregunta ("Hola", "buenas", "?"),
   la respuesta es MÍNIMA: un saludo corto + "¿en qué te puedo ayudar?" y YA. Nada de
   pitch, ni menú de bancos, ni explicaciones que nadie pidió — eso espanta.
+- USA LAS FECHAS/HORAS de cada mensaje (van entre corchetes) y la fecha actual: si el
+  último intercambio fue hace más de ~24 horas, esto es una conversación NUEVA — saluda
+  normal y NO retomes por tu cuenta temas viejos del hilo (guías, pasos, reembolsos de
+  hace días); son solo contexto de fondo, salvo que el cliente mismo los retome.
 
 ═══ PRODUCTO Y FUNCIONAMIENTO ═══
 - Cuando pagan al comerciante, SU banco envía una notificación de correo; Sonó la lee y
@@ -239,10 +243,16 @@ export async function suggestAgentReply(messages, ctx = {}) {
   }).filter(([, v]) => v).map(([k, v]) => `- ${k}: ${v}`).join('\n');
 
   // Historial: user = cliente; human = agente Sonó; bot = mensajes automáticos.
+  // Cada línea lleva su fecha/hora (Bogotá) para que la IA distinga el hilo vigente
+  // de los temas viejos (un "hola" tras semanas es una conversación nueva).
+  const fmtTs = (ms) => ms
+    ? `[${new Date(ms).toLocaleString('es-CO', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/Bogota' })}] `
+    : '';
   const transcript = messages.slice(-60).map((m) => {
     const who = m.role === 'user' ? 'CLIENTE' : m.role === 'human' ? 'AGENTE' : 'AUTOMÁTICO';
-    return `${who}: ${String(m.text || '').slice(0, 900)}`;
+    return `${fmtTs(m.ts)}${who}: ${String(m.text || '').slice(0, 900)}`;
   }).join('\n');
+  const ahora = new Date().toLocaleString('es-CO', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/Bogota' });
 
   const prompt =
     (ctxLines ? `DATOS DEL CLIENTE (del panel):\n${ctxLines}\n\n` : '') +
@@ -250,6 +260,7 @@ export async function suggestAgentReply(messages, ctx = {}) {
       ? `ESTADO REAL DE SU CUENTA (verificado en el sistema — usa SOLO esto para hablar de su pedido, envío, conexión o altavoz; no inventes nada más):\n${ctx.accountInfo}\n\n`
       : '') +
     (ctx.page ? `PÁGINA DESDE LA QUE ESCRIBE: ${ctx.page}\n\n` : '') +
+    `FECHA Y HORA ACTUAL (Bogotá): ${ahora}\n\n` +
     `CONVERSACIÓN HASTA AHORA:\n${transcript}\n\n` +
     `Escribe la mejor respuesta del AGENTE al último mensaje del cliente.`;
 
