@@ -58,7 +58,7 @@ import {
   getShipmentByOrder, updateShipmentRow, renameDeviceLocal, listShipments,
   insertUgcApplication, listUgcApplications, countUgcNuevo, setUgcStatus, deleteUgcApplication,
   createPaymentIntent, getPaymentIntent, matchPaymentIntent, claimPooledAmount, getActiveIntentByOrder,
-  getCuotasEnabled, setCuotasEnabled,
+  getCuotasEnabled, setCuotasEnabled, setPoolQr, getPoolQr, listPoolQrs,
   speakersForBank,
 } from './storage.js';
 import { bogotaDayStart, bogotaDayStartFromKey, bogotaMonthStart, bogotaPrevMonthStart, DAY_MS } from './libreta-time.js';
@@ -747,7 +747,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
   // contador de 2 min. La confirmación llega por el correo de Nequi a la cuenta
   // de pagos (settleOwnBrebPayment matchea por monto). Reemplaza el Bre-B de
   // EfiPay en el front; el de EfiPay queda solo como fallback si esto está apagado.
-  const BREB_INTENT_TTL_MS = 2 * 60 * 1000;
+  const BREB_INTENT_TTL_MS = 150 * 1000; // 2:30 (pedido del dueño: 2 min quedaba justo)
   app.post('/checkout/breb-intent', async (req, reply) => {
     if (!config.hasOwnBreb) return reply.code(503).send({ error: 'checkout Bre-B propio no configurado' });
     const order = getOrder((req.body || {}).orderId);
@@ -775,7 +775,10 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       // Para el contador del front: ms restantes según el RELOJ DEL SERVER (el del
       // cliente puede estar corrido; con esto el front arma su deadline local).
       remainingMs: Math.max(0, intent.expires_at - Date.now()),
-      qrData: config.SONO_BREB_EMVCO,
+      // QR de Nequi CON el valor embebido si existe para este monto (el cliente
+      // escanea sin digitar); si no, el estático de siempre + digitar.
+      qrData: getPoolQr(intent.amount) || config.SONO_BREB_EMVCO,
+      qrConValor: Boolean(getPoolQr(intent.amount)),
       key: config.SONO_BREB_KEY || null,
     };
   });
@@ -852,6 +855,44 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       cuotaPesos: CUOTA_PESOS,
       orders: rows,
     };
+  });
+
+  // Carga los QRs de Nequi con valor fijo (uno por monto del pool). El payload
+  // EMVCo debe traer el monto en el tag 54 — se valida contra `amount` acá.
+  app.post('/admin/pool-qrs', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const items = (req.body || {}).items;
+    if (!Array.isArray(items) || !items.length) return reply.code(400).send({ error: 'items requerido' });
+    const resultados = [];
+    for (const it of items) {
+      const amount = Math.round(Number(it.amount));
+      const emvco = String(it.emvco || '');
+      if (!Number.isFinite(amount) || amount <= 0 || !emvco.startsWith('000201')) {
+        resultados.push({ amount: it.amount, ok: false, error: 'inválido' });
+        continue;
+      }
+      // Validar que el monto del tag 54 coincida con el declarado
+      let tag54 = null;
+      for (let i = 0; i + 4 <= emvco.length;) {
+        const tag = emvco.slice(i, i + 2), len = parseInt(emvco.slice(i + 2, i + 4), 10);
+        if (Number.isNaN(len)) break;
+        if (tag === '54') { tag54 = Math.round(parseFloat(emvco.slice(i + 4, i + 4 + len))); break; }
+        i += 4 + len;
+      }
+      if (tag54 !== amount) {
+        resultados.push({ amount, ok: false, error: `el QR trae $${tag54}, no coincide` });
+        continue;
+      }
+      setPoolQr(amount, emvco);
+      resultados.push({ amount, ok: true });
+    }
+    logger.info({ cargados: resultados.filter((r) => r.ok).length }, 'pool-qrs: QRs con valor cargados');
+    return { ok: true, resultados };
+  });
+
+  app.get('/admin/pool-qrs', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    return { qrs: listPoolQrs() };
   });
 
   // Interruptor del cobro automático (vive en la DB: sin .env ni reinicio).
@@ -1004,7 +1045,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
         pendiente: true, pagando: true,
         cuota: intent.installment_n || due.n, cuotasTotal: order.installments_total || 3,
         amount: intent.amount, remainingMs: Math.max(0, intent.expires_at - Date.now()),
-        qrData: config.SONO_BREB_EMVCO, key: config.SONO_BREB_KEY || null, business: order.business_name || null,
+        qrData: getPoolQr(intent.amount) || config.SONO_BREB_EMVCO,
+        qrConValor: Boolean(getPoolQr(intent.amount)),
+        key: config.SONO_BREB_KEY || null, business: order.business_name || null,
       };
     }
     return {
@@ -1042,7 +1085,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       cuotasTotal: order.installments_total || 3,
       amount: intent.amount,
       remainingMs: Math.max(0, intent.expires_at - Date.now()),
-      qrData: config.SONO_BREB_EMVCO,
+      qrData: getPoolQr(intent.amount) || config.SONO_BREB_EMVCO,
+      qrConValor: Boolean(getPoolQr(intent.amount)),
       key: config.SONO_BREB_KEY || null,
       business: order.business_name || null,
     };

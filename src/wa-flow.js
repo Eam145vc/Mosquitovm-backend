@@ -15,7 +15,7 @@
 import crypto from 'node:crypto';
 import { config } from './config.js';
 import { logger } from './logger.js';
-import { getOrder, createPaymentIntent, claimPooledAmount, getActiveIntentByOrder } from './storage.js';
+import { getOrder, createPaymentIntent, claimPooledAmount, getActiveIntentByOrder, getPoolQr } from './storage.js';
 import {
   CUOTA_2_3_CENTS, CUOTA_POOL_SIZE, CUOTA_INTENT_TTL_MS, CUOTA_MATCH_GRACE_MS, installmentDue,
 } from './installments-scheduler.js';
@@ -26,20 +26,24 @@ const moneyCo = (pesos) => `$${Math.round(pesos).toLocaleString('es-CO')}`;
 // ── QR como PNG base64 (el componente Image del Flow recibe base64 pelado) ──
 // zxing-wasm ya está en el proyecto (se usa para LEER los QR de los clientes);
 // su submódulo writer genera el PNG sin sumar dependencias.
-let qrCache = null; // el EMVCo de Sonó es fijo → un solo render por proceso
-async function qrBase64() {
-  if (qrCache) return qrCache;
-  if (!config.SONO_BREB_EMVCO) return '';
+// Cache por monto: con QRs de valor fijo (pool_qrs) cada monto tiene su payload;
+// sin QR cargado para el monto, cae al estático de Sonó (y el cliente digita).
+const qrCache = new Map(); // amount → base64
+async function qrBase64(amount) {
+  if (qrCache.has(amount)) return qrCache.get(amount);
+  const emvco = getPoolQr(amount) || config.SONO_BREB_EMVCO;
+  if (!emvco) return '';
   const { writeBarcode } = await import('zxing-wasm/writer');
-  const res = await writeBarcode(config.SONO_BREB_EMVCO, {
+  const res = await writeBarcode(emvco, {
     format: 'QRCode', scale: 8, withQuietZones: true, ecLevel: 'M',
   });
   if (res.error || !res.image) {
-    logger.error({ err: res.error }, 'wa-flow: no se pudo generar el QR');
+    logger.error({ err: res.error, amount }, 'wa-flow: no se pudo generar el QR');
     return '';
   }
-  qrCache = Buffer.from(await res.image.arrayBuffer()).toString('base64');
-  return qrCache;
+  const b64 = Buffer.from(await res.image.arrayBuffer()).toString('base64');
+  qrCache.set(amount, b64);
+  return b64;
 }
 
 // ── Cifrado ───────────────────────────────────────────────────────────────────
@@ -117,14 +121,17 @@ async function pantallaPago(order, due) {
     logger.info({ orderId: order.id, intentId: intent.id, amount, cuota: due.n },
       'cuota: ventana de pago abierta desde el Flow de WhatsApp');
   }
-  const minutos = Math.max(1, Math.round(CUOTA_INTENT_TTL_MS / 60000));
+  const conValor = Boolean(getPoolQr(intent.amount));
+  const instruccion = conValor
+    ? `Toma un pantallazo del QR y cárgalo desde la galería en el lector de tu banco: ya trae el valor exacto (${moneyCo(intent.amount)}), solo confirma. Tienes 2 minutos y medio; con ese valor tu cuota queda registrada sola.`
+    : `Toma un pantallazo del QR y cárgalo desde la galería en el lector de tu banco, o paga a la llave ${config.SONO_BREB_KEY || ''}. Envía exactamente ${moneyCo(intent.amount)} en los próximos 2 minutos y medio: con ese valor tu cuota queda registrada sola.`;
   return {
     screen: 'PAGO',
     data: {
       monto: moneyCo(intent.amount),
-      qr: await qrBase64(),
+      qr: await qrBase64(intent.amount),
       llave: config.SONO_BREB_KEY || '',
-      instruccion: `Toma un pantallazo del QR y cárgalo desde la galería en el lector de tu banco, o paga a la llave ${config.SONO_BREB_KEY || ''}. Envía exactamente ${moneyCo(intent.amount)} en los próximos ${minutos} minutos: con ese valor tu cuota queda registrada sola.`,
+      instruccion,
     },
   };
 }

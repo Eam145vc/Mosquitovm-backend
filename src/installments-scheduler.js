@@ -32,7 +32,7 @@ const MAX_FAILS = 3; // al 3er fallo consecutivo se suspende el servicio
 // Ventana CORTA (igual espíritu que el checkout: se abre al pedirla, se cierra
 // si no se usa) para que el pool rote rápido y libere el monto para el siguiente.
 export const CUOTA_POOL_SIZE = 20;               // hasta 20 cobros "en pantalla" a la vez
-export const CUOTA_INTENT_TTL_MS = 5 * 60 * 1000; // 5 min desde que toca "Voy a pagar"
+export const CUOTA_INTENT_TTL_MS = 150 * 1000;   // 2:30 desde que toca "Voy a pagar"
 export const CUOTA_MATCH_GRACE_MS = 45_000;      // misma gracia que el matcher del checkout
 const MAX_RECORDATORIOS = 3;                     // 3 recordatorios sin pago → gestión manual
 const REMINDER_EVERY_MS = 3 * DAY;               // cadencia entre recordatorios

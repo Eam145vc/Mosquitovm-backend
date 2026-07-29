@@ -441,6 +441,14 @@ export function openDb() {
     ["kind", "TEXT NOT NULL DEFAULT 'checkout'"],
     ['installment_n', 'INTEGER'],
   ]);
+  // QRs de Nequi con VALOR fijo, uno por monto del pool (cargados por el admin).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS pool_qrs (
+      amount INTEGER PRIMARY KEY,
+      emvco TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+  `);
 
   // OTP de confirmación del banco (cambio de correo). Persistido CIFRADO con TTL de
   // 10 min para sobrevivir reinicios de pm2 (antes vivía solo en RAM y cada deploy lo
@@ -1565,22 +1573,59 @@ export function createPaymentIntent({ orderId, amount, ttlMs, kind = 'checkout',
  * Devuelve el monto MÁS ALTO libre (prioridad al valor completo) o null si el
  * pool está lleno. La ocupación usa la misma gracia que el matcher para que un
  * monto no se reasigne mientras su pago todavía podría matchear.
+ *
+ * Con QRs CON VALOR cargados (pool_qrs, jul-2026 v2): el pool son SOLO los montos
+ * que tienen QR generado desde Nequi en [base-1000, base] — nunca por encima del
+ * precio — y el cliente escanea sin digitar. Sin QRs cargados para ese rango, cae
+ * al esquema original (base bajando de a peso, QR estático + digitar).
  */
 export function claimPooledAmount(baseAmount, poolSize, { graceMs = 45_000 } = {}) {
   openDb();
   const now = Date.now();
   const base = Math.round(baseAmount);
-  const min = base - poolSize + 1;
-  const taken = new Set(
+  const takenIn = (min, max) => new Set(
     db.prepare(
       `SELECT amount FROM payment_intents
        WHERE status = 'pending' AND amount BETWEEN ? AND ? AND expires_at + ? > ?`
-    ).all(min, base, graceMs, now).map((r) => r.amount)
+    ).all(min, max, graceMs, now).map((r) => r.amount)
   );
+  // 1) Montos con QR con valor para este producto (mayor primero, sin pasarse del precio)
+  const conQr = db.prepare(
+    'SELECT amount FROM pool_qrs WHERE amount BETWEEN ? AND ? ORDER BY amount DESC'
+  ).all(base - 1000, base).map((r) => r.amount);
+  if (conQr.length) {
+    const taken = takenIn(base - 1000, base);
+    for (const a of conQr) if (!taken.has(a)) return a;
+    return null; // todos los QRs con valor ocupados → cola (ventana corta, rota rápido)
+  }
+  // 2) Fallback sin QRs cargados: esquema original
+  const min = base - poolSize + 1;
+  const taken = takenIn(min, base);
   for (let a = base; a >= min; a--) {
     if (!taken.has(a)) return a;
   }
   return null;
+}
+
+// ── QRs de Nequi CON VALOR fijo (uno por monto del pool) ─────────────────────
+// Generados a mano desde la app por el dueño; el payload EMVCo trae el monto en
+// el tag 54 y la firma del banco. Se cargan por /admin/pool-qrs.
+
+export function setPoolQr(amount, emvco) {
+  openDb();
+  db.prepare(`INSERT INTO pool_qrs (amount, emvco, created_at) VALUES (?, ?, ?)
+              ON CONFLICT(amount) DO UPDATE SET emvco = excluded.emvco`).run(Math.round(amount), emvco, Date.now());
+}
+
+export function getPoolQr(amount) {
+  openDb();
+  const row = db.prepare('SELECT emvco FROM pool_qrs WHERE amount = ?').get(Math.round(amount));
+  return row ? row.emvco : null;
+}
+
+export function listPoolQrs() {
+  openDb();
+  return db.prepare('SELECT amount, created_at FROM pool_qrs ORDER BY amount DESC').all();
 }
 
 /** Cuántos intents (de cualquier estado) lleva una orden para una cuota concreta.
