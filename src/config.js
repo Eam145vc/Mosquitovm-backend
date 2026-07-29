@@ -67,6 +67,10 @@ const ConfigSchema = z.object({
   EFIPAY_OFFICE: z.coerce.number().int().default(6055),
   // Token Webhooks del panel, para validar las notificaciones entrantes.
   EFIPAY_WEBHOOK_TOKEN: z.string().default(''),
+  // Kill-switch del 3DS en el cobro embebido de tarjeta: poner EFIPAY_3DS=0 en el
+  // .env + pm2 restart lo apaga SIN redeploy (vuelve al cobro directo sin enable_3ds).
+  // (string parseado a mano: z.coerce.boolean daría true para "0")
+  EFIPAY_3DS: z.string().default('1').transform((v) => !/^(0|false|off|no)$/i.test(v.trim())),
 
   // ---- Meta Conversions API (píxel 847770251313672) ----
   // El Purchase del navegador solo dispara si el cliente abre /activar-pro (pestaña

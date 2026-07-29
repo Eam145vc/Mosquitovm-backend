@@ -143,7 +143,9 @@ export async function chargeCard(orderId, amountCents, card, payer, browser = nu
   };
   if (browser) {
     body.browser_information = browser;
-    body.enable_3ds = true; // obligatorio Visa/MC; exige browser_information
+    // Obligatorio Visa/MC según EfiPay; exige browser_information. EFIPAY_3DS=0 en
+    // el .env lo apaga sin redeploy (kill-switch si diera problemas en producción).
+    if (config.EFIPAY_3DS) body.enable_3ds = true;
   }
 
   const resp = await fetch(`${EFI_API}/payment/transaction-checkout`, {
