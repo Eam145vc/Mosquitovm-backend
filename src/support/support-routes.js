@@ -36,7 +36,9 @@ import {
 // Canal WhatsApp (Cloud API oficial): las conversaciones del número de Sonó se
 // integran a ESTE panel con id 'wa:<telefono>' — un solo lugar para atender todo.
 import { listWaChats, listWaChatMessages, markWaChatRead, insertWaInbound, listOrders, getWaMedia, setWaInboundMedia,
-  countWaChatUnread, unseenInboxCount, clientsAttentionCount, pedidosPendientesCount } from '../storage.js';
+  countWaChatUnread, unseenInboxCount, clientsAttentionCount, pedidosPendientesCount,
+  getAccount, getAccountByEmailCI, getAccountByAlias, findAccountByForward,
+  listDevicesByAccount, getShipmentByOrder } from '../storage.js';
 import { normalizePhoneCO } from '../wa-enqueue.js';
 import { sendCloudText, sendCloudImage } from '../wa-cloud.js';
 import { createReadStream, existsSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -55,6 +57,58 @@ const REENGAGE_MESSAGE =
   '¿Sigues por ahí? 👀 Si te animas, puedes pedir tu Sonó en un par de minutos acá: ' +
   'https://sono.lat/checkout — cualquier duda, me dices y te ayudo. 🙂';
 import { recordPing, getOverview, getActiveVisitors, pruneOld } from './analytics-store.js';
+
+// ── Lookup de cuenta para Valeria (modo soporte) ────────────────────────────────
+// Cuando el cliente da su correo en el chat, se arma un resumen OPERATIVO de su
+// cuenta/pedido para que el bot responda con datos reales. Solo estados — NUNCA
+// montos de ventas, tokens ni datos sensibles (cualquiera podría escribir el correo
+// de otra persona).
+const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i;
+const fechaCo = (ms) => new Date(ms).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', timeZone: 'America/Bogota' });
+function accountSummaryByEmail(raw) {
+  const email = String(raw || '').trim().toLowerCase();
+  if (!email) return null;
+  let acc = null;
+  try {
+    acc = getAccountByEmailCI(email) || findAccountByForward(email);
+    if (!acc && email.endsWith('@sono.lat')) acc = getAccountByAlias(email.split('@')[0]);
+  } catch { /* lookup no crítico */ }
+  const orders = listOrders().filter((o) => !o.archived_at);
+  let order = acc ? orders.find((o) => o.account_id === acc.id) : null;
+  if (!order) {
+    order = orders.find((o) =>
+      (o.customer_email || '').toLowerCase() === email ||
+      (o.mp_payer_email || '').toLowerCase() === email) || null;
+    if (order && !acc && order.account_id) { try { acc = getAccount(order.account_id); } catch {} }
+  }
+  if (!acc && !order) return null;
+  const lines = [];
+  if (order) {
+    lines.push(`Negocio: ${order.business_name || '—'}${order.city ? ` (${order.city})` : ''}`);
+    lines.push(`Pedido: plan ${order.plan || '—'}, entrega ${order.delivery || '—'}, estado ${order.status}`);
+    try {
+      const sh = getShipmentByOrder(order.id);
+      if (sh?.tracking) {
+        lines.push(`Envío: guía ${sh.tracking} por ${sh.carrier || 'transportadora'}${sh.tracking_status ? `, estado ${sh.tracking_status}` : ''}${sh.tracking_url ? `, rastreo: ${sh.tracking_url}` : ''}`);
+      }
+    } catch {}
+  }
+  if (acc) {
+    lines.push(`Conexión del correo del banco: ${acc.change_confirmed ? 'CONECTADA (confirmada)' : 'PENDIENTE (el banco aún no confirma el cambio)'}`);
+    lines.push(`Servicio: ${acc.sub_status || 'activa'}`);
+    try {
+      const devs = listDevicesByAccount(acc.id);
+      if (devs.length) {
+        const d = devs[0];
+        const online = d.last_seen && Date.now() - d.last_seen < 10 * 60 * 1000;
+        lines.push(`Altavoz: ${online ? 'EN LÍNEA ahora' : d.last_seen ? `sin conexión (visto por última vez el ${fechaCo(d.last_seen)})` : 'aún no se ha conectado'}${d.ssid ? `, red WiFi "${d.ssid}"` : ''}${d.battery != null ? `, batería ${d.battery}%` : ''}`);
+      } else {
+        lines.push('Altavoz: sin equipo vinculado todavía');
+      }
+    } catch {}
+  }
+  return lines.join('\n');
+}
 
 // Límite simple anti-spam por conversación (mensajes por minuto).
 const rate = new Map();
@@ -134,7 +188,17 @@ export function registerSupportRoutes(app) {
 
     // El historial se arma DESPUÉS de la ventana: incluye lo que llegó mientras esperábamos.
     const history = historyForModel(conv.id);
-    const { answer, escalate, reason } = await askGemini(history, text);
+    // Si el cliente dio un correo en cualquier mensaje suyo, buscar su cuenta y pasarle
+    // a Valeria el resumen operativo (soporte con datos reales). El último correo gana.
+    let accountInfo = null;
+    try {
+      const userTexts = [...history.filter((m) => m.role === 'user').map((m) => m.text), text];
+      for (let i = userTexts.length - 1; i >= 0 && !accountInfo; i--) {
+        const m = String(userTexts[i] || '').match(EMAIL_RE);
+        if (m) accountInfo = accountSummaryByEmail(m[0]);
+      }
+    } catch (e) { logger.warn({ err: e.message }, 'soporte: lookup de cuenta falló (se continúa sin datos)'); }
+    const { answer, escalate, reason } = await askGemini(history, text, { page: conv.page || null, accountInfo });
 
     // Re-chequear: el cliente pudo escribir mientras Gemini generaba.
     if (!isLastUserMsg()) {

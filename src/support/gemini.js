@@ -20,11 +20,12 @@ const API = (model, key) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
 
 // Mensaje que el usuario ve cuando el bot decide escalar (no muestra el "reason" interno).
-// El widget arranca un timer de 2 min al verlo (escalated:true): si ningún agente se une,
-// abre el formulario de contacto que llega a hola@sono.lat.
+// Handoff v2 (jul-2026): en vez de "te transfiero" (que dejaba al cliente esperando),
+// se le da el WhatsApp oficial directo. La conversación igual queda pendiente + push
+// al dueño, que puede responder también por el panel.
 export const ESCALATION_MESSAGE =
-  'Esa pregunta te la responde mejor un agente del equipo 🙌 ' +
-  'Ya te transfiero, dame un momentico…';
+  'Para este caso te atiende mejor una persona del equipo 🙌 Escríbenos directo a ' +
+  'nuestro WhatsApp 315 0986048 y seguimos por allá: https://wa.me/573150986048';
 
 const SYSTEM_PROMPT = `
 Eres Valeria, del equipo de Sonó (sono.lat), un altavoz que anuncia por voz los
@@ -39,18 +40,25 @@ REGLAS ABSOLUTAS (cumplir siempre):
 2. Si la pregunta NO se puede responder con la base de conocimiento, o tienes la más
    mínima duda, o te piden algo de estos temas prohibidos: ${FORBIDDEN_TOPICS.join('; ')}
    → NO respondas el contenido: pon "escalate": true.
-3. Escala también (escalate:true) si: el usuario pide hablar con una persona/humano/asesor;
-   reporta un problema, falla, reclamo o queja; pregunta por el estado de SU pedido, pago,
-   envío o cuenta concreta; pide algo que requiera una acción que tú no puedes hacer.
-   EXCEPCIÓN — CONFIGURACIÓN / POSTVENTA guiable NO se escala: si el cliente ya tiene el
-   equipo y está configurándolo (dudas del correo de notificaciones, conexión al WiFi,
-   modo CloudSpeaker, "servidor conectado", cómo poner el QR, primeros pasos de uso), tu
-   trabajo es GUIARLO con la sección "POSTVENTA" de la base de conocimiento, NO escalar.
-   Solo escala si, tras intentar esos pasos, sigue sin funcionar, o si es un problema
-   específico de SU cuenta/pedido que tú no puedes resolver.
-   EXCEPCIÓN — WhatsApp NO se escala: si pide hablar por WhatsApp o deja su número para
-   que lo contacten, respóndele con amabilidad que no manejamos servicio al cliente por
-   WhatsApp: la atención es solo por este chat o por el correo hola@sono.lat.
+3. VENTA Y SOPORTE: atiendes las dos cosas. Usa la página desde la que escribe el
+   cliente (viene en el CONTEXTO al final) y lo que dice para decidir el modo:
+   - Desde la landing, precios o checkout, o pregunta qué es/cuánto vale → modo VENTA.
+   - Desde /libreta, /activar, /manual, o dice "ya me llegó", "no suena", "estoy
+     configurando" → es un CLIENTE: modo SOPORTE. Guíalo con la sección "POSTVENTA"
+     de la base de conocimiento, paso a paso y con paciencia. NO escales lo guiable.
+   SOPORTE DE CUENTA: si pregunta por el estado de SU pedido, su envío, su conexión o
+   su cuenta y el contexto NO trae "DATOS DE LA CUENTA", pídele con amabilidad su
+   nombre y el correo con el que compró (o el correo de Sonó que le asignamos) para
+   revisarle la cuenta. Cuando el contexto SÍ traiga "DATOS DE LA CUENTA", responde
+   con ESA información (estado del pedido, envío/guía, conexión del correo, altavoz
+   en línea o no, servicio) — sin inventar nada que no esté ahí y sin dar datos de
+   pagos o montos.
+   HUMANO / WhatsApp: si pide hablar con una persona, asesor o humano, o deja su
+   número, NO escales: respóndele tú dándole nuestro WhatsApp oficial 315 0986048
+   con el enlace https://wa.me/573150986048 para que escriba directo. Escala
+   (escalate:true) SOLO si de verdad no puedes resolver con la base de conocimiento
+   ni con los datos de cuenta (ej. reclamos de plata, reembolsos, algo roto que los
+   pasos no arreglan).
    EXCEPCIÓN IMPORTANTE — cerrar la venta NO se escala: cuando el cliente quiere comprar,
    dice "configurémoslo", "hagámoslo", "lo quiero", "listo", "pásame el link", "dónde pago"
    o similar, TU trabajo es DARLE EL LINK del checkout (ver "LINK DE COMPRA" en la base de
@@ -112,8 +120,11 @@ ${SUPPORT_KB}
  * Ante cualquier error (sin API key, red, parseo) → escala de forma segura.
  * @param {Array<{role:'user'|'bot', text:string}>} history  historial de la conversación
  * @param {string} userText  último mensaje del usuario
+ * @param {object} ctx  contexto opcional: { page, accountInfo } — page = ruta desde la
+ *   que escribe el cliente (modo venta/soporte); accountInfo = resumen operativo de su
+ *   cuenta (lo arma support-routes cuando el cliente da su correo).
  */
-export async function askGemini(history, userText) {
+export async function askGemini(history, userText, ctx = {}) {
   if (!config.GEMINI_API_KEY) {
     return { answer: '', escalate: true, reason: 'sin GEMINI_API_KEY' };
   }
@@ -125,8 +136,17 @@ export async function askGemini(history, userText) {
   }
   contents.push({ role: 'user', parts: [{ text: userText }] });
 
+  // Contexto dinámico de la conversación (página de origen + datos de la cuenta):
+  // se anexa al system prompt para que el modelo elija modo venta/soporte y responda
+  // con la información real del cliente cuando exista.
+  let ctxBlock = '';
+  if (ctx.page) ctxBlock += `\n\nCONTEXTO — el cliente escribe desde la página: ${ctx.page}`;
+  if (ctx.accountInfo) {
+    ctxBlock += `\n\nDATOS DE LA CUENTA (verificados en el sistema — usa SOLO esto para responder por su pedido/cuenta):\n${ctx.accountInfo}`;
+  }
+
   const body = {
-    systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+    systemInstruction: { parts: [{ text: SYSTEM_PROMPT + ctxBlock }] },
     contents,
     generationConfig: {
       temperature: 0.2,            // bajo: más fiel a la KB, menos creatividad
