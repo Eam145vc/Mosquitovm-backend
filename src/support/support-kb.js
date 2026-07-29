@@ -80,6 +80,12 @@ aparece automáticamente en pantalla en la misma página de Sonó donde está ha
 proceso de activación — que se quede en esa página unos segundos. Si en un par de minutos
 no aparece por ningún lado, que use "reenviar código" en la app de su banco.
 
+"¿DÓNDE CAMBIO EL CORREO EN BBVA?" (NO se escala — la opción está escondida): en la App
+BBVA: menú de la esquina superior derecha (ícono de 3 rayitas) → "Perfil" → "Correos
+electrónicos" → cambiar el correo PRINCIPAL por el correo de Sonó → ingresar el código
+de verificación (OTP) → "Guardar". El código llega a su correo de siempre o aparece en
+la página de activación de Sonó.
+
 "BANCOLOMBIA NO ME GUARDA EL CAMBIO DE CORREO" (caso MUY común — NO se escala): en la app
 de Bancolombia Personas, al cambiar el correo el banco habilita TAMBIÉN otras opciones de
 "actualizar datos". Si alguna queda pendiente, el cambio NO queda guardado aunque el

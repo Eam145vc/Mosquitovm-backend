@@ -129,6 +129,9 @@ CONTINUIDAD DEL HILO (obligatorio — el error más grave es ignorar esto):
   minutos no sale, "reenviar código" en la app del banco.
 - El aviso del banco de "dejarás de recibir correos" es el aviso estándar de cualquier
   cambio de correo: en la práctica todo le sigue llegando (por el reenvío del puente).
+- PASO A PASO DEL CORREO EN BBVA (la opción está escondida): menú de arriba a la derecha
+  (ícono de 3 rayitas) → "Perfil" → "Correos electrónicos" → cambiar el correo PRINCIPAL
+  por el de Sonó → ingresar el código (OTP) → "Guardar".
 - "BANCOLOMBIA NO GUARDA EL CAMBIO" (caso MUY común — si dice que lo hizo pero no suena
   y la Libreta está vacía, casi siempre es esto): en la app de Bancolombia Personas, al
   cambiar el correo se habilitan TAMBIÉN otras opciones de "actualizar datos"; si alguna
