@@ -91,10 +91,16 @@ export async function generatePaymentLink(orderId, amountCents, description = 'S
  *
  * `amountCents` en centavos COP. `card` = { holder, number, datetime:'yyyy-mm', cvv,
  * idType, idNumber, installments, phone }. `payer` = { name, email, country, state,
- * city, address1, address2, zipCode }. `browser` = browser_information del front (3DS).
+ * city, address1, address2, zipCode }. `browser` = browser_information del front.
  *
- * Devuelve { status, approved, transactionId, redirect } — redirect != null si EfiPay
- * pide continuar el 3DS en una URL.
+ * 3DS (doc: /docs/1.0/checkout-transaction#flujo-3ds): si viene `browser` mandamos
+ * enable_3ds:true (obligatorio para Visa/Mastercard). EfiPay responde Pendiente +
+ * bloque 3Ds con un browser_response (HTML del Device Data Collection) que el FRONT
+ * debe ejecutar en un iframe oculto, y luego continuar con continue3ds().
+ *
+ * Devuelve { status, approved, transactionId, paymentId, threeDs, redirect }:
+ *  - threeDs != null → falta el paso de autenticación (ver continue3ds)
+ *  - paymentId → guardarlo en la orden (conciliación por webhook/polling)
  */
 export async function chargeCard(orderId, amountCents, card, payer, browser = null, description = 'Sonó · servicio') {
   if (!config.hasEfipay) throw new Error('EfiPay no configurado (EFIPAY_TOKEN)');
@@ -135,7 +141,10 @@ export async function chargeCard(orderId, amountCents, card, payer, browser = nu
       cellphone: String(card.phone || '').replace(/\D/g, '') || '3000000000',
     },
   };
-  if (browser) body.browser_information = browser;
+  if (browser) {
+    body.browser_information = browser;
+    body.enable_3ds = true; // obligatorio Visa/MC; exige browser_information
+  }
 
   const resp = await fetch(`${EFI_API}/payment/transaction-checkout`, {
     method: 'POST',
@@ -150,9 +159,72 @@ export async function chargeCard(orderId, amountCents, card, payer, browser = nu
   const tx = data.transaction || {};
   const status = tx.status || data.status || null;
   const approved = /aprob|approv/i.test(String(status || ''));
-  // 3DS: si EfiPay devuelve un paso de autenticación, hay que llevar al cliente ahí.
-  const redirect = data['3Ds']?.centinelapistag || tx.url_response || null;
-  return { status, approved, transactionId: tx.transaction_id || null, redirect, raw: data };
+  return {
+    status, approved, transactionId: tx.transaction_id || null,
+    paymentId: gen.payment_id, threeDs: readThreeDs(data),
+    redirect: tx.url_response || null, raw: data,
+  };
+}
+
+/**
+ * Normaliza el bloque `3Ds` de una respuesta de EfiPay (checkout / enroll /
+ * auth-continue). browser_response llega como HTML string (DDC o challenge) o,
+ * en el challenge de redeban, como objeto { challenge_request: "<iframe...>" }.
+ * Devuelve { implementation, browserResponse, centinelapistag } o null si no hay 3DS.
+ * `centinelapistag` NO es una URL navegable: es el origin esperado del postMessage
+ * que emite el iframe DDC de CredibanCo/Cardinal (lo valida el front).
+ */
+function readThreeDs(data) {
+  const t = data['3Ds'] || data['3ds'] || null;
+  if (!t) return null;
+  let html = t.browser_response;
+  if (html && typeof html === 'object') html = html.challenge_request || null;
+  if (!html) return null;
+  return {
+    implementation: t.implementation || null, // 'credibanco' (Visa) | 'redeban' (MC)
+    browserResponse: html,
+    centinelapistag: t.centinelapistag || null,
+  };
+}
+
+/**
+ * Paso 2 del 3DS: tras ejecutar el Device Data Collection en el navegador, se
+ * continúa la transacción según la franquicia:
+ *  - Visa/CredibanCo   → POST /payment/3ds/enroll/{transaction_id}
+ *  - Mastercard/Redeban → POST /payment/3ds/auth-continue/{transaction_id}
+ * EfiPay exige re-mandar la tarjeta (no la retiene entre pasos) + browser_information.
+ * Devuelve { status, approved, transactionId, threeDs } — threeDs != null significa
+ * que el banco exige challenge (OTP): el front renderiza browserResponse visible y
+ * el resultado final llega por webhook/polling. ⚠️ PCI: NO loguear card. NO reintentar.
+ */
+export async function continue3ds(implementation, transactionId, card, browser = null) {
+  if (!config.hasEfipay) throw new Error('EfiPay no configurado (EFIPAY_TOKEN)');
+  const step = implementation === 'redeban' ? 'auth-continue' : 'enroll';
+  const body = {
+    payment_card: {
+      number: String(card.number).replace(/\s/g, ''),
+      name: card.holder,
+      expiration_date: card.datetime, // yyyy-mm
+      cvv: String(card.cvv),
+    },
+  };
+  if (browser) body.browser_information = browser;
+  const resp = await fetch(`${EFI_API}/payment/3ds/${step}/${encodeURIComponent(transactionId)}`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    throw new Error(`EfiPay 3ds/${step} HTTP ${resp.status}: ${JSON.stringify(data.errors || data.message || data).slice(0, 300)}`);
+  }
+  const tx = data.transaction || {};
+  const status = tx.status || data.status || null;
+  const approved = /aprob|approv/i.test(String(status || ''));
+  return {
+    status, approved, transactionId: tx.transaction_id || transactionId,
+    threeDs: readThreeDs(data), raw: data,
+  };
 }
 
 // ───────────────── TOKENIZACIÓN (para cobrar cuotas 2-3 sin re-pedir tarjeta) ─────────────────

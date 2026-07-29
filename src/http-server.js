@@ -73,7 +73,7 @@ import { isChangeConfirmation } from './change-confirm.js';
 import { isTrustedBankEmail, isKnownBankSender } from './sender-filter.js';
 import { forwardPayment, paymentRedirectUrl, fetchPayment, paymentIdFromWebhook, createPreference } from './mercadopago.js';
 import { createStripeCheckout, fetchStripeSession } from './stripe.js';
-import { generatePaymentLink, chargeCard, chargePse, chargeBreb, chargeCash, getResource, fetchEfiTransaction, fetchEfiStatus, isValidEfiWebhook, parseEfiWebhook, tokenizeCard } from './efipay.js';
+import { generatePaymentLink, chargeCard, continue3ds, chargePse, chargeBreb, chargeCash, getResource, fetchEfiTransaction, fetchEfiStatus, isValidEfiWebhook, parseEfiWebhook, tokenizeCard } from './efipay.js';
 import * as announceLog from './announce-log.js';
 import { sendActivationEmail } from './activation-email.js';
 import { enqueueWhatsApp, enqueueWhatsAppForce, normalizePhoneCO, ESTADOS_SIN_MENSAJES } from './wa-enqueue.js';
@@ -603,15 +603,63 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     }
   });
 
+  // Marca la orden pagada tras un cobro de TARJETA aprobado (directo o al cerrar el
+  // 3DS) y dispara activación + tokenización de cuotas. Compartido por
+  // /checkout/efipay-pay y /checkout/efipay-3ds. ⚠️ PCI: no loguear `card`.
+  async function settleCardApproved(orderId, result, payer, card) {
+    const order = getOrder(orderId);
+    const nextCharge = Date.now() + 365 * 24 * 3600 * 1000;
+    updateOrder(orderId, {
+      status: 'pendiente_qr', wompi_txn_id: String(result.transactionId || ''),
+      mp_payer_email: payer.email, next_charge_at: nextCharge,
+    });
+    logger.info({ orderId, txn: result.transactionId }, 'pago aprobado (efipay embebido)');
+    notifySale(getOrder(orderId), 'tarjeta');
+    // Correo con el link de activación (red de seguridad si cierra la pantalla).
+    sendActivationEmail(getOrder(orderId)).catch(() => {});
+    try { enqueueWhatsApp(getOrder(orderId), 'activacion'); } catch (e) {
+      logger.error({ orderId, err: e.message }, 'wa: no se pudo encolar activación');
+    }
+
+    // ── Plan en cuotas: la 1ª cuota ya está cobrada. Tokenizamos la tarjeta para
+    //    cobrar las cuotas 2-3 (sin re-pedir la tarjeta) y programamos la 2ª a +30d.
+    //    Si la tokenización falla, NO rompemos el pago (ya cobró): queda en mora
+    //    'sin_token' para resolver manual (link). El cobro real lo hace el job.
+    if (order.plan === 'cuotas') {
+      const total = order.installments_total || 3;
+      const DAY = 24 * 3600 * 1000;
+      try {
+        const cardToken = await tokenizeCard(card); // card = { holder, number, datetime, cvv, ... }
+        updateOrder(orderId, {
+          card_token: cardToken,
+          installments_paid: 1,
+          installment_next_at: Date.now() + 30 * DAY, // 2ª cuota a 30 días
+          installment_fails: 0,
+          installments_state: 'al_dia',
+        });
+        logger.info({ orderId, total }, 'cuotas: tarjeta tokenizada, 2ª cuota programada (+30d)');
+      } catch (tokErr) {
+        updateOrder(orderId, {
+          installments_paid: 1,
+          installment_next_at: Date.now() + 30 * DAY,
+          installments_state: 'sin_token', // requiere cobro manual por link
+        });
+        logger.error({ orderId, err: tokErr.message }, 'cuotas: tokenización FALLÓ (1ª cuota igual quedó cobrada)');
+      }
+    }
+  }
+
   // Pago EMBEBIDO con EfiPay: el front manda los datos de tarjeta, cobramos por API.
   // ⚠️ Recibe datos PCI (número de tarjeta). NO loguear req.body. El monto se fuerza
   // desde la orden (nunca confiar en el front).
+  // 3DS: si EfiPay exige autenticación, devolvemos threeDs (Device Data Collection)
+  // y el front continúa con POST /checkout/efipay-3ds.
   app.post('/checkout/efipay-pay', async (req, reply) => {
     if (!config.hasEfipay) return reply.code(503).send({ error: 'checkout no configurado' });
     const { orderId, card, payer, browser_information } = req.body || {};
     const order = getOrder(orderId);
     if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
-    if (isPaid(order)) return { status: 'approved' };
+    if (isPaid(order)) return { status: 'approved', approved: true };
     if (!card?.number || !card?.cvv || !card?.datetime || !card?.holder) {
       return reply.code(400).send({ error: 'faltan datos de la tarjeta' });
     }
@@ -633,55 +681,60 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       const result = await chargeCard(
         orderId, order.amount_cents, cardWithPhone, fullPayer, browser_information || null, 'Sonó · servicio',
       );
+      // payment_id SIEMPRE a la orden: si el 3DS queda Pendiente y el cliente cierra,
+      // el webhook (reference) o el polling de /activar/:order (efi_payment_id)
+      // igual confirman el pago.
+      if (result.paymentId) updateOrder(orderId, { efi_payment_id: String(result.paymentId), mp_payer_email: payer.email });
       if (result.approved) {
-        const nextCharge = Date.now() + 365 * 24 * 3600 * 1000;
-        updateOrder(orderId, {
-          status: 'pendiente_qr', wompi_txn_id: String(result.transactionId || ''),
-          mp_payer_email: payer.email, next_charge_at: nextCharge,
-        });
-        logger.info({ orderId, txn: result.transactionId }, 'pago aprobado (efipay embebido)');
-        notifySale(getOrder(orderId), 'tarjeta');
-        // Correo con el link de activación (red de seguridad si cierra la pantalla).
-        sendActivationEmail(getOrder(orderId)).catch(() => {});
-        try { enqueueWhatsApp(getOrder(orderId), 'activacion'); } catch (e) {
-          logger.error({ orderId, err: e.message }, 'wa: no se pudo encolar activación');
-        }
-
-        // ── Plan en cuotas: la 1ª cuota ya está cobrada. Tokenizamos la tarjeta para
-        //    cobrar las cuotas 2-3 (sin re-pedir la tarjeta) y programamos la 2ª a +30d.
-        //    Si la tokenización falla, NO rompemos el pago (ya cobró): queda en mora
-        //    'sin_token' para resolver manual (link). El cobro real lo hace el job.
-        if (order.plan === 'cuotas') {
-          const total = order.installments_total || 3;
-          const DAY = 24 * 3600 * 1000;
-          try {
-            const cardToken = await tokenizeCard(card); // card = { holder, number, datetime, cvv, ... }
-            updateOrder(orderId, {
-              card_token: cardToken,
-              installments_paid: 1,
-              installment_next_at: Date.now() + 30 * DAY, // 2ª cuota a 30 días
-              installment_fails: 0,
-              installments_state: 'al_dia',
-            });
-            logger.info({ orderId, total }, 'cuotas: tarjeta tokenizada, 2ª cuota programada (+30d)');
-          } catch (tokErr) {
-            updateOrder(orderId, {
-              installments_paid: 1,
-              installment_next_at: Date.now() + 30 * DAY,
-              installments_state: 'sin_token', // requiere cobro manual por link
-            });
-            logger.error({ orderId, err: tokErr.message }, 'cuotas: tokenización FALLÓ (1ª cuota igual quedó cobrada)');
-          }
-        }
+        await settleCardApproved(orderId, result, payer, card);
+      } else if (result.threeDs) {
+        logger.info({ orderId, txn: result.transactionId, impl: result.threeDs.implementation }, 'efipay 3ds iniciado (DDC)');
       } else {
         logger.info({ orderId, status: result.status }, 'efipay embebido no aprobado');
       }
-      return { status: result.status, approved: result.approved, redirect: result.redirect };
+      return {
+        status: result.status, approved: result.approved, redirect: result.redirect,
+        threeDs: result.threeDs || null, transactionId: result.transactionId,
+      };
     } catch (e) {
       // e.message NO contiene datos de tarjeta (chargeCard solo expone errors/message de EfiPay).
       logger.error({ orderId, err: e.message }, 'efipay embebido failed');
       return reply.code(502).send({
         error: 'No pudimos procesar el pago. Revisá los datos de la tarjeta o probá con otra.',
+        detail: e.message,
+      });
+    }
+  });
+
+  // Paso 2 del 3DS: el front ya ejecutó el Device Data Collection (iframe oculto) y
+  // llama acá para continuar la transacción (enroll si Visa/CredibanCo, auth-continue
+  // si MC/Redeban). Si el banco exige challenge (OTP), devolvemos otro browser_response
+  // para renderizar visible; el resultado final llega directo (approved) o async por
+  // webhook/polling. ⚠️ PCI: recibe la tarjeta de nuevo (EfiPay lo exige entre pasos).
+  // NO loguear req.body.
+  app.post('/checkout/efipay-3ds', async (req, reply) => {
+    if (!config.hasEfipay) return reply.code(503).send({ error: 'checkout no configurado' });
+    const { orderId, transactionId, implementation, card, payer, browser_information } = req.body || {};
+    const order = getOrder(orderId);
+    if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
+    if (isPaid(order)) return { status: 'approved', approved: true };
+    if (!transactionId || !card?.number || !card?.cvv || !card?.datetime || !card?.holder) {
+      return reply.code(400).send({ error: 'faltan datos para continuar la verificación' });
+    }
+    try {
+      const result = await continue3ds(implementation, transactionId, card, browser_information || null);
+      if (result.approved) {
+        await settleCardApproved(orderId, result, payer?.email ? payer : { email: order.customer_email || order.mp_payer_email || null }, card);
+      }
+      logger.info(
+        { orderId, txn: transactionId, status: result.status, challenge: Boolean(result.threeDs) },
+        'efipay 3ds continuado',
+      );
+      return { status: result.status, approved: result.approved, threeDs: result.threeDs || null };
+    } catch (e) {
+      logger.error({ orderId, txn: transactionId, err: e.message }, 'efipay 3ds continue failed');
+      return reply.code(502).send({
+        error: 'No pudimos completar la verificación con tu banco. Probá de nuevo.',
         detail: e.message,
       });
     }
