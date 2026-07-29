@@ -26,6 +26,7 @@
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { askGemini, ESCALATION_MESSAGE } from './gemini.js';
+import { suggestAgentReply } from './agent-suggest.js';
 import { pushEnabled, notifyAdmins } from './webpush.js';
 import {
   createConversation, getConversation, touchConversation, clearUnreadAdmin, incUnreadAdmin,
@@ -482,6 +483,39 @@ export function registerSupportRoutes(app) {
         media_url: m.has_media ? `/soporte/conv/${conv.id}/media/${m.id}` : null,
       })),
     };
+  });
+
+  // SUGERENCIA DE RESPUESTA (botón ✨ del panel): genera un borrador con el playbook
+  // completo del agente (agent-suggest.js) usando el historial + datos del pedido.
+  // El agente lo revisa/edita antes de enviar — acá no se manda nada al cliente.
+  app.post('/soporte/admin/conv/:id/suggest', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    let messages = [];
+    let ctx = {};
+    if (isWaId(req.params.id)) {
+      const phone = waPhone(req.params.id);
+      const orders = listOrders();
+      messages = listWaChatMessages(phone, 300).map((m) => ({
+        role: m.direction === 'in' ? 'user' : (m.type === 'template' ? 'bot' : 'human'),
+        text: m.body || `[${m.type}]`,
+      }));
+      const ord = orderByPhone(phone, orders);
+      if (ord) {
+        const o = orders.find((x) => x.id === ord.id);
+        ctx = { name: o?.business_name, plan: o?.plan, delivery: o?.delivery, status: o?.status, bank: o?.bank, city: o?.city };
+      }
+    } else {
+      const conv = getConversation(req.params.id);
+      if (!conv) return reply.code(404).send({ error: 'no encontrada' });
+      messages = listMessages(conv.id, 0)
+        .filter((m) => m.role !== 'system')
+        .map((m) => ({ role: m.role, text: m.text }));
+      ctx = { name: conv.name || null };
+    }
+    if (!messages.length) return reply.code(400).send({ error: 'conversación vacía' });
+    const r = await suggestAgentReply(messages, ctx);
+    if (!r.ok) return reply.code(502).send({ error: r.error || 'no se pudo generar' });
+    return { ok: true, suggestion: r.suggestion };
   });
 
   // El dueño responde manual. Pone la conversación en modo humano y la saca de pendiente.
