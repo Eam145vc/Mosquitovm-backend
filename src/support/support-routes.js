@@ -38,7 +38,7 @@ import {
 import { listWaChats, listWaChatMessages, markWaChatRead, insertWaInbound, listOrders, getWaMedia, setWaInboundMedia,
   countWaChatUnread, unseenInboxCount, clientsAttentionCount, pedidosPendientesCount,
   getAccount, getAccountByEmailCI, getAccountByAlias, findAccountByForward,
-  listDevicesByAccount, getShipmentByOrder } from '../storage.js';
+  listDevicesByAccount, getShipmentByOrder, paymentsFor } from '../storage.js';
 import { normalizePhoneCO } from '../wa-enqueue.js';
 import { sendCloudText, sendCloudImage } from '../wa-cloud.js';
 import { createReadStream, existsSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -94,7 +94,17 @@ function accountSummaryByEmail(raw) {
     } catch {}
   }
   if (acc) {
-    lines.push(`Conexión del correo del banco: ${acc.change_confirmed ? 'CONECTADA (confirmada)' : 'PENDIENTE (el banco aún no confirma el cambio)'}`);
+    // ⚠️ NO usar change_confirmed acá: el parser del correo de confirmación del banco
+    // da falsos pendientes/positivos. La ÚNICA señal confiable de que la conexión del
+    // correo quedó bien es que el sistema detecte pagos.
+    try {
+      const pays = paymentsFor(acc.id, 1);
+      if (pays.length) {
+        lines.push(`Conexión del correo: FUNCIONANDO — el sistema ya detecta sus pagos (último detectado el ${fechaCo(pays[0].at)})`);
+      } else {
+        lines.push('Conexión del correo: SIN CONFIRMAR — aún no se ha detectado ningún pago. IMPORTANTE: no afirmes que está bien ni mal conectado; la única forma de confirmarlo es que entre un pago: sugiérele hacer una prueba con un pago pequeño escaneando su QR.');
+      }
+    } catch { /* sin dato de pagos: no afirmar nada */ }
     lines.push(`Servicio: ${acc.sub_status || 'activa'}`);
     try {
       const devs = listDevicesByAccount(acc.id);
