@@ -33,10 +33,14 @@ export function parseEmail(email) {
       if (result) {
         return { ...result, parser: p.name };
       }
+      // Remitente de banco conocido pero el parser estricto dijo "no es pago"
+      // (ej: "BBVA Móvil - Notificación de Transferencias", marketing, OTPs).
+      // NO caer al genérico: solo se anuncian los formatos de pago reconocidos.
+      return null;
     }
   }
 
-  // Fallback: regex generica
+  // Fallback: regex generica (solo remitentes que ningún parser reconoce)
   return generic.parse(text, subject);
 }
 

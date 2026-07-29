@@ -59,4 +59,14 @@ describe('parser bbva - vía registry parseEmail', () => {
     assert.equal(r.parser, 'bbva');
     assert.equal(r.amount, 2);
   });
+  test('transferencia BBVA Móvil (no Bre-B) NO cae al genérico → null', () => {
+    // Caso real 29-jul-2026: from BBVA@bbvanet.com.co, el genérico lo anunciaba
+    // como bank "unknown". Solo se anuncian pagos por llave Bre-B.
+    const r = parseEmail({
+      from: 'BBVA@bbvanet.com.co',
+      subject: 'BBVA Móvil - Notificación de Transferencias',
+      text: 'BBVA te informa que se realizó una transferencia a tu cuenta por valor de $100.000,00 desde la cuenta de RHONALD SIERRA.',
+    });
+    assert.equal(r, null);
+  });
 });
