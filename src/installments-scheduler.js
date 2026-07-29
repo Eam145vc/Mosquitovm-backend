@@ -76,7 +76,11 @@ export function installmentDue(order, now = Date.now(), { ignorePause = false } 
   // demostró no servir: la orden cae SOLA a esta escalera Bre-B. Nunca corren las
   // dos rutas a la vez (runDueInstallments exige installment_next_at).
   if (order.card_token && order.installment_next_at) return null;
-  if (order.archived_at || ['cancelada', 'declined', 'created'].includes(order.status)) return null;
+  // Solo se cobran cuotas de ventas COMPLETADAS: el equipo tiene que haberse
+  // despachado ('shipped'). Cobrarle la cuota 2 a quien pagó la 1ª pero nunca
+  // subió su QR ni recibió el Sonó es un error (pasó el 28-jul con dos órdenes
+  // en pendiente_qr de junio: venta nunca finalizada ≠ cliente moroso).
+  if (order.archived_at || order.status !== 'shipped') return null;
   // Pausa manual (admin): frena recordatorios y suspensión. El flujo de PAGO
   // (página /cuota, Flow) pasa ignorePause: si el cliente quiere pagar, se deja.
   if (!ignorePause && order.installment_paused) return null;
