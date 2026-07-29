@@ -186,14 +186,25 @@ export function registerSupportRoutes(app) {
     incUnreadAdmin(conv.id);
 
     // Si el dueño tomó el control (mode=human) → el bot NO responde. Solo notifica.
+    // RETOMA AUTOMÁTICA (jul-2026): si el hilo lleva más de 24h sin actividad, Valeria
+    // retoma sola — si no, un chat "tomado" y olvidado deja al cliente sin respuesta
+    // para siempre. conv.last_msg_at se leyó ANTES de guardar este mensaje.
     if (conv.mode === 'human') {
-      await safeNotify({
-        title: `💬 ${conv.name || 'Cliente'} escribió`,
-        body: text.slice(0, 120),
-        url: `/soporte-app/#/conv/${conv.id}`,
-        tag: `conv-${conv.id}`,
-      });
-      return { reply: null, mode: 'human', userMsgId: userMsg.id };
+      const idleMs = Date.now() - (conv.last_msg_at || conv.updated_at || 0);
+      if (idleMs > 24 * 3600 * 1000) {
+        touchConversation(conv.id, { mode: 'bot' });
+        conv.mode = 'bot';
+        logger.info({ convId: conv.id, idleH: Math.round(idleMs / 3600000) },
+          'soporte: Valeria retoma conversación inactiva (>24h en modo humano)');
+      } else {
+        await safeNotify({
+          title: `💬 ${conv.name || 'Cliente'} escribió`,
+          body: text.slice(0, 120),
+          url: `/soporte-app/#/conv/${conv.id}`,
+          tag: `conv-${conv.id}`,
+        });
+        return { reply: null, mode: 'human', userMsgId: userMsg.id };
+      }
     }
 
     // ¿Este handler sigue atendiendo el ÚLTIMO mensaje del cliente? Si el cliente
