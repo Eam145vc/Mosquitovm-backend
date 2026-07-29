@@ -766,12 +766,29 @@ export function registerSupportRoutes(app) {
   // Escribe UN mensaje invitando a comprar con el link al checkout. Solo 1 vez por
   // conversación (markReengaged). El widget lo recibe por su polling (también cuando
   // está minimizado, donde dispara sonido + badge).
+  // El re-enganche es un mensaje de VENTA: NO va en conversaciones de soporte de
+  // clientes que ya compraron (quedaba ridículo "pide tu Sonó" a quien ya lo tiene).
+  const PAGES_CLIENTE = ['/libreta', '/activar', '/manual', '/correo-acceso', '/cuota'];
+  const esConvDeSoporte = (conv) => {
+    if (PAGES_CLIENTE.some((p) => String(conv.page || '').startsWith(p))) return true;
+    // Si algún mensaje del cliente trae un correo que resuelve a una cuenta/pedido
+    // del sistema, es un cliente existente (no un prospecto).
+    try {
+      for (const m of listMessages(conv.id, 0)) {
+        if (m.role !== 'user') continue;
+        const hit = String(m.text || '').match(EMAIL_RE);
+        if (hit && accountSummaryByEmail(hit[0])) return true;
+      }
+    } catch { /* señal opcional */ }
+    return false;
+  };
   setInterval(() => {
     try {
       const ids = findConvsToReengage(REENGAGE_IDLE_MS);
       for (const id of ids) {
         const conv = getConversation(id);
         if (!conv || conv.mode === 'human' || conv.status === 'closed') { markReengaged(id); continue; }
+        if (esConvDeSoporte(conv)) { markReengaged(id); continue; }   // soporte: sin push de venta
         addMessage(id, 'bot', REENGAGE_MESSAGE);
         markReengaged(id);
         logger.info({ convId: id }, 'soporte: re-enganche enviado');
