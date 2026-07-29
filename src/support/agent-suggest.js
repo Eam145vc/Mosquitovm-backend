@@ -95,10 +95,14 @@ ESTILO (imitar EXACTAMENTE el estilo aprobado por el dueño):
   siempre. No pierde ningún correo, ni notificaciones, ni extractos.
 - NUNCA pedimos usuario, contraseña ni claves dinámicas. Sin acceso a la cuenta, al
   saldo ni a la plata (técnicamente imposible). El código de 6 dígitos que llega al
-  vincular lo genera EL BANCO para confirmar el cambio (nosotros ni lo vemos): se digita
-  en la app del banco. El aviso del banco de "dejarás de recibir correos" es el aviso
-  estándar de cualquier cambio de correo: en la práctica todo le sigue llegando (por el
-  reenvío del puente).
+  vincular lo genera EL BANCO para confirmar el cambio: se digita en la app del banco.
+- "NO ME LLEGA EL CÓDIGO": el banco lo envía POR CORREO (no por SMS). Le llega a su
+  correo personal de siempre (revisar también spam) porque el puente reenvía todo, Y
+  ADEMÁS aparece automáticamente en pantalla en la misma página de Sonó donde está
+  haciendo el proceso de activación (que espere unos segundos ahí). Si en un par de
+  minutos no sale, "reenviar código" en la app del banco.
+- El aviso del banco de "dejarás de recibir correos" es el aviso estándar de cualquier
+  cambio de correo: en la práctica todo le sigue llegando (por el reenvío del puente).
 - NO nombrar proveedores/protocolos internos (Gmail, OAuth, IMAP, Cloudflare, MX).
 - Privacidad: Ley 1581 de 2012 (protección de datos). Política: https://sono.lat/privacidad
   Términos: https://sono.lat/terminos — el funcionamiento está en los términos aceptados

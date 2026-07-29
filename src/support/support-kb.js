@@ -71,6 +71,13 @@ siempre. Así NO pierde ningún correo — todo le sigue llegando igual que ante
 Sonó anuncia los pagos. (Puedes decir "puente" y "se reenvía a tu correo personal"; NO
 nombres proveedores ni protocolos.)
 
+"NO ME LLEGA EL CÓDIGO" (al confirmar el cambio de correo — NO se escala): el banco envía
+ese código de verificación POR CORREO, no por SMS. Al cliente le llega a su correo
+personal de siempre (que revise la bandeja de entrada y también spam), Y ADEMÁS el código
+aparece automáticamente en pantalla en la misma página de Sonó donde está haciendo el
+proceso de activación — que se quede en esa página unos segundos. Si en un par de minutos
+no aparece por ningún lado, que use "reenviar código" en la app de su banco.
+
 CONECTARLO AL WIFI (pasos del manual, guíalo con estos):
 1. Enchúfalo y enciéndelo: dice una voz de bienvenida.
 2. Solo, crea su propia red WiFi llamada "CloudSpeaker_XXXX". Desde el celular, en Ajustes
