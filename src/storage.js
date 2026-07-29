@@ -1579,7 +1579,7 @@ export function createPaymentIntent({ orderId, amount, ttlMs, kind = 'checkout',
  * precio — y el cliente escanea sin digitar. Sin QRs cargados para ese rango, cae
  * al esquema original (base bajando de a peso, QR estático + digitar).
  */
-export function claimPooledAmount(baseAmount, poolSize, { graceMs = 45_000 } = {}) {
+export function claimPooledAmount(baseAmount, poolSize, { graceMs = 15_000 } = {}) {
   openDb();
   const now = Date.now();
   const base = Math.round(baseAmount);
@@ -1662,7 +1662,7 @@ export function getPaymentIntent(id) {
  * Marca el intent 'paid' y lo devuelve, o null si no hay match. better-sqlite3 es
  * sincrónico single-thread → select+update no corre carreras.
  */
-export function matchPaymentIntent(amount, { graceMs = 45_000, bank = null } = {}) {
+export function matchPaymentIntent(amount, { graceMs = 15_000, bank = null } = {}) {
   openDb();
   const now = Date.now();
   const hit = db.prepare(
