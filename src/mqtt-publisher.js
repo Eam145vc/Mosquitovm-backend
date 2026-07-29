@@ -127,8 +127,12 @@ export async function publishVoice(playAudibleMsg, opts = {}) {
 
   logger.info({ topic, payload }, 'mqtt publish voice');
 
+  // qos 0 SIEMPRE: el firmware usa sesión persistente y con qos 1 el broker
+  // encolaba cada voice de un speaker apagado → al encender recitaba TODOS los
+  // pagos viejos (spam). El "anunciar el último al volver" lo resuelve
+  // pending-announce.js, no la cola del broker.
   return new Promise((res, rej) => {
-    c.publish(topic, JSON.stringify(payload), { qos: 1 }, (err) => {
+    c.publish(topic, JSON.stringify(payload), { qos: 0 }, (err) => {
       if (err) return rej(err);
       res();
     });

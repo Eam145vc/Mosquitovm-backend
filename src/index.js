@@ -22,6 +22,7 @@ import { updateAccountHistory, updateAccountWatch, recordPayment, upsertDeviceFr
   speakersForBank, paymentsAggregate, lastPaymentAt, lastWaAt } from './storage.js';
 import { onIncident as onBankIncident } from './bank-status.js';
 import { filterOnline } from './speaker-online.js';
+import { setPending, clearPending, takePending } from './pending-announce.js';
 import { fetchEfiStatus } from './efipay.js';
 import { reportPurchasesToMeta } from './meta-capi.js';
 import { sendActivationEmail } from './activation-email.js';
@@ -90,6 +91,9 @@ async function announcePayment(payment) {
       includeBank: false,   // NO decir el banco: solo "Recibiste X pesos" (+ earcon)
     });
     logger.info({ playAudibleMsg, speakerId: payment.speakerId, ...payment }, 'announcing payment');
+    // Este pago pasa a ser "el último": invalida cualquier pendiente anterior
+    // del speaker (al encender solo debe sonar el último, no los viejos).
+    if (payment.speakerId) clearPending(payment.speakerId);
     await publishVoice(playAudibleMsg, { amount: payment.amount, speakerId: payment.speakerId });
     // Cierra la medición de latencia del pipeline (solo si vino del webhook FE).
     if (payment._lat) {
@@ -97,6 +101,16 @@ async function announcePayment(payment) {
         accountId: payment.accountId, amount: payment.amount, bank: payment.bank, source: 'fe-webhook',
         brebKey: payment.brebKey || null, alias: payment.alias || null, account: payment.account || null,
       });
+    }
+    // ¿El speaker estaba apagado? El voice fue qos 0 (no queda encolado), así
+    // que se guarda como pendiente y sonará UNA vez cuando responda un getinfo.
+    if (payment.speakerId) {
+      const online = await filterOnline([payment.speakerId]);
+      if (!online.length) {
+        setPending(payment.speakerId, { playAudibleMsg, amount: payment.amount });
+        logger.info({ speakerId: payment.speakerId, amount: payment.amount },
+          'speaker offline: pago guardado como último pendiente');
+      }
     }
   } catch (e) {
     logger.error({ err: e.message }, 'announce failed');
@@ -186,6 +200,15 @@ async function main() {
       if (r?.created) logger.info({ spkrId, mac: info.mac }, 'speaker auto-registrado');
     } catch (e) {
       logger.warn({ err: e.message, spkrId }, 'auto-provisioning fallo');
+    }
+    // Si respondió es que está online: entregarle el último pago que se perdió
+    // por estar apagado (solo el último; takePending borra antes de publicar,
+    // así que varios status seguidos no lo repiten).
+    const p = takePending(spkrId);
+    if (p) {
+      logger.info({ spkrId, amount: p.amount }, 'speaker de vuelta online: anunciando último pago pendiente');
+      publishVoice(p.playAudibleMsg, { amount: p.amount, speakerId: spkrId })
+        .catch((e) => logger.error({ err: e.message, spkrId }, 'entrega de pendiente falló'));
     }
   });
 
