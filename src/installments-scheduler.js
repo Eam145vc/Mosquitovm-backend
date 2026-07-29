@@ -93,8 +93,9 @@ export function installmentDue(order, now = Date.now(), { ignorePause = false } 
   return { n: paidEff + 1, paidEff, total };
 }
 
-// Las cuotas 2 y 3 son $69.000 PLANAS: el envío ($12.000) y el recargo de
-// contraentrega ($5.000) van SOLO en la 1ª (el amount_cents del checkout).
+// Las cuotas 2 y 3 son $69.000 PLANAS: el envío (según ciudad, $11.000–$25.000,
+// ver shipping.js) y el recargo de contraentrega ($5.000) van SOLO en la 1ª
+// (el amount_cents del checkout).
 // Cobrar amount_cents acá repetía el envío en cada cuota (bug detectado el
 // 8-jul-2026 al mostrar el monto en La Libreta; ninguna cuota 2/3 se había
 // cobrado aún). Exportada: La Libreta muestra este mismo monto.

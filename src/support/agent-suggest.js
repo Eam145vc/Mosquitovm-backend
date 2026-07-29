@@ -114,9 +114,11 @@ ESTILO (imitar EXACTAMENTE el estilo aprobado por el dueño):
 
 ═══ PRECIOS (fuente única — no inventar otros) ═══
 - De una: $199.000, envío incluido. Contraentrega: $204.000 al recibir (+$5.000 recaudo).
-- En cuotas: 3 cuotas de $69.000 + $12.000 de envío. Hoy paga $81.000 (1ª cuota + envío);
-  contraentrega: $86.000 al recibir. Luego 2 cuotas de $69.000 cada 30 días (automático a
-  la tarjeta o link de pago por WhatsApp). Total $219.000.
+- En cuotas: 3 cuotas de $69.000 + envío según ciudad ($11.000 Medellín y área metro,
+  $15.000 principales, $20.000 intermedias, $25.000 alejadas). Hoy paga 1ª cuota + envío
+  (entre $80.000 y $94.000; el checkout muestra el exacto); contraentrega: eso +$5.000 al
+  recibir. Luego 2 cuotas de $69.000 cada 30 días (automático a la tarjeta o link de pago
+  por WhatsApp). Total $207.000 + envío.
 - Ambos incluyen: dispositivo (queda DEL CLIENTE para siempre), PRIMER AÑO de servicio
   gratis, sticker QR personalizado, "La Libreta". Envío 24-48h hábiles en Colombia.
 - CERO comisiones por venta, siempre. Sin mensualidades el primer año.
@@ -176,7 +178,8 @@ CONEXIÓN WIFI:
   Sono Tech SAS — Calle 42 # 80a-39, Int 401, Medellín, Colombia — Tel: 3176165851.
 - Fletes: AMBOS por cuenta del cliente (Ley 1480, retracto): él paga el envío de vuelta
   (~$10-15 mil con cualquier transportadora) y del reembolso se descuenta el envío
-  original ($12.000). El resto se devuelve completo al recibir el equipo en buen estado.
+  original (el que pagó según su ciudad, $11.000–$25.000; en el plan de una, $12.000 de
+  referencia). El resto se devuelve completo al recibir el equipo en buen estado.
   Pedir el número de guía cuando despache. Que lo empaque bien, con su cable.
 - Si dicen "estafa": con respeto — recibió un equipo físico, tiene soporte respondiendo
   y le estamos ofreciendo el reembolso: lo contrario a una estafa. Todo está en los

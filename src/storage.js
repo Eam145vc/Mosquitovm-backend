@@ -433,10 +433,11 @@ export function openDb() {
     CREATE INDEX IF NOT EXISTS idx_intents_match ON payment_intents(status, amount, created_at);
     CREATE INDEX IF NOT EXISTS idx_intents_order ON payment_intents(order_id, created_at DESC);
   `);
-  // Intents del pool de montos: 'checkout' (compra del dispositivo, ventana 2 min)
-  // o 'cuota' (cobro de cuotas 2-3 por WhatsApp, ventana 72 h). installment_n = qué
-  // cuota cobra este intent (2 o 3); NULL en checkout. (Después del DDL: en una DB
-  // nueva la tabla debe existir antes del ALTER.)
+  // Intents del pool de montos: 'checkout' (compra del dispositivo) o 'cuota' (cobro
+  // de cuotas 2-3 por WhatsApp). AMBOS con ventana 2:30 desde que toca "Voy a pagar"
+  // (BREB_INTENT_TTL_MS / CUOTA_INTENT_TTL_MS). installment_n = qué cuota cobra este
+  // intent (2 o 3); NULL en checkout. (Después del DDL: en una DB nueva la tabla debe
+  // existir antes del ALTER.)
   ensureColumns('payment_intents', [
     ["kind", "TEXT NOT NULL DEFAULT 'checkout'"],
     ['installment_n', 'INTEGER'],

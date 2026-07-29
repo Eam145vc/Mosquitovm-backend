@@ -98,6 +98,7 @@ import { watchInbox } from './gmail-api.js';
 import { registerSupportRoutes } from './support/support-routes.js';
 import { registerSkydropxRoutes } from './skydropx-routes.js';
 import { searchCities, cityByDane } from './co-dane.js';
+import { envioPorDane } from './shipping.js';
 import { publishToInstagram, getInstagramAccount, getInstagramMedia } from './instagram.js';
 import { generateCaption } from './ig-caption.js';
 import * as igScheduler from './ig-scheduler.js';
@@ -374,9 +375,10 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
   // "test" = orden de diagnóstico de /test-mp ($5.000, va directo al Brick de MP).
   // Compat: el viejo "anual" sigue mapeando a $199.000. Cualquier plan desconocido
   // (o ausente) cae a contado vía el ?? de abajo.
-  // contado: $199.000 (envío incluido). cuotas: 1ª cuota $69.000 + envío $12.000 = $81.000
-  // (el plan en cuotas NO incluye envío gratis). anual = compat viejo → contado.
-  const PLAN_PRICES_CENTS = { contado: 19_900_000, cuotas: 8_100_000, anual: 19_900_000, test: 500_000 };
+  // contado: $199.000 (envío incluido). cuotas: 1ª cuota $69.000 + envío SEGÚN CIUDAD
+  // ($11.000–$25.000, tabla en shipping.js; jul-2026: reemplaza el $12.000 plano) →
+  // hoy paga $80.000–$94.000. anual = compat viejo → contado.
+  const PLAN_PRICES_CENTS = { contado: 19_900_000, cuotas: 6_900_000, anual: 19_900_000, test: 500_000 };
   // Recargo de pago contraentrega (se suma al monto en AMBOS planes).
   const RECARGO_CONTRAENTREGA_CENTS = 500_000;
 
@@ -385,7 +387,13 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
   // exactamente como la espera Skydropx. Sin auth: es data pública de DIVIPOLA.
   app.get('/cities', async (req) => {
     const q = String((req.query || {}).q || '').trim();
-    return { cities: q.length >= 2 ? searchCities(q, 8) : [] };
+    // `envio` = tarifa plana por zona (pesos): el checkout la muestra apenas el
+    // cliente elige su ciudad (solo aplica al plan cuotas).
+    return {
+      cities: q.length >= 2
+        ? searchCities(q, 8).map((c) => ({ ...c, envio: envioPorDane(c.dane) }))
+        : [],
+    };
   });
 
   // Convocatoria UGC: recibe una aplicación del formulario público de
@@ -455,9 +463,15 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     const planNorm = plan === 'cuotas' ? 'cuotas' : 'contado';
     const esContraentrega = delivery === 'contraentrega';
     const deliveryNorm = esContraentrega ? 'contraentrega' : 'online';
+    // Envío por zona (SOLO cuotas; contado lo incluye): sale del DANE de la ciudad
+    // elegida en el autocomplete. Sin DANE cae a la tarifa intermedia ($20.000).
+    const envioCents = planNorm === 'cuotas'
+      ? envioPorDane(ciudadCatalogo ? ciudadCatalogo.dane : null) * 100
+      : 0;
     // El recargo de contraentrega ($5.000) se suma en ambos planes (en cuotas, el
-    // cliente paga al recibir la 1ª cuota + envío + recargo = $86.000).
+    // cliente paga al recibir la 1ª cuota + envío + recargo).
     const amountCents = (PLAN_PRICES_CENTS[plan] ?? PLAN_PRICES_CENTS.contado)
+      + envioCents
       + (esContraentrega ? RECARGO_CONTRAENTREGA_CENTS : 0);
     // EDITAR en vez de duplicar: si el cliente eligió "continuar con mi orden", se
     // reusa la pendiente (mismo id/link) con los datos y plan nuevos. Solo aplica a

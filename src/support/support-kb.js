@@ -7,8 +7,10 @@
 // Reglas de contenido (decisiones del usuario):
 //  - Precios (jun-2026, alineados con sono-web/lib/plans.ts, fuente única):
 //    Precio $199.000 (normal $400.000), pagable de DOS formas: de una ($199.000) o
-//    en 3 cuotas de $69.000 + $12.000 de envío (hoy paga $81.000; total $219.000).
-//    El de UNA incluye envío; el de CUOTAS NO (suma $12.000 de envío en la 1ª cuota).
+//    en 3 cuotas de $69.000 + envío SEGÚN CIUDAD (jul-2026: $11.000 Medellín y área
+//    metro, $15.000 ciudades principales, $20.000 intermedias, $25.000 alejadas →
+//    hoy paga entre $80.000 y $94.000; el checkout muestra el valor exacto).
+//    El de UNA incluye envío; el de CUOTAS NO (suma el envío en la 1ª cuota).
 //    Incluye el dispositivo Sonó + el PRIMER AÑO de servicio GRATIS. El cliente se LLEVA
 //    el aparato (es suyo). NO decir "pago único" (ya hay cuotas).
 //    PAGO CONTRAENTREGA: SOLO pagando de una ($199.000), +$5.000 que paga AL RECIBIR. Se
@@ -118,13 +120,18 @@ SI DICE QUE NO SUENA (revisar en orden, guiar; escalar solo si nada de esto lo r
 # PLANES Y PRECIOS (lanzamiento)
 El precio de lanzamiento es $199.000 (precio normal $400.000), y lo puedes pagar de dos formas:
   - De una: $199.000, con el envío incluido.
-  - En cuotas: 3 cuotas de $69.000 más $12.000 de envío. Hoy pagas $81.000 (la 1ª cuota + el envío) y luego 2 cuotas de $69.000. En total son $219.000.
+  - En cuotas: 3 cuotas de $69.000 más el envío, que depende de tu ciudad: $11.000 en
+    Medellín y su área metropolitana, $15.000 en las ciudades principales, $20.000 en
+    ciudades intermedias y $25.000 en las zonas más alejadas. Hoy pagas la 1ª cuota más
+    el envío (entre $80.000 y $94.000; el checkout te muestra el valor exacto al poner
+    tu ciudad) y luego 2 cuotas de $69.000. En total son $207.000 más el envío.
 Con cualquiera de las dos te llevas:
   - El dispositivo Sonó WiFi (es tuyo, te queda).
   - El primer año de servicio GRATIS.
   - “La Libreta” (panel web donde tus ventas se apuntan solas).
   - Un sticker QR personalizado con tu negocio, que va montado al frente del altavoz.
-El envío va incluido en el pago de una; en cuotas son $12.000 aparte.
+El envío va incluido en el pago de una; en cuotas se cobra aparte según tu ciudad
+(entre $11.000 y $25.000, nunca más de $25.000).
 No hay mensualidades. Nunca hay comisión por venta, 0% siempre.
 
 # FORMAS DE PAGO Y CONTRAENTREGA
@@ -133,8 +140,9 @@ El pago contraentrega está disponible en LOS DOS planes, con un recargo de $5.0
 recaudo, y te confirmamos el pedido por WhatsApp antes de despacharlo; no se cobra nada por
 adelantado:
   - De una: pagas al recibir $204.000 ($199.000 + $5.000 de recargo).
-  - En cuotas: pagas al recibir $86.000 (la 1ª cuota de $69.000 + $12.000 de envío + $5.000
-    de recargo) y luego las otras 2 cuotas de $69.000.
+  - En cuotas: pagas al recibir la 1ª cuota de $69.000 + el envío de tu ciudad + $5.000
+    de recargo (entre $85.000 y $99.000 según la ciudad) y luego las otras 2 cuotas
+    de $69.000.
 [INTERNO — sobre las cuotas, si preguntan cómo se pagan: la 1ª cuota se paga al comprar;
 las otras 2 se cobran en los meses siguientes. Si pagó con tarjeta se cobran solas; con
 otro medio (PSE, etc.) le llega un enlace de pago. Si no paga una cuota, el servicio se
@@ -166,7 +174,8 @@ que "llega y ya" sin más: primero va el proceso de activación + tu QR, y luego
 - Una vez completas el proceso y nos das tu QR, llega entre 24 y 48 horas hábiles dentro de Colombia.
 - Sale ya configurado y con tu QR impreso y montado al frente del altavoz: solo lo enchufas
   y lo conectas al WiFi.
-- El envío va incluido en el pago de una; en el plan en cuotas son $12.000 aparte.
+- El envío va incluido en el pago de una; en el plan en cuotas se cobra aparte según
+  tu ciudad (entre $11.000 y $25.000).
 
 # EL STICKER QR (dónde va — importante, no confundir)
 - El sticker con tu QR va COLOCADO AL FRENTE DEL ALTAVOZ: tu Sonó llega con el QR ya
