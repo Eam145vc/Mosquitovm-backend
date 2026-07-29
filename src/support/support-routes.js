@@ -65,7 +65,7 @@ import { recordPing, getOverview, getActiveVisitors, pruneOld } from './analytic
 // de otra persona).
 const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i;
 const fechaCo = (ms) => new Date(ms).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', timeZone: 'America/Bogota' });
-function accountSummaryByEmail(raw) {
+function resolveAccountByEmail(raw) {
   const email = String(raw || '').trim().toLowerCase();
   if (!email) return null;
   let acc = null;
@@ -81,7 +81,23 @@ function accountSummaryByEmail(raw) {
       (o.mp_payer_email || '').toLowerCase() === email) || null;
     if (order && !acc && order.account_id) { try { acc = getAccount(order.account_id); } catch {} }
   }
-  return accountSummary(acc, order);
+  return (acc || order) ? { acc, order } : null;
+}
+
+function accountSummaryByEmail(raw) {
+  const r = resolveAccountByEmail(raw);
+  return r ? accountSummary(r.acc, r.order) : null;
+}
+
+// Links personales del cliente (por su orden) para el botón ⚡: Libreta, conexión del
+// correo y subir/cambiar QR. El manual es genérico.
+function linksForOrder(orderId) {
+  const base = (config.FRONTEND_BASE_URL || 'https://sono.lat').replace(/\/$/, '');
+  return {
+    libreta: `${base}/libreta/?order=${orderId}`,
+    correo: `${base}/activar-pro?correo=1&order=${orderId}`,
+    activar: `${base}/activar-pro?order=${orderId}`,
+  };
 }
 
 // Arma el resumen operativo desde una cuenta/orden ya resueltas (lo usa también el
@@ -593,6 +609,7 @@ export function registerSupportRoutes(app) {
           const acc = o?.account_id ? getAccount(o.account_id) : null;
           ctx.accountInfo = accountSummary(acc, o);
         } catch { /* sin resumen: la sugerencia sale igual */ }
+        if (o) ctx.links = linksForOrder(o.id);
       }
     } else {
       const conv = getConversation(req.params.id);
@@ -609,7 +626,12 @@ export function registerSupportRoutes(app) {
         for (let i = messages.length - 1; i >= 0 && !ctx.accountInfo; i--) {
           if (messages[i].role !== 'user') continue;
           const hit = String(messages[i].text || '').match(EMAIL_RE);
-          if (hit) ctx.accountInfo = accountSummaryByEmail(hit[0]);
+          if (!hit) continue;
+          const r = resolveAccountByEmail(hit[0]);
+          if (r) {
+            ctx.accountInfo = accountSummary(r.acc, r.order);
+            if (r.order && !ctx.links) ctx.links = linksForOrder(r.order.id);
+          }
         }
       } catch { /* señal opcional */ }
     }

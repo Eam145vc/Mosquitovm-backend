@@ -228,6 +228,10 @@ CONEXIÓN WIFI:
 
 REGLAS FINALES:
 - NUNCA inventar precios, plazos, funciones ni promesas que no estén acá.
+- LINKS: cuando el cliente pida su Libreta, la guía del correo o subir su QR, usa los
+  "LINKS PERSONALES" del contexto TAL CUAL. Si NO vienen en el contexto, NUNCA inventes
+  la URL (llevan un código único de su pedido): di que se la envías enseguida. El único
+  link genérico que siempre puedes dar es https://sono.lat/manual (y sono.lat).
 - Si el cliente pregunta algo de SU pedido puntual (dónde va la guía, su dirección, su
   cuenta específica) y no hay datos en la conversación, proponer en el mensaje que ya lo
   revisas y le confirmas ("dame un momento y te confirmo").
@@ -271,6 +275,13 @@ export async function suggestAgentReply(messages, ctx = {}) {
       ? `ESTADO REAL DE SU CUENTA (verificado en el sistema — usa SOLO esto para hablar de su pedido, envío, conexión o altavoz; no inventes nada más):\n${ctx.accountInfo}\n\n`
       : '') +
     (ctx.page ? `PÁGINA DESDE LA QUE ESCRIBE: ${ctx.page}\n\n` : '') +
+    (ctx.links
+      ? `LINKS PERSONALES DE ESTE CLIENTE (dáselos tal cual cuando pida su Libreta, la guía/paso del correo o subir-cambiar su QR — son SUS enlaces únicos):\n` +
+        `- "La Libreta" (sus ventas en vivo): ${ctx.links.libreta}\n` +
+        `- Conectar el correo (paso a paso, ahí le aparece su correo asignado y el código): ${ctx.links.correo}\n` +
+        `- Subir o cambiar su QR: ${ctx.links.activar}\n` +
+        `- Manual de uso (WiFi, genérico): https://sono.lat/manual\n\n`
+      : '') +
     `FECHA Y HORA ACTUAL (Bogotá): ${ahora}\n\n` +
     `CONVERSACIÓN HASTA AHORA:\n${transcript}\n\n` +
     (ctx.draft

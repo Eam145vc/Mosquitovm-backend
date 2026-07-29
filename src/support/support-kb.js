@@ -73,6 +73,11 @@ siempre. Así NO pierde ningún correo — todo le sigue llegando igual que ante
 Sonó anuncia los pagos. (Puedes decir "puente" y "se reenvía a tu correo personal"; NO
 nombres proveedores ni protocolos.)
 
+"¿CUÁL ES MI CORREO DE SONÓ?" / no lo tiene a la mano: el correo asignado aparece en la
+PÁGINA DE ACTIVACIÓN de su pedido (el enlace que le llegó por WhatsApp). ⚠️ NO le digas
+que aparece en "La Libreta" (ahí NO sale). Si no tiene la página a la mano, dirígelo al
+WhatsApp 315 0986048 (https://wa.me/573150986048) para que el equipo se lo envíe de una.
+
 "NO ME LLEGA EL CÓDIGO" (al confirmar el cambio de correo — NO se escala): el banco envía
 ese código de verificación POR CORREO, no por SMS. Al cliente le llega a su correo
 personal de siempre (que revise la bandeja de entrada y también spam), Y ADEMÁS el código
