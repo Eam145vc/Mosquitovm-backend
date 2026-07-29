@@ -220,6 +220,10 @@ export async function suggestAgentReply(messages, ctx = {}) {
 
   const prompt =
     (ctxLines ? `DATOS DEL CLIENTE (del panel):\n${ctxLines}\n\n` : '') +
+    (ctx.accountInfo
+      ? `ESTADO REAL DE SU CUENTA (verificado en el sistema — usa SOLO esto para hablar de su pedido, envío, conexión o altavoz; no inventes nada más):\n${ctx.accountInfo}\n\n`
+      : '') +
+    (ctx.page ? `PÁGINA DESDE LA QUE ESCRIBE: ${ctx.page}\n\n` : '') +
     `CONVERSACIÓN HASTA AHORA:\n${transcript}\n\n` +
     `Escribe la mejor respuesta del AGENTE al último mensaje del cliente.`;
 

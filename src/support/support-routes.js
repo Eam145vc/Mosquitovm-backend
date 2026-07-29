@@ -81,6 +81,12 @@ function accountSummaryByEmail(raw) {
       (o.mp_payer_email || '').toLowerCase() === email) || null;
     if (order && !acc && order.account_id) { try { acc = getAccount(order.account_id); } catch {} }
   }
+  return accountSummary(acc, order);
+}
+
+// Arma el resumen operativo desde una cuenta/orden ya resueltas (lo usa también el
+// botón ⚡ del panel, que llega por teléfono de WhatsApp en vez de por correo).
+function accountSummary(acc, order) {
   if (!acc && !order) return null;
   const lines = [];
   if (order) {
@@ -577,6 +583,12 @@ export function registerSupportRoutes(app) {
       if (ord) {
         const o = orders.find((x) => x.id === ord.id);
         ctx = { name: o?.business_name, plan: o?.plan, delivery: o?.delivery, status: o?.status, bank: o?.bank, city: o?.city };
+        // Resumen operativo de la cuenta (conexión por pagos, altavoz, envío):
+        // el mismo que usa Valeria, para que la sugerencia salga con datos reales.
+        try {
+          const acc = o?.account_id ? getAccount(o.account_id) : null;
+          ctx.accountInfo = accountSummary(acc, o);
+        } catch { /* sin resumen: la sugerencia sale igual */ }
       }
     } else {
       const conv = getConversation(req.params.id);
@@ -584,7 +596,18 @@ export function registerSupportRoutes(app) {
       messages = listMessages(conv.id, 0)
         .filter((m) => m.role !== 'system')
         .map((m) => ({ role: m.role, text: m.text }));
-      ctx = { name: conv.name || null };
+      ctx = { name: conv.name || null, page: conv.page || null };
+    }
+    // En ambos canales: si el cliente dio un correo en el chat y aún no hay resumen,
+    // resolver la cuenta por ese correo (igual que Valeria). El último correo gana.
+    if (!ctx.accountInfo) {
+      try {
+        for (let i = messages.length - 1; i >= 0 && !ctx.accountInfo; i--) {
+          if (messages[i].role !== 'user') continue;
+          const hit = String(messages[i].text || '').match(EMAIL_RE);
+          if (hit) ctx.accountInfo = accountSummaryByEmail(hit[0]);
+        }
+      } catch { /* señal opcional */ }
     }
     if (!messages.length) return reply.code(400).send({ error: 'conversación vacía' });
     const r = await suggestAgentReply(messages, ctx);
