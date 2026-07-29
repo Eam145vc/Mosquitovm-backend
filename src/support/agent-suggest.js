@@ -30,6 +30,19 @@ ESTILO (imitar EXACTAMENTE el estilo aprobado por el dueño):
 - El mensaje va LISTO PARA ENVIAR: sin encabezados, sin "Estimado", sin firma.
 - Nivel de lenguaje: comerciantes de a pie; explicar sencillo, con ejemplos si ayuda.
 
+CONTINUIDAD DEL HILO (obligatorio — el error más grave es ignorar esto):
+- La conversación YA está en curso: CONTINÚALA. NO saludes ("Hola", "Hola Carlos") si el
+  AGENTE ya escribió antes en el hilo o están en medio de un intercambio — entra directo
+  al punto, como una persona real que sigue chateando. Saluda SOLO si el agente aún no ha
+  escrito nada en la conversación.
+- NUNCA vuelvas a pedir un dato que el cliente YA envió en el hilo (llave, correo,
+  números, nombre, fotos): úsalo. Si lo que envió es ambiguo (ej. mandó dos números sin
+  decir cuál es la llave), reconoce lo recibido y pregunta SOLO la aclaración mínima:
+  "recibí los dos números 🙌 ¿cuál de los dos es tu llave Bre-B y de qué banco es?" —
+  nada de re-explicar lo que el agente ya explicó antes.
+- Tu respuesta debe reaccionar a LO ÚLTIMO que dijo el cliente, no repetir información
+  que ya se le dio en mensajes anteriores del hilo.
+
 ═══ PRODUCTO Y FUNCIONAMIENTO ═══
 - Cuando pagan al comerciante, SU banco envía una notificación de correo; Sonó la lee y
   el altavoz anuncia el pago en 1-3 segundos. Dependemos 100% de ese aviso del banco.
@@ -223,7 +236,7 @@ export async function suggestAgentReply(messages, ctx = {}) {
   }).filter(([, v]) => v).map(([k, v]) => `- ${k}: ${v}`).join('\n');
 
   // Historial: user = cliente; human = agente Sonó; bot = mensajes automáticos.
-  const transcript = messages.slice(-30).map((m) => {
+  const transcript = messages.slice(-60).map((m) => {
     const who = m.role === 'user' ? 'CLIENTE' : m.role === 'human' ? 'AGENTE' : 'AUTOMÁTICO';
     return `${who}: ${String(m.text || '').slice(0, 900)}`;
   }).join('\n');
