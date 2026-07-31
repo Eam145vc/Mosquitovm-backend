@@ -55,9 +55,10 @@ export function fechaLimiteCuota(order, now = Date.now()) {
   if (order?.installment_plazo_at) return order.installment_plazo_at;
   const paidEff = Math.max(1, order?.installments_paid || 0);
   const venceAt = venceCuotaAt(order, paidEff, now);
-  // Vista previa: si la cuota aún no vence, el plazo ES el vencimiento (día de
-  // su compra); si ya venció (atrasado), estrena 7 días desde ahora.
-  return venceAt > now ? venceAt : now + CUOTA_GRACIA_MS;
+  // Vista previa: el plazo es el vencimiento (día de su compra), con piso de
+  // 7 días desde el primer aviso — nadie recibe un "tienes hasta HOY" (31-jul:
+  // Eduardo/Mauricio vencían al día siguiente del arranque y les quedó 1 día).
+  return Math.max(venceAt, now + CUOTA_GRACIA_MS);
 }
 
 /**
@@ -293,10 +294,12 @@ export function enviarRecordatorioCuota(order, { now = Date.now() } = {}) {
   const count = order.installment_reminder_count || 0;
   const etapa = ['aviso', 'recordatorio', 'final'][Math.min(count, 2)];
   const patch = { installment_reminder_at: now, installment_reminder_count: count + 1 };
-  // Plazo congelado con el primer aviso: el vencimiento real (día de su compra)
-  // si aún no pasó; para atrasados, 7 días desde este aviso.
+  // Plazo congelado con el primer aviso: el vencimiento real (día de su compra),
+  // con PISO de 7 días desde este aviso — nunca un "tienes hasta hoy/mañana".
+  // En régimen el aviso sale justo 7 días antes del vencimiento, así que el piso
+  // no mueve nada; solo protege atrasados y bordes (vencía en 1-6 días).
   if (!order.installment_plazo_at) {
-    patch.installment_plazo_at = d.venceAt > now ? d.venceAt : now + CUOTA_GRACIA_MS;
+    patch.installment_plazo_at = Math.max(d.venceAt, now + CUOTA_GRACIA_MS);
   }
   updateOrder(order.id, patch);
   enqueueWhatsAppForce(order, d.n === 3 ? 'cuota_3' : 'cuota_2');
