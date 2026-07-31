@@ -82,6 +82,7 @@ import { decryptFlowRequest, encryptFlowResponse, handleFlowAction } from './wa-
 import { bogotaHour, startOfBogotaDay, withinActiveHours } from './wa-shared.js';
 import { notifyAdmins } from './support/webpush.js';
 import { notifySale } from './sale-push.js';
+import { sendTelegram } from './telegram.js';
 import {
   CUOTA_2_3_CENTS, installmentDue, runBrebInstallmentReminders, fechaLimiteCuota, fechaLimiteTexto,
   CUOTA_POOL_SIZE, CUOTA_INTENT_TTL_MS, CUOTA_MATCH_GRACE_MS,
@@ -840,6 +841,18 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
   // de pagos (settleOwnBrebPayment matchea por monto). Reemplaza el Bre-B de
   // EfiPay en el front; el de EfiPay queda solo como fallback si esto está apagado.
   const BREB_INTENT_TTL_MS = 150 * 1000; // 2:30 (pedido del dueño: 2 min quedaba justo)
+
+  // Aviso al dueño (Telegram) cuando el pool de montos se llena y un cliente queda
+  // esperando en cola para pagar — señal de que faltan QRs con valor o hay un pico.
+  // Cooldown de 10 min por tipo para no bombardear el chat en el mismo pico.
+  const poolLlenoAvisadoAt = {};
+  const avisarPoolLleno = (tipo, orderId) => {
+    const now = Date.now();
+    if (now - (poolLlenoAvisadoAt[tipo] || 0) < 10 * 60 * 1000) return;
+    poolLlenoAvisadoAt[tipo] = now;
+    sendTelegram(`⚠️ Pool Bre-B lleno (${tipo}): hay clientes en cola esperando para pagar. Última orden: ${String(orderId).slice(0, 8)}…`)
+      .catch(() => {});
+  };
   app.post('/checkout/breb-intent', async (req, reply) => {
     if (!config.hasOwnBreb) return reply.code(503).send({ error: 'checkout Bre-B propio no configurado' });
     const order = getOrder((req.body || {}).orderId);
@@ -855,6 +868,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       const amount = claimPooledAmount(base, 3);
       if (amount === null) {
         logger.info({ orderId: order.id, base }, 'breb propio: pool de montos lleno, cliente en cola');
+        avisarPoolLleno('checkout', order.id);
         return reply.code(202).send({ queued: true, retryInMs: 5000 });
       }
       intent = createPaymentIntent({ orderId: order.id, amount, ttlMs: BREB_INTENT_TTL_MS });
@@ -1159,7 +1173,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     };
   });
 
-  // Toca "Voy a pagar": reserva un monto del pool y abre la ventana corta (5 min).
+  // Toca "Voy a pagar": reserva un monto del pool y abre la ventana (30 min).
   app.post('/cuota/:order/pagar', async (req, reply) => {
     if (!config.hasOwnBreb) return reply.code(503).send({ error: 'pagos no configurados' });
     const order = getOrder(req.params.order);
@@ -1169,7 +1183,10 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     let intent = getActiveIntentByOrder(order.id, 'cuota');
     if (!intent) {
       const amount = claimPooledAmount(Math.round(CUOTA_2_3_CENTS / 100), CUOTA_POOL_SIZE, { graceMs: CUOTA_MATCH_GRACE_MS });
-      if (amount === null) return reply.code(202).send({ queued: true, retryInMs: 4000 });
+      if (amount === null) {
+        avisarPoolLleno('cuota', order.id);
+        return reply.code(202).send({ queued: true, retryInMs: 4000 });
+      }
       intent = createPaymentIntent({
         orderId: order.id, amount, ttlMs: CUOTA_INTENT_TTL_MS, kind: 'cuota', installmentN: due.n,
       });
