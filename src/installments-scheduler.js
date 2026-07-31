@@ -48,7 +48,12 @@ export const CUOTA_GRACIA_MS = 7 * DAY;
  * mandado ninguno, se proyecta desde ahora — es solo vista previa.
  */
 export function fechaLimiteCuota(order, now = Date.now()) {
-  return order?.installment_plazo_at || (now + CUOTA_GRACIA_MS);
+  if (order?.installment_plazo_at) return order.installment_plazo_at;
+  const paidEff = Math.max(1, order?.installments_paid || 0);
+  const venceAt = (order?.created_at || now) + 30 * DAY * paidEff;
+  // Vista previa: si la cuota aún no vence, el plazo ES el vencimiento (día de
+  // su compra); si ya venció (atrasado), estrena 7 días desde ahora.
+  return venceAt > now ? venceAt : now + CUOTA_GRACIA_MS;
 }
 
 /** ¿Ya se pasó la fecha límite anunciada? (base del corte de servicio). */
@@ -89,8 +94,12 @@ export function installmentDue(order, now = Date.now(), { ignorePause = false } 
   const total = order.installments_total || 3;
   const paidEff = Math.max(1, order.installments_paid || 0);
   if (paidEff >= total) return null;
-  if (now < order.created_at + 30 * DAY * paidEff) return null;
-  return { n: paidEff + 1, paidEff, total };
+  // Cobro PROACTIVO (29-jul): la ventana abre 7 días ANTES del vencimiento, así
+  // el primer aviso sale con anticipación y la fecha límite queda exactamente
+  // en el aniversario de compra (día 30), no corrida a día 37.
+  const venceAt = order.created_at + 30 * DAY * paidEff;
+  if (now < venceAt - CUOTA_GRACIA_MS) return null;
+  return { n: paidEff + 1, paidEff, total, venceAt };
 }
 
 // Las cuotas 2 y 3 son $69.000 PLANAS: el envío (según ciudad, $11.000–$25.000,
@@ -259,7 +268,11 @@ export function enviarRecordatorioCuota(order, { now = Date.now() } = {}) {
   const count = order.installment_reminder_count || 0;
   const etapa = ['aviso', 'recordatorio', 'final'][Math.min(count, 2)];
   const patch = { installment_reminder_at: now, installment_reminder_count: count + 1 };
-  if (!order.installment_plazo_at) patch.installment_plazo_at = now + CUOTA_GRACIA_MS;
+  // Plazo congelado con el primer aviso: el vencimiento real (día de su compra)
+  // si aún no pasó; para atrasados, 7 días desde este aviso.
+  if (!order.installment_plazo_at) {
+    patch.installment_plazo_at = d.venceAt > now ? d.venceAt : now + CUOTA_GRACIA_MS;
+  }
   updateOrder(order.id, patch);
   enqueueWhatsAppForce(order, d.n === 3 ? 'cuota_3' : 'cuota_2');
   const plazoAt = order.installment_plazo_at || patch.installment_plazo_at;
