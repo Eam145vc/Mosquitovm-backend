@@ -850,7 +850,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     const now = Date.now();
     if (now - (poolLlenoAvisadoAt[tipo] || 0) < 10 * 60 * 1000) return;
     poolLlenoAvisadoAt[tipo] = now;
-    sendTelegram(`⚠️ Pool Bre-B lleno (${tipo}): hay clientes en cola esperando para pagar. Última orden: ${String(orderId).slice(0, 8)}…`)
+    sendTelegram(`⚠️ Pool Bre-B lleno (${tipo}): hay clientes en cola esperando para pagar. Genera más QRs con valor en Nequi y cárgalos al pool para liberar cupos. Última orden: ${String(orderId).slice(0, 8)}…`)
       .catch(() => {});
   };
   app.post('/checkout/breb-intent', async (req, reply) => {
