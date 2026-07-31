@@ -342,6 +342,12 @@ export function runBrebInstallmentReminders({ dryRun = false } = {}) {
     }
     const lastAt = order.installment_reminder_at || 0;
     if (now - lastAt < REMINDER_EVERY_MS) continue; // ya se le avisó hace poco
+    // PRIMER aviso, regla del dueño (31-jul): solo se manda (a) al abrir la
+    // ventana de 7 días (franja 6-7 días antes del vencimiento; el job es
+    // horario, sobra margen) o (b) del vencimiento en adelante. A quien le
+    // faltan 1-6 días NO se le escribe todavía: se espera a su día de compra
+    // y ahí estrena sus 7 días completos (piso de enviarRecordatorioCuota).
+    if (count === 0 && now < d.venceAt && d.venceAt - now <= 6 * DAY) continue;
     if (dryRun) {
       acciones.push({
         orderId: order.id, business: order.business_name, cuota: d.n,
