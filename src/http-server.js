@@ -895,7 +895,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     const now = Date.now();
     const CUOTA_PESOS = Math.round(CUOTA_2_3_CENTS / 100);
     const rows = listOrders()
-      .filter((o) => o.plan === 'cuotas' && !o.archived_at && !['cancelada', 'declined', 'created'].includes(o.status))
+      // Solo ventas COMPLETADAS (shipped): misma regla que el cobro. Una orden sin
+      // despachar no es cartera — aparece acá cuando su equipo salga.
+      .filter((o) => o.plan === 'cuotas' && !o.archived_at && o.status === 'shipped')
       .map((o) => {
         // ignorePause: el admin ve la deuda real aunque el cobro esté pausado.
         const due = installmentDue(o, now, { ignorePause: true });
