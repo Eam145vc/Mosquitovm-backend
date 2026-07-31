@@ -17,6 +17,7 @@ import { config } from './config.js';
 import { logger } from './logger.js';
 import {
   listOrders, updateOrder, getOrder, setSubStatus, getAccount, getCuotasEnabled,
+  getShipmentByOrder,
 } from './storage.js';
 import { chargeWithToken } from './efipay.js';
 import { enqueueWhatsAppForce, orderSilenciada } from './wa-enqueue.js';
@@ -50,10 +51,24 @@ export const CUOTA_GRACIA_MS = 7 * DAY;
 export function fechaLimiteCuota(order, now = Date.now()) {
   if (order?.installment_plazo_at) return order.installment_plazo_at;
   const paidEff = Math.max(1, order?.installments_paid || 0);
-  const venceAt = (order?.created_at || now) + 30 * DAY * paidEff;
+  const venceAt = venceCuotaAt(order, paidEff, now);
   // Vista previa: si la cuota aún no vence, el plazo ES el vencimiento (día de
   // su compra); si ya venció (atrasado), estrena 7 días desde ahora.
   return venceAt > now ? venceAt : now + CUOTA_GRACIA_MS;
+}
+
+/**
+ * Vencimiento de la próxima cuota: aniversario de compra (día 30×n), con un piso
+ * de 7 días DESDE LA ENTREGA confirmada — a quien la transportadora le entregó
+ * tarde no se le puede vencer la cuota antes de una semana con el equipo en mano.
+ */
+function venceCuotaAt(order, paidEff, now = Date.now()) {
+  let v = (order?.created_at || now) + 30 * DAY * paidEff;
+  const sh = getShipmentByOrder(order?.id);
+  if (sh?.tracking_status === 'delivered' && sh.tracking_status_at) {
+    v = Math.max(v, sh.tracking_status_at + CUOTA_GRACIA_MS);
+  }
+  return v;
 }
 
 /** ¿Ya se pasó la fecha límite anunciada? (base del corte de servicio). */
@@ -86,6 +101,13 @@ export function installmentDue(order, now = Date.now(), { ignorePause = false } 
   // subió su QR ni recibió el Sonó es un error (pasó el 28-jul con dos órdenes
   // en pendiente_qr de junio: venta nunca finalizada ≠ cliente moroso).
   if (order.archived_at || order.status !== 'shipped') return null;
+  // Y tiene que estar EN MANOS del cliente: si hay guía con rastreo y la
+  // transportadora aún no confirma la entrega (en tránsito, intento fallido,
+  // devolución), no se cobra (31-jul: aviso a Julio con el paquete en novedad
+  // de Servientrega). Sin guía o sin rastreo (ventas viejas/manuales), el
+  // filtro sigue siendo 'shipped' como hasta ahora.
+  const sh = getShipmentByOrder(order.id);
+  if (sh?.tracking_status && sh.tracking_status !== 'delivered') return null;
   // Pausa manual (admin): frena recordatorios y suspensión. El flujo de PAGO
   // (página /cuota, Flow) pasa ignorePause: si el cliente quiere pagar, se deja.
   if (!ignorePause && order.installment_paused) return null;
@@ -97,7 +119,7 @@ export function installmentDue(order, now = Date.now(), { ignorePause = false } 
   // Cobro PROACTIVO (29-jul): la ventana abre 7 días ANTES del vencimiento, así
   // el primer aviso sale con anticipación y la fecha límite queda exactamente
   // en el aniversario de compra (día 30), no corrida a día 37.
-  const venceAt = order.created_at + 30 * DAY * paidEff;
+  const venceAt = venceCuotaAt(order, paidEff, now);
   if (now < venceAt - CUOTA_GRACIA_MS) return null;
   return { n: paidEff + 1, paidEff, total, venceAt };
 }
