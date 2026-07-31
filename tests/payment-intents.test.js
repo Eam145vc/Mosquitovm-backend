@@ -69,15 +69,15 @@ describe('payment intents (checkout Bre-B propio)', () => {
     const orderId = s.createOrder({ amountCents: 7700000 });
     const it = s.createPaymentIntent({ orderId, amount: 77000, ttlMs: TTL });
     const db = s.openDb();
-    // venció hace 30s → dentro de la gracia de 45s → matchea
-    db.prepare('UPDATE payment_intents SET expires_at = ? WHERE id = ?').run(Date.now() - 30_000, it.id);
+    // venció hace 10s → dentro de la gracia de 15s (Nequi avisa casi al instante) → matchea
+    db.prepare('UPDATE payment_intents SET expires_at = ? WHERE id = ?').run(Date.now() - 10_000, it.id);
     const hit = s.matchPaymentIntent(77000);
     assert.equal(hit.id, it.id);
 
     const orderId2 = s.createOrder({ amountCents: 7700000 });
     const it2 = s.createPaymentIntent({ orderId: orderId2, amount: 77000, ttlMs: TTL });
-    // venció hace 2 min → fuera de la gracia → no matchea
-    db.prepare('UPDATE payment_intents SET expires_at = ? WHERE id = ?').run(Date.now() - 120_000, it2.id);
+    // venció hace 30s → fuera de la gracia de 15s → no matchea
+    db.prepare('UPDATE payment_intents SET expires_at = ? WHERE id = ?').run(Date.now() - 30_000, it2.id);
     assert.equal(s.matchPaymentIntent(77000), null);
   });
 
