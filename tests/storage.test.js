@@ -124,3 +124,38 @@ describe('ruteo multipunto (device ↔ llave Bre-B)', () => {
     assert.equal(JSON.parse(d.breb_qr_json).raw, '0002...');
   });
 });
+
+describe('banco de la orden vs banco real del pago', () => {
+  test('orden sin banco → la completa el primer pago', () => {
+    const acc = 'acc-bank-1';
+    const o = s.createOrder({ amountCents: 1000 });
+    s.updateOrder(o, { account_id: acc });
+    s.recordPayment({ accountId: acc, amount: 5000, bank: 'nequi', msgId: 'm-b1' });
+    assert.equal(s.getOrder(o).bank, 'nequi');
+  });
+
+  test('banco mal elegido en la guía → lo corrige el pago real', () => {
+    const acc = 'acc-bank-2';
+    const o = s.createOrder({ amountCents: 1000 });
+    s.updateOrder(o, { account_id: acc, bank: 'nequi' }); // el cliente eligió mal
+    s.recordPayment({ accountId: acc, amount: 5000, bank: 'bancolombia', msgId: 'm-b2' });
+    assert.equal(s.getOrder(o).bank, 'bancolombia');
+  });
+
+  test('comercio con dos bancos reales → conserva el que eligió', () => {
+    const acc = 'acc-bank-3';
+    const o = s.createOrder({ amountCents: 1000 });
+    s.updateOrder(o, { account_id: acc, bank: 'nequi' });
+    s.recordPayment({ accountId: acc, amount: 5000, bank: 'nequi', msgId: 'm-b3a' });
+    s.recordPayment({ accountId: acc, amount: 7000, bank: 'bancolombia', msgId: 'm-b3b' });
+    assert.equal(s.getOrder(o).bank, 'nequi'); // ya tenía pagos de Nequi: no se pisa
+  });
+
+  test('banco desconocido no toca la orden', () => {
+    const acc = 'acc-bank-4';
+    const o = s.createOrder({ amountCents: 1000 });
+    s.updateOrder(o, { account_id: acc, bank: 'bbva' });
+    s.recordPayment({ accountId: acc, amount: 5000, bank: 'unknown', msgId: 'm-b4' });
+    assert.equal(s.getOrder(o).bank, 'bbva');
+  });
+});

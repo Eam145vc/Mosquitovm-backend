@@ -1123,7 +1123,34 @@ export function recordPayment({ accountId, amount, bank, payer, brebKey = null,
   ).run(accountId, amount ?? null, bank || null, payer || null, brebKey || null,
         speakerId || null, localName || null, unrouted ? 1 : 0, msgId || null, at);
   if (info.changes === 0) return null; // duplicado por msg_id
+  syncOrderBankFromPayment(accountId, bank);
   return { id: info.lastInsertRowid, accountId, amount, bank, payer, brebKey, speakerId, localName, unrouted, at };
+}
+
+/**
+ * Ajusta `orders.bank` con el banco REAL del pago (el que dice el correo del banco).
+ *
+ * Por qué: el `bank` de la orden sale de la guía que el cliente elige al subir el QR,
+ * o sea de un clic suyo. El QR Bre-B NO identifica al banco emisor (verificado sobre
+ * 145 QRs de clientes: Nequi, Bancolombia y BBVA generan la misma estructura EMVCo) y
+ * la llave tampoco lo dice, así que ese clic es lo único que hay hasta el primer pago
+ * y a veces está mal (caso jul-2026: eligió Nequi y subió un QR de Bancolombia → el
+ * admin le pintaba el logo equivocado). El correo del pago sí es fuente de verdad.
+ *
+ * Solo pisa el banco declarado si la cuenta NUNCA ha recibido un pago de ese banco:
+ * un comercio que recibe por dos bancos con el mismo correo conserva lo que eligió.
+ */
+export function syncOrderBankFromPayment(accountId, bank) {
+  openDb();
+  if (!accountId || !bank || bank === 'unknown') return 0;
+  return db.prepare(
+    `UPDATE orders SET bank = ?, updated_at = ?
+      WHERE account_id = ?
+        AND (bank IS NULL OR bank = ''
+             OR (bank <> ? AND NOT EXISTS (
+                   SELECT 1 FROM payments p
+                    WHERE p.account_id = orders.account_id AND p.bank = orders.bank)))`
+  ).run(bank, Date.now(), accountId, bank).changes;
 }
 
 /** Speakers de los clientes que reciben pagos de un banco (para el aviso de demora
