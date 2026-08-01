@@ -118,9 +118,12 @@ export function clearUnreadAdmin(id) {
 
 // Lista para el panel admin. filter: 'all' | 'pending' | 'open'.
 export function listConversations(filter = 'all', limit = 100) {
-  let where = '';
-  if (filter === 'pending') where = "WHERE status = 'pending'";
-  else if (filter === 'open') where = "WHERE status != 'closed'";
+  // Solo conversaciones CON mensajes: el widget crea la conv apenas alguien abre el
+  // chat, y las que nunca escribieron nada ("Visitante …") floodeaban el panel.
+  const conMensajes = 'EXISTS (SELECT 1 FROM support_messages m WHERE m.conv_id = support_conversations.id)';
+  let where = `WHERE ${conMensajes}`;
+  if (filter === 'pending') where += " AND status = 'pending'";
+  else if (filter === 'open') where += " AND status != 'closed'";
   const rows = db().prepare(
     `SELECT * FROM support_conversations ${where} ORDER BY last_msg_at DESC LIMIT ?`
   ).all(limit);
