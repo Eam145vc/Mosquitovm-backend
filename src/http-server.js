@@ -1134,6 +1134,50 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     return { ok: true, pagadas: nowPaid, total, completado: done, reactivada };
   });
 
+  // Cambia el PLAN de una orden SIN PAGAR (cuotas ⇄ contado): recalcula el monto con
+  // la misma fórmula del checkout (precio del plan + envío por ciudad si es cuotas +
+  // recargo si es contraentrega) y deja los campos de cuotas coherentes. Caso típico:
+  // el cliente pidió "mejor lo pago de una" antes del despacho. Una orden ya pagada
+  // NO se toca: eso sería una operación contable distinta, no un cambio de plan.
+  app.post('/admin/orders/:order/plan', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const order = getOrder(req.params.order);
+    if (!order) return reply.code(404).send({ error: 'orden no encontrada' });
+    const pedido = (req.body || {}).plan;
+    const plan = pedido === 'cuotas' ? 'cuotas' : pedido === 'contado' ? 'contado' : null;
+    if (!plan) return reply.code(400).send({ error: "plan debe ser 'contado' o 'cuotas'" });
+    if ((order.plan || 'contado') === plan) return reply.code(409).send({ error: `la orden ya es plan ${plan}` });
+    // "Pagada" según el flujo: en COD el cliente paga al RECIBIR, así que ready_to_ship
+    // no cuenta como pagada (isPaid sí lo incluye) — el corte ahí es el despacho, porque
+    // la guía COD ya sale con el monto a recaudar. Online sí corta con isPaid.
+    const esContraentrega = order.delivery === 'contraentrega';
+    if (esContraentrega && order.status === 'shipped') {
+      return reply.code(409).send({ error: 'la orden ya fue despachada; el monto a recaudar de la guía no se puede cambiar' });
+    }
+    if (!esContraentrega && isPaid(order)) {
+      return reply.code(409).send({ error: 'la orden ya está pagada; el cambio de plan solo aplica antes del pago' });
+    }
+    const envioCents = plan === 'cuotas' ? envioPorDane(order.city_dane || null) * 100 : 0;
+    const amountCents = PLAN_PRICES_CENTS[plan]
+      + envioCents
+      + (esContraentrega ? RECARGO_CONTRAENTREGA_CENTS : 0);
+    updateOrder(order.id, {
+      plan,
+      amount_cents: amountCents,
+      installments_total: plan === 'cuotas' ? 3 : 1,
+      installments_paid: 0,
+      installment_next_at: null,
+      installment_fails: 0,
+      installments_state: null,
+      installment_reminder_at: null,
+      installment_reminder_count: 0,
+      installment_plazo_at: null,
+      installment_paused: 0,
+    });
+    logger.info({ orderId: order.id, de: order.plan || 'contado', a: plan, amountCents, admin: true }, 'orden: PLAN CAMBIADO desde el admin');
+    return { ok: true, plan, amount: Math.round(amountCents / 100) };
+  });
+
   // ── Cobro de cuotas 2-3 por Bre-B (página pública sono.lat/cuota/?order=ID) ──
   // Lectura SIN reservar nada: el cliente llega desde el botón de la plantilla y
   // ve "debes la cuota N: $69.000" con un botón "Voy a pagar". El monto del pool
