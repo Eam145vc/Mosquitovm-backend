@@ -14,14 +14,15 @@
 
 import { config } from './config.js';
 
-// ⚠️ ago-2026: Skydropx separó Colombia a pro.skydropx.com.co (api-pro.skydropx.com
-// quedó solo-México: valida CPs mexicanos y cotiza "internacional"). Las MISMAS
-// credenciales OAuth sirven en ambos hosts. Se puede cambiar sin deploy con la env var.
-const SKY_API = (process.env.SKYDROPX_API_HOST || 'https://pro.skydropx.com.co') + '/api/v1';
+// 3-ago-2026: Skydropx tuvo una avería/migración de HORAS que borró las plantillas,
+// exigió `products` y validaba CPs mexicanos; ese mismo día lo revirtieron todo.
+// api-pro.skydropx.com es el host documentado; pro.skydropx.com.co también existe y
+// acepta las mismas credenciales. Cambiable sin deploy con la env var.
+const SKY_API = (process.env.SKYDROPX_API_HOST || 'https://api-pro.skydropx.com') + '/api/v1';
 
-// ago-2026: la API exige `products` dentro de cada parcel (hs_code + description_en
-// + country_code + quantity + price). 8518.220000 = altavoces (partida HS 8518.22),
-// único formato que su catálogo acepta (4 dígitos, punto, 6 dígitos).
+// `products` del parcel: HOY la API lo RECHAZA ("debe estar en blanco") pero durante la
+// avería lo EXIGÍA. Solo se manda en el reintento adaptativo si el 422 dice que falta.
+// 8518.220000 = altavoces (HS 8518.22), único formato que su catálogo acepta (4+punto+6).
 function parcelProducts(declared) {
   return [{
     hs_code: '8518.220000',
@@ -30,6 +31,15 @@ function parcelProducts(declared) {
     quantity: 1,
     price: declared,
   }];
+}
+
+// ¿El 422 dice que products FALTA? ("no puede estar en blanco" / "Debe ser un arreglo").
+// Ojo: el mensaje inverso "debe estar en blanco" significa que SOBRA — no matchear ese.
+function isProductsRequiredError(e) {
+  if (e?.status !== 422 && e?.status !== 400) return false;
+  const msgs = e?.body?.errors?.products;
+  const txt = Array.isArray(msgs) ? msgs.join(' ') : '';
+  return /no puede estar en blanco|debe ser un arreglo/i.test(txt);
 }
 
 // Caché del token en memoria (a nivel módulo). exp = epoch ms en que vence.
@@ -121,9 +131,7 @@ function buildOrigin(p, { noTemplate = false } = {}) {
   }
   return {
     country_code: 'CO',
-    // ago-2026: el catálogo del host CO valida el DANE de 5 dígitos en el origen
-    // (el CP de 6 da "postal_code no existe"). El destino sí acepta ambos.
-    postal_code: p.fromDane || p.fromPostal,
+    postal_code: p.fromPostal || p.fromDane,
     area_level1: p.fromDepto,
     area_level2: p.fromCity,
   };
@@ -159,7 +167,7 @@ export async function createQuotation(p, opts = {}) {
           package_type: p.packageType || '4G',
           package_content: p.packageContent || 'Dispositivo electronico',
           declared_amount: declared,
-          products: parcelProducts(declared),
+          ...(opts.withProducts ? { products: parcelProducts(declared) } : {}),
         },
       ],
       declared_amount: declared,
@@ -170,7 +178,10 @@ export async function createQuotation(p, opts = {}) {
     return await skyRequest('POST', '/quotations', payload);
   } catch (e) {
     if (!opts.noTemplate && config.SKYDROPX_ORIGIN_TEMPLATE_ID && isTemplateError(e)) {
-      return createQuotation(p, { noTemplate: true });
+      return createQuotation(p, { ...opts, noTemplate: true });
+    }
+    if (!opts.withProducts && isProductsRequiredError(e)) {
+      return createQuotation(p, { ...opts, withProducts: true });
     }
     throw e;
   }
@@ -262,7 +273,7 @@ export async function createShipment(p, opts = {}) {
         name: cleanName(p.from.name),
         company: cleanName(p.from.company || p.from.name),
         street1: p.from.street,
-        postal_code: p.from.dane || p.from.postal,
+        postal_code: p.from.postal || p.from.dane,
         area_level1: p.from.depto,
         area_level2: p.from.city,
         country_code: 'CO',
@@ -284,7 +295,7 @@ export async function createShipment(p, opts = {}) {
           package_type: p.packageType || '4G',
           package_content: p.packageContent || 'Dispositivo electronico',
           declared_amount: declared,
-          products: parcelProducts(declared),
+          ...(opts.withProducts ? { products: parcelProducts(declared) } : {}),
         },
       ],
       declared_amount: declared,
@@ -308,7 +319,10 @@ export async function createShipment(p, opts = {}) {
     return await skyRequest('POST', '/shipments', payload);
   } catch (e) {
     if (!opts.noTemplate && config.SKYDROPX_ORIGIN_TEMPLATE_ID && isTemplateError(e)) {
-      return createShipment(p, { noTemplate: true });
+      return createShipment(p, { ...opts, noTemplate: true });
+    }
+    if (!opts.withProducts && isProductsRequiredError(e)) {
+      return createShipment(p, { ...opts, withProducts: true });
     }
     throw e;
   }
