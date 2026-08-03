@@ -99,8 +99,8 @@ async function skyRequest(method, path, body, attempt = 1) {
 // recolección de la cuenta, ej. "Dispensario"), lo usamos: da MEJOR cobertura de
 // transportadoras y destinos que un origen suelto. El declared_amount va en el parcel,
 // así que el template ya NO rompe el valor declarado (ese bug era por mandarlo suelto).
-function buildOrigin(p) {
-  if (config.SKYDROPX_ORIGIN_TEMPLATE_ID) {
+function buildOrigin(p, { noTemplate = false } = {}) {
+  if (config.SKYDROPX_ORIGIN_TEMPLATE_ID && !noTemplate) {
     return { address_template_id: config.SKYDROPX_ORIGIN_TEMPLATE_ID };
   }
   return {
@@ -111,11 +111,21 @@ function buildOrigin(p) {
   };
 }
 
-export async function createQuotation(p) {
+// ¿Skydropx rechazó por la plantilla de origen? (ago-2026: la cuenta amaneció sin
+// plantillas — el template configurado dejó de existir y TODO despacho daba 422
+// "La plantilla de dirección no existe". Ante eso se reintenta con dirección suelta.)
+function isTemplateError(e) {
+  if (e?.status !== 422 && e?.status !== 400) return false;
+  const msgs = e?.body?.errors?.address_from;
+  const txt = Array.isArray(msgs) ? msgs.join(' ') : JSON.stringify(e?.body?.errors || '');
+  return /plantilla/i.test(txt);
+}
+
+export async function createQuotation(p, opts = {}) {
   const declared = Number(p.declaredAmount) || 50000;
   const payload = {
     quotation: {
-      address_from: buildOrigin(p),
+      address_from: buildOrigin(p, opts),
       address_to: {
         country_code: 'CO',
         postal_code: p.toPostal,
@@ -137,7 +147,14 @@ export async function createQuotation(p) {
       ...(p.cashOnDelivery ? { cash_on_delivery: true } : {}),
     },
   };
-  return skyRequest('POST', '/quotations', payload);
+  try {
+    return await skyRequest('POST', '/quotations', payload);
+  } catch (e) {
+    if (!opts.noTemplate && config.SKYDROPX_ORIGIN_TEMPLATE_ID && isTemplateError(e)) {
+      return createQuotation(p, { noTemplate: true });
+    }
+    throw e;
+  }
 }
 
 /** Re-lee una cotización por id (para traer los precios ya procesados). */
@@ -217,10 +234,10 @@ function cleanName(s) {
   return String(s || '').replace(/[^\p{L}\p{N}\s']/gu, ' ').replace(/\s+/g, ' ').trim();
 }
 
-export async function createShipment(p) {
+export async function createShipment(p, opts = {}) {
   const declared = Number(p.declaredAmount) || 50000;
   // Origen: template (Dispensario) si está configurado, sino campos sueltos del remitente.
-  const addressFrom = config.SKYDROPX_ORIGIN_TEMPLATE_ID
+  const addressFrom = config.SKYDROPX_ORIGIN_TEMPLATE_ID && !opts.noTemplate
     ? { address_template_id: config.SKYDROPX_ORIGIN_TEMPLATE_ID }
     : {
         name: cleanName(p.from.name),
@@ -267,7 +284,14 @@ export async function createShipment(p) {
       ...(p.cashOnDelivery ? { cash_on_delivery: true } : {}),
     },
   };
-  return skyRequest('POST', '/shipments', payload);
+  try {
+    return await skyRequest('POST', '/shipments', payload);
+  } catch (e) {
+    if (!opts.noTemplate && config.SKYDROPX_ORIGIN_TEMPLATE_ID && isTemplateError(e)) {
+      return createShipment(p, { noTemplate: true });
+    }
+    throw e;
+  }
 }
 
 /** Recupera un envío por id. */
