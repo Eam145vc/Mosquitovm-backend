@@ -67,6 +67,15 @@ export function registerSkydropxRoutes(app) {
     return String(e?.message || e);
   };
 
+  // Valor declarado (COP). En COD es lo que la transportadora recauda al entregar.
+  // El panel puede sobreescribirlo (body.declaredAmount) para juntar varias órdenes
+  // del mismo cliente en un solo flete; si no viene, sale del monto de la orden.
+  const resolveDeclared = (order, body) => {
+    const n = Math.round(Number(body?.declaredAmount));
+    if (Number.isFinite(n) && n > 0) return n;
+    return order.amount_cents ? Math.round(order.amount_cents / 100) : 50000;
+  };
+
   // Convierte un error del cliente Skydropx en una respuesta HTTP entendible.
   const sendSkyError = (reply, e) => {
     const status = e?.status === 422 ? 422 : 502;
@@ -197,7 +206,7 @@ export function registerSkydropxRoutes(app) {
     }
 
     const parcel = { ...DEFAULT_PARCEL, ...(body.parcel || {}) };
-    const declaredAmount = order.amount_cents ? Math.round(order.amount_cents / 100) : 50000;
+    const declaredAmount = resolveDeclared(order, body);
     // Contraentrega: por defecto se decide según el pedido (order.delivery), pero el body
     // puede forzarlo (toggle del panel). En COD la transportadora recauda el declaredAmount.
     const cashOnDelivery =
@@ -285,7 +294,7 @@ export function registerSkydropxRoutes(app) {
         ? body.cashOnDelivery
         : order.delivery === 'contraentrega';
     // Valor declarado (obligatorio al crear el envío). En contraentrega es lo que se recauda.
-    const declaredAmount = order.amount_cents ? Math.round(order.amount_cents / 100) : 50000;
+    const declaredAmount = resolveDeclared(order, body);
     const parcel = { ...DEFAULT_PARCEL, ...(body.parcel || {}) };
 
     try {

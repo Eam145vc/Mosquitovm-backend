@@ -454,6 +454,26 @@ export function openDb() {
     );
   `);
 
+  // "Pago esperado" por punto (multipunto/eco): el cajero avisa desde La Libreta
+  // "en este punto voy a cobrar $X" y, cuando entra un pago por exactamente $X a la
+  // cuenta, suena SOLO el speaker de ese punto (en vez de todos con la misma llave).
+  // amount en PESOS (igual que payments.amount). TTL corto; matched_at al consumirse.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS expected_payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_id TEXT NOT NULL,
+      order_id TEXT NOT NULL,
+      speaker_id TEXT NOT NULL,
+      local_name TEXT,
+      amount INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      matched_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_expected_acct ON expected_payments(account_id, expires_at);
+    CREATE INDEX IF NOT EXISTS idx_expected_order ON expected_payments(order_id, expires_at);
+  `);
+
   // OTP de confirmación del banco (cambio de correo). Persistido CIFRADO con TTL de
   // 10 min para sobrevivir reinicios de pm2 (antes vivía solo en RAM y cada deploy lo
   // borraba: el cliente nunca veía su código). code_enc = AES-256-GCM, igual que los
@@ -844,6 +864,10 @@ export function findDuplicateOrder(phone, email) {
     'SELECT * FROM orders WHERE archived_at IS NULL AND created_at >= ? ORDER BY created_at DESC'
   ).all(cutoff);
   return rows.find((o) => {
+    // Una orden que YA tiene QR subido terminó su onboarding: no es "una compra a
+    // medias" sino un pedido completo. Si el mismo cliente vuelve al checkout es
+    // porque quiere OTRO dispositivo → no bloquear (antes le exigía force=true).
+    if (o.qr_path) return false;
     const oPhone = String(o.phone || '').replace(/\D/g, '').slice(-10);
     const oMail = String(o.customer_email || '').trim().toLowerCase();
     return (digits && oPhone === digits) || (mail && oMail === mail);
@@ -1713,6 +1737,53 @@ export function matchPaymentIntent(amount, { graceMs = 15_000, bank = null } = {
     `UPDATE payment_intents SET status = 'paid', paid_at = ?, bank = ? WHERE id = ?`
   ).run(now, bank, hit.id);
   return { ...hit, status: 'paid', paid_at: now, bank };
+}
+
+// ── "Pago esperado" por punto (multipunto/eco por monto, desde La Libreta) ───
+
+/** Registra que el punto de `orderId` espera un pago de `amount` pesos. Reemplaza
+ *  la expectativa vigente del MISMO punto (un punto solo espera un cobro a la vez). */
+export function createExpectedPayment({ accountId, orderId, speakerId, localName, amount, ttlMs }) {
+  openDb();
+  const now = Date.now();
+  db.prepare(`DELETE FROM expected_payments WHERE order_id = ? AND matched_at IS NULL`).run(orderId);
+  const r = db.prepare(`
+    INSERT INTO expected_payments (account_id, order_id, speaker_id, local_name, amount, created_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(accountId, orderId, speakerId, localName || null, Math.round(amount), now, now + ttlMs);
+  return { id: r.lastInsertRowid, amount: Math.round(amount), expiresAt: now + ttlMs };
+}
+
+/** Expectativas vigentes (no vencidas ni consumidas) de una cuenta. */
+export function activeExpectedPayments(accountId, now = Date.now()) {
+  openDb();
+  return db.prepare(
+    `SELECT * FROM expected_payments
+     WHERE account_id = ? AND matched_at IS NULL AND expires_at > ?
+     ORDER BY created_at ASC`
+  ).all(accountId, now);
+}
+
+/** Expectativa vigente del punto (para pintar el estado en La Libreta). */
+export function getExpectedByOrder(orderId, now = Date.now()) {
+  openDb();
+  return db.prepare(
+    `SELECT * FROM expected_payments
+     WHERE order_id = ? AND matched_at IS NULL AND expires_at > ?
+     ORDER BY created_at DESC LIMIT 1`
+  ).get(orderId, now) || null;
+}
+
+/** Consume una expectativa (el pago llegó y se ruteó a su punto). */
+export function consumeExpectedPayment(id) {
+  openDb();
+  db.prepare(`UPDATE expected_payments SET matched_at = ? WHERE id = ?`).run(Date.now(), id);
+}
+
+/** Cancela la expectativa vigente del punto (botón "cancelar" de La Libreta). */
+export function cancelExpectedPayment(orderId) {
+  openDb();
+  return db.prepare(`DELETE FROM expected_payments WHERE order_id = ? AND matched_at IS NULL`).run(orderId).changes > 0;
 }
 
 // ── Settings + heartbeat del agente de WhatsApp (tabla key-value wa_meta) ─────

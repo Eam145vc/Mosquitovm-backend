@@ -218,10 +218,11 @@ export function registerSupportRoutes(app) {
 
     const userTurns = historyForModel(conv.id).filter((m) => m.role === "user").length;
 
-    // El PRIMER mensaje del cliente se responde despacio (como una persona que está
-    // leyendo y escribiendo): mínimo ~20s. Los siguientes llevan un cooldown corto que
-    // agrupa ráfagas: si el cliente manda 2-3 mensajes seguidos, responde solo el último.
-    const wait = userTurns <= 1 ? 20000 + Math.floor(Math.random() * 5000) : 6000;
+    // El PRIMER mensaje se responde con un pequeño delay "humano" (8-11s) pero ágil;
+    // los siguientes llevan un cooldown corto (3s) que agrupa ráfagas: si el cliente
+    // manda 2-3 mensajes seguidos, responde solo el último. (jul-2026: bajado de
+    // 20-25s/6s a 8-11s/3s — se sentía lento.)
+    const wait = userTurns <= 1 ? 8000 + Math.floor(Math.random() * 3000) : 3000;
     logger.info({ convId: conv.id, wait, userTurns }, "soporte: ventana antes de responder");
     await new Promise((r) => setTimeout(r, wait));
     if (!isLastUserMsg()) {
@@ -272,13 +273,13 @@ export function registerSupportRoutes(app) {
       const helloMsg = addMessage(conv.id, 'bot', saludo);
       setTimeout(() => {
         try {
-          // Si el cliente escribió de nuevo en estos 10s, la respuesta quedó vieja:
+          // Si el cliente escribió de nuevo en estos 4s, la respuesta quedó vieja:
           // no la mandamos; el handler del mensaje nuevo responde con todo el contexto.
           if (!isLastUserMsg()) return;
           addMessage(conv.id, 'bot', answer);
         }
         catch (e) { logger.warn({ convId: conv.id, err: e.message }, 'no se pudo guardar la respuesta diferida'); }
-      }, 10_000);
+      }, 4_000);
       // Sin push: el bot responde solo (no molestar). Solo se notifica si escala o
       // si el dueño ya tiene el control de la conversación (decisión del usuario jul-2026).
       return { reply: saludo, escalated: false, msgId: helloMsg.id, userMsgId: userMsg.id, more: true };

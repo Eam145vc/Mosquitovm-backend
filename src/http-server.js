@@ -59,6 +59,7 @@ import {
   insertUgcApplication, listUgcApplications, countUgcNuevo, setUgcStatus, deleteUgcApplication,
   createPaymentIntent, getPaymentIntent, matchPaymentIntent, claimPooledAmount, getActiveIntentByOrder,
   getCuotasEnabled, setCuotasEnabled, setPoolQr, getPoolQr, listPoolQrs,
+  createExpectedPayment, activeExpectedPayments, getExpectedByOrder, consumeExpectedPayment, cancelExpectedPayment,
   speakersForBank,
 } from './storage.js';
 import { bogotaDayStart, bogotaDayStartFromKey, bogotaMonthStart, bogotaPrevMonthStart, DAY_MS } from './libreta-time.js';
@@ -262,18 +263,12 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     }
     // ¿Cuántas llaves DISTINTAS hay entre los devices? 0-1 → modo eco (un solo local).
     const distinctKeys = new Set(devices.map((d) => d.breb_key || ''));
-    if (distinctKeys.size <= 1) {
-      return {
-        speakerId: devices[0].spkr_id,
-        speakerIds: devices.map((d) => d.spkr_id),
-        deviceKey: devices[0].breb_key || null,
-        localName: devices[0].local_name || null,
-        echo: true,
-      };
-    }
-    // multipunto real: rutear por llave (si varios devices comparten la llave, eco entre ellos).
+    const multipunto = distinctKeys.size > 1;
+    // Multipunto real con llave en el correo: la llave es evidencia DIRECTA de por
+    // dónde entró el pago → gana sobre cualquier "pago esperado" (un monto esperado
+    // que coincida por casualidad no debe pisar la llave).
     const key = payment.brebKey ? normalizeKey(payment.brebKey) : null;
-    if (key) {
+    if (multipunto && key) {
       const devs = findDevicesByKey(account.id, key);
       if (devs.length) {
         return {
@@ -284,6 +279,40 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
           echo: devs.length > 1,
         };
       }
+    }
+    // PAGO ESPERADO (La Libreta): un punto avisó "voy a cobrar $X". Si entra un pago
+    // por exactamente $X, suena SOLO ese punto — resuelve el eco (misma llave en
+    // varios locales) y el multipunto con bancos que no mandan la llave (Nequi/BBVA).
+    // Dos puntos esperando el MISMO monto = ambiguo → se ignora la pista y sigue el
+    // ruteo normal (mejor que sonar en el punto equivocado).
+    if (payment.direction !== 'out' && payment.amount) {
+      const matches = activeExpectedPayments(account.id)
+        .filter((e) => e.amount === Math.round(payment.amount));
+      if (matches.length === 1) {
+        const dev = devices.find((d) => d.spkr_id === matches[0].speaker_id);
+        if (dev) {
+          consumeExpectedPayment(matches[0].id);
+          return {
+            speakerId: dev.spkr_id,
+            speakerIds: [dev.spkr_id],
+            deviceKey: dev.breb_key || null,
+            localName: dev.local_name || matches[0].local_name || null,
+            expected: true,
+          };
+        }
+      } else if (matches.length > 1) {
+        logger.warn({ accountId: account.id, amount: payment.amount, puntos: matches.map((m) => m.local_name || m.speaker_id) },
+          'pago esperado AMBIGUO: varios puntos esperan el mismo monto — ruteo normal');
+      }
+    }
+    if (!multipunto) {
+      return {
+        speakerId: devices[0].spkr_id,
+        speakerIds: devices.map((d) => d.spkr_id),
+        deviceKey: devices[0].breb_key || null,
+        localName: devices[0].local_name || null,
+        echo: true,
+      };
     }
     // sin llave parseable o llave que no coincide con ningún local → NO suena + aviso.
     return { speakerId: null, speakerIds: [], unrouted: true, key };
@@ -3828,8 +3857,14 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     const prevMonthToDate = paymentsAggregate(acc.id, prevStart, prevCut);
     const hours = bestHours(acc.id, now - 14 * DAY_MS, 24);
     const rows = paymentsPage(acc.id, Number.MAX_SAFE_INTEGER, 50);
+    // Punto del ENLACE: cada link de Libreta es por orden, y en multipunto cada
+    // orden tiene su device → este link "es" ese punto (para el cobro por monto).
+    const linkDev = listDevicesByAccount(acc.id).find((d) => d.order_id === o.id) || null;
+    const exp = getExpectedByOrder(o.id, now);
     return {
       ok: true, emailConnected: true,
+      punto: linkDev ? { name: linkDev.local_name || linkDev.label || null, key: linkDev.breb_key || null } : null,
+      esperando: exp ? { amount: exp.amount, expiresAt: exp.expires_at } : null,
       businessName: main?.business_name || o.business_name || null,
       now,                                                    // reloj del server (la UI calcula offset)
       today:     { total: today.total, count: today.n, startAt: todayStart },
@@ -3889,6 +3924,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     const today = paymentsAggregate(acc.id, todayStart, now + 1);
     const monthStart = bogotaMonthStart(now);
     const month = paymentsAggregate(acc.id, monthStart, now + 1);
+    const expFeed = getExpectedByOrder(r.o.id, now);
     return {
       ok: true, now, gap,
       payments: rows.map(libRow),
@@ -3897,7 +3933,46 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       month: { total: month.total, count: month.n, startAt: monthStart },
       locales: libLocales(acc.id, acc, now),
       sub: libSub(acc).sub,
+      // Pago esperado vigente del punto de este link (null si venció o ya sonó):
+      // el polling deja que la UI muestre "esperando $X" y lo limpie sola.
+      esperando: expFeed ? { amount: expFeed.amount, expiresAt: expFeed.expires_at } : null,
     };
+  });
+
+  // "Voy a cobrar $X en este punto" (multipunto/eco): el cajero registra el monto
+  // desde La Libreta de SU punto y el próximo pago entrante por ese monto exacto
+  // suena SOLO en el parlante de ese punto (pickSpeaker). amount=0 cancela.
+  // Auth: el order id del link ES el token (igual que el resto de La Libreta).
+  const EXPECTED_TTL_MS = 10 * 60_000;
+  app.post('/libreta/:order/esperar', async (req, reply) => {
+    const r = resolveLibreta(req, reply);
+    if (!r) return;
+    const { o, acc } = r;
+    if (!acc) return reply.code(409).send({ error: 'la cuenta no está conectada todavía' });
+    if (rlHit(`libesp:${o.id}`, 60_000, 20)) return reply.code(429).send({ error: 'demasiadas solicitudes' });
+    const amount = Math.round(Number((req.body || {}).amount));
+    if (!Number.isFinite(amount) || amount < 0 || amount > 99_999_999) {
+      return reply.code(400).send({ error: 'monto inválido' });
+    }
+    if (amount === 0) {
+      cancelExpectedPayment(o.id);
+      return { ok: true, esperando: null };
+    }
+    const devices = listDevicesByAccount(acc.id);
+    if (devices.length < 2) {
+      return reply.code(409).send({ error: 'esta función es para cuentas con varios puntos' });
+    }
+    const dev = devices.find((d) => d.order_id === o.id);
+    if (!dev) {
+      return reply.code(409).send({ error: 'este enlace no tiene un punto con parlante asignado' });
+    }
+    const e = createExpectedPayment({
+      accountId: acc.id, orderId: o.id, speakerId: dev.spkr_id,
+      localName: dev.local_name || null, amount, ttlMs: EXPECTED_TTL_MS,
+    });
+    logger.info({ accountId: acc.id, orderId: o.id, speakerId: dev.spkr_id, amount },
+      'libreta: pago esperado registrado (cobro por punto)');
+    return { ok: true, esperando: { amount: e.amount, expiresAt: e.expiresAt, local: dev.local_name || null } };
   });
 
   // "Acceso a mi Libreta": el cliente que no tiene el enlace mete su celular y, si
