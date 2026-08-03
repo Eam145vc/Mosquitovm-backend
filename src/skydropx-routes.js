@@ -282,6 +282,7 @@ export function registerSkydropxRoutes(app) {
       company: config.SKYDROPX_ORIGIN_NAME,
       street: config.SKYDROPX_ORIGIN_STREET || 'Bodega',
       postal: origin.postal,
+      dane: origin.dane,
       depto: origin.depto,
       city: origin.city,
       phone: config.SKYDROPX_ORIGIN_PHONE,
