@@ -94,10 +94,14 @@ test('resumen ok: shape exacto y whitelist estricta (nada de infra ni PII)', asy
   const body = r.json();
 
   // Keys EXACTAS del shape A9.2 (ni una más: cada key extra es superficie de fuga).
+  // `punto` (nombre+llave del local de ESTE link) y `esperando` (cobro por punto,
+  // ago-2026) son datos del propio cliente: nada de infra ni PII.
   assert.deepEqual(Object.keys(body).sort(), [
-    'bestHours', 'businessName', 'cuenta', 'emailConnected', 'latestId', 'locales', 'month', 'multi',
-    'nextBefore', 'now', 'ok', 'payments', 'prevMonthToDate', 'sub', 'today', 'yesterday',
+    'bestHours', 'businessName', 'cuenta', 'emailConnected', 'esperando', 'latestId', 'locales',
+    'month', 'multi', 'nextBefore', 'now', 'ok', 'payments', 'prevMonthToDate', 'punto', 'sub',
+    'today', 'yesterday',
   ]);
+  if (body.punto) assert.deepEqual(Object.keys(body.punto).sort(), ['key', 'name']);
   assert.deepEqual(Object.keys(body.month).sort(), ['count', 'startAt', 'total']);
   assert.deepEqual(Object.keys(body.prevMonthToDate).sort(), ['count', 'total']);
   assert.deepEqual(Object.keys(body.payments[0]).sort(), ['amount', 'at', 'bank', 'id', 'key', 'local', 'unrouted']);
@@ -279,6 +283,75 @@ test('unrouted persiste y no suena: llave sin local → fila unrouted=1, sin anu
   assert.ok(venta, 'el unrouted aparece en La Libreta');
   assert.equal(venta.unrouted, true);
   assert.equal(venta.local, null);
+});
+
+// ── Cobro por punto (pago esperado) ──────────────────────────────────────────
+
+test('pago esperado: en modo eco el monto avisado suena SOLO en su punto y luego vuelve el eco', async () => {
+  const acc = mkCuenta();
+  s.setAccountForward(acc, { alias: 'ecoalias', forwardTo: 'eco@gmail.com' });
+  // 2 devices con la MISMA llave = modo eco (pagos suenan en TODOS los puntos).
+  const o1 = mkOrdenPagada({ accountId: acc, businessName: 'Eco SAS' });
+  const o2 = mkOrdenPagada({ accountId: acc });
+  s.createDevice({ spkrId: 'spkr-883', mac: 'EC:AA', model: 'wifi' });
+  s.assignDevice('spkr-883', o1);
+  s.setDeviceBrebKey('spkr-883', { key: '@lallave', localName: 'Punto Norte' });
+  s.createDevice({ spkrId: 'spkr-884', mac: 'EC:BB', model: 'wifi' });
+  s.assignDevice('spkr-884', o2);
+  s.setDeviceBrebKey('spkr-884', { key: '@lallave', localName: 'Punto Sur' });
+
+  // El cajero del Punto Sur (link de o2) avisa que va a cobrar $12.000.
+  const rEsp = await app.inject({
+    method: 'POST', url: `/libreta/${o2}/esperar`,
+    headers: { 'content-type': 'application/json' },
+    payload: { amount: 12000 },
+  });
+  assert.equal(rEsp.statusCode, 200);
+  assert.equal(rEsp.json().esperando.amount, 12000);
+
+  // El GET del resumen pinta la espera vigente en el link del punto.
+  assert.equal((await get(`/libreta/${o2}`)).json().esperando.amount, 12000);
+
+  const mandarPago = () => app.inject({
+    method: 'POST', url: '/webhook/email',
+    headers: { 'x-sono-secret': 'testsecret123', 'content-type': 'application/json' },
+    payload: {
+      alias: 'ecoalias',
+      from: 'alertasynotificaciones@notificacionesbancolombia.com',
+      subject: 'Bancolombia te informa Recepcion transferencia',
+      text: 'Bancolombia: Recibiste una transferencia por $12.000 de MARIA LOPEZ en tu cuenta *4369 conectado a la llave @lallave el 03/07/2026.',
+    },
+  });
+
+  // Pago 1 (con la espera activa): suena SOLO en el speaker del Punto Sur.
+  const antes = pagosAnunciados.length;
+  assert.equal((await mandarPago()).statusCode, 200);
+  assert.equal(pagosAnunciados.length, antes + 1);
+  assert.deepEqual(pagosAnunciados[antes].speakerIds, ['spkr-884'], 'con espera activa NO hay eco');
+  assert.equal(pagosAnunciados[antes].localName, 'Punto Sur');
+
+  // La espera se consumió: desaparece del resumen…
+  assert.equal((await get(`/libreta/${o2}`)).json().esperando, null);
+
+  // …y el pago 2 (mismo monto, sin espera) vuelve al eco de siempre (ambos puntos).
+  assert.equal((await mandarPago()).statusCode, 200);
+  assert.deepEqual(
+    [...pagosAnunciados[antes + 1].speakerIds].sort(),
+    ['spkr-883', 'spkr-884'],
+    'sin espera activa el eco sigue intacto',
+  );
+
+  // amount=0 cancela una espera vigente sin consumirla.
+  await app.inject({
+    method: 'POST', url: `/libreta/${o2}/esperar`,
+    headers: { 'content-type': 'application/json' }, payload: { amount: 7000 },
+  });
+  const rCancel = await app.inject({
+    method: 'POST', url: `/libreta/${o2}/esperar`,
+    headers: { 'content-type': 'application/json' }, payload: { amount: 0 },
+  });
+  assert.equal(rCancel.json().esperando, null);
+  assert.equal((await get(`/libreta/${o2}`)).json().esperando, null);
 });
 
 // ── Montos gigantes ───────────────────────────────────────────────────────────
