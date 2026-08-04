@@ -31,12 +31,12 @@ import { pushEnabled, notifyAdmins } from './webpush.js';
 import {
   createConversation, getConversation, touchConversation, clearUnreadAdmin, incUnreadAdmin,
   addMessage, listMessages, historyForModel, listConversations, countPending, savePushSub,
-  findConvsToReengage, markReengaged, getMessage, editMessage, deleteMessage,
+  findConvsToReengage, markReengaged, getMessage, editMessage, deleteMessage, searchMessages,
 } from './support-store.js';
 // Canal WhatsApp (Cloud API oficial): las conversaciones del número de Sonó se
 // integran a ESTE panel con id 'wa:<telefono>' — un solo lugar para atender todo.
 import { listWaChats, listWaChatMessages, markWaChatRead, insertWaInbound, listOrders, getWaMedia, setWaInboundMedia,
-  countWaChatUnread, unseenInboxCount, clientsAttentionCount, pedidosPendientesCount,
+  countWaChatUnread, unseenInboxCount, clientsAttentionCount, pedidosPendientesCount, searchWaInbound,
   getAccount, getAccountByEmailCI, getAccountByAlias, findAccountByForward,
   listDevicesByAccount, getShipmentByOrder, paymentsFor } from '../storage.js';
 import { normalizePhoneCO } from '../wa-enqueue.js';
@@ -535,6 +535,28 @@ export function registerSupportRoutes(app) {
       if (results.length >= 20) break;
     }
     return { results };
+  });
+
+  // Buscar chats por CONTENIDO: una palabra que el agente recuerde de la charla.
+  // Busca en el texto del chat web y en el body de los WhatsApp, y devuelve las
+  // conversaciones que coinciden (con un snippet) en el formato de la lista.
+  app.get('/soporte/admin/chat-search', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return { conversations: [] };
+    const web = searchMessages(q, 30).map((r) => {
+      const c = getConversation(r.id);
+      return {
+        id: r.id, channel: 'web', name: c?.name || 'Visitante', contact: c?.contact || '',
+        status: c?.status || 'open', preview: r.snippet, last_msg_at: r.last_at, unread_admin: c?.unread_admin || 0,
+      };
+    });
+    const negocios = negocioPorTelefono();
+    const wa = searchWaInbound(q, 30).map((r) => ({
+      id: `wa:${r.phone}`, channel: 'wa', name: negocios.get(r.phone) || `+${r.phone}`, contact: `+${r.phone}`,
+      status: 'open', preview: r.snippet, last_msg_at: r.last_at, unread_admin: 0,
+    }));
+    return { conversations: [...web, ...wa].sort((a, b) => (b.last_msg_at || 0) - (a.last_msg_at || 0)) };
   });
 
   app.get('/soporte/admin/conversations', async (req, reply) => {

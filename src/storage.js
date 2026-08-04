@@ -1955,6 +1955,18 @@ export function markWaChatRead(phone) {
   ).run(Date.now(), phone).changes;
 }
 
+/** Busca en el CONTENIDO de los WhatsApp: teléfonos cuyos mensajes contengan `q`.
+ *  Devuelve [{phone, last_at, snippet}] para el buscador de chats por contenido. */
+export function searchWaInbound(q, limit = 30) {
+  openDb();
+  const like = '%' + String(q).replace(/[%_\\]/g, '') + '%';
+  return db.prepare(
+    `SELECT phone, MAX(received_at) AS last_at,
+            (SELECT body FROM wa_inbound b WHERE b.phone = w.phone AND b.body LIKE ? ORDER BY received_at DESC LIMIT 1) AS snippet
+     FROM wa_inbound w WHERE body LIKE ? GROUP BY phone ORDER BY last_at DESC LIMIT ?`
+  ).all(like, like, limit);
+}
+
 /** No-leídos totales (badge del panel). */
 export function countWaChatUnread() {
   openDb();

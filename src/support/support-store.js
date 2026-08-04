@@ -167,6 +167,17 @@ export function setMessageMedia(convId, msgId, mediaPath, mime) {
     .run(mediaPath, mime || null, convId, msgId);
 }
 
+/** Busca en el CONTENIDO del chat web: conversaciones cuyos mensajes contengan `q`.
+ *  Devuelve [{id, last_at, snippet}] para el buscador por contenido. */
+export function searchMessages(q, limit = 30) {
+  const like = '%' + String(q).replace(/[%_\\]/g, '') + '%';
+  return db().prepare(
+    `SELECT m.conv_id AS id, MAX(m.created_at) AS last_at,
+            (SELECT text FROM support_messages x WHERE x.conv_id = m.conv_id AND x.text LIKE ? ORDER BY x.id DESC LIMIT 1) AS snippet
+     FROM support_messages m WHERE m.role != 'system' AND m.text LIKE ? GROUP BY m.conv_id ORDER BY last_at DESC LIMIT ?`
+  ).all(like, like, limit);
+}
+
 export function getMessage(convId, msgId) {
   return db().prepare('SELECT * FROM support_messages WHERE conv_id = ? AND id = ?')
     .get(convId, msgId) || null;
