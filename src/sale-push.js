@@ -24,7 +24,8 @@ export function notifySale(order, via) {
     tag: `sono-venta-${order.id}`, // tag único: dos ventas = dos notificaciones
     sound: 'cash',
     url: '/soporte-app/',
-  }).then((r) => logger.info({ orderId: order.id, via, sent: r.sent }, 'push de venta enviado'))
+  }, { ownerOnly: true }) // el operario NO recibe el aviso de venta
+    .then((r) => logger.info({ orderId: order.id, via, sent: r.sent }, 'push de venta enviado'))
     .catch((e) => logger.warn({ orderId: order.id, err: e.message }, 'push de venta falló'));
   // Telegram en paralelo: es el canal que SÍ suena con sonido custom (cha-ching
   // del chat) aunque el teléfono tenga todo cerrado.

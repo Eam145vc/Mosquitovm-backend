@@ -66,6 +66,10 @@ function db() {
     // (archivo local en <dirname(DB_PATH)>/soporte-media).
     try { d.exec('ALTER TABLE support_messages ADD COLUMN media_path TEXT'); } catch (e) { /* ya existe */ }
     try { d.exec('ALTER TABLE support_messages ADD COLUMN media_mime TEXT'); } catch (e) { /* ya existe */ }
+    // Autor del mensaje humano (dueño u operario) para mostrar quién escribió qué.
+    try { d.exec('ALTER TABLE support_messages ADD COLUMN author TEXT'); } catch (e) { /* ya existe */ }
+    // Rol de la suscripción push (owner|operator): la venta NO se manda al operario.
+    try { d.exec("ALTER TABLE push_subs ADD COLUMN role TEXT NOT NULL DEFAULT 'owner'"); } catch (e) { /* ya existe */ }
     inited = true;
   }
   return d;
@@ -143,19 +147,19 @@ export function countPending() {
 
 // ---------- Mensajes ----------
 
-export function addMessage(convId, role, text, { escalated = false } = {}) {
+export function addMessage(convId, role, text, { escalated = false, author = null } = {}) {
   const t = now();
   const info = db().prepare(
-    `INSERT INTO support_messages (conv_id, role, text, escalated, created_at)
-     VALUES (?, ?, ?, ?, ?)`
-  ).run(convId, role, text, escalated ? 1 : 0, t);
+    `INSERT INTO support_messages (conv_id, role, text, escalated, author, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(convId, role, text, escalated ? 1 : 0, author, t);
   bumpLastMsg(convId);
-  return { id: info.lastInsertRowid, conv_id: convId, role, text, escalated, created_at: t };
+  return { id: info.lastInsertRowid, conv_id: convId, role, text, escalated, author, created_at: t };
 }
 
 export function listMessages(convId, sinceId = 0) {
   return db().prepare(
-    `SELECT id, role, text, escalated, created_at, media_mime,
+    `SELECT id, role, text, escalated, author, created_at, media_mime,
             (media_path IS NOT NULL) AS has_media
      FROM support_messages WHERE conv_id = ? AND id > ? ORDER BY id ASC`
   ).all(convId, sinceId);
@@ -230,12 +234,12 @@ export function markReengaged(id) {
 
 // ---------- Push subs ----------
 
-export function savePushSub({ endpoint, p256dh, auth, label }) {
+export function savePushSub({ endpoint, p256dh, auth, label, role = 'owner' }) {
   db().prepare(
-    `INSERT INTO push_subs (endpoint, p256dh, auth, label, created_at)
-     VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth`
-  ).run(endpoint, p256dh, auth, label || null, now());
+    `INSERT INTO push_subs (endpoint, p256dh, auth, label, role, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth, role = excluded.role`
+  ).run(endpoint, p256dh, auth, label || null, role, now());
 }
 
 export function listPushSubs() {

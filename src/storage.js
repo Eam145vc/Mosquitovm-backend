@@ -282,6 +282,8 @@ export function openDb() {
     // Quote de WhatsApp: wamid del mensaje al que este responde (msg.context.id del
     // webhook). Permite mostrar en el panel A QUÉ mensaje respondió el cliente.
     ['reply_to_id', 'TEXT'],
+    // Autor del mensaje saliente (dueño u operario) para mostrar quién escribió.
+    ['author', 'TEXT'],
   ]);
   db.exec('CREATE INDEX IF NOT EXISTS idx_wa_inbound_phone ON wa_inbound(phone, received_at DESC)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_wa_outbox_wamid ON wa_outbox(wamid)');
@@ -1888,12 +1890,12 @@ export function updateWaDeliveryByWamid(wamid, delivery, error = null) {
 
 /** Mensaje del hilo de chat (entrante del webhook o saliente del CRM/plantillas).
  *  Idempotente por id (wamid). direction: 'in' | 'out'. */
-export function insertWaInbound({ id, phone, name, type, body, direction = 'in', delivery = null, replyToId = null }) {
+export function insertWaInbound({ id, phone, name, type, body, direction = 'in', delivery = null, replyToId = null, author = null }) {
   openDb();
   const info = db.prepare(
-    `INSERT OR IGNORE INTO wa_inbound (id, phone, name, type, body, direction, delivery, received_at, reply_to_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, phone, name || null, type, body || null, direction, delivery, Date.now(), replyToId || null);
+    `INSERT OR IGNORE INTO wa_inbound (id, phone, name, type, body, direction, delivery, received_at, reply_to_id, author)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, phone, name || null, type, body || null, direction, delivery, Date.now(), replyToId || null, author || null);
   return info.changes > 0;
 }
 
@@ -1928,7 +1930,7 @@ export function listWaChatMessages(phone, limit = 200) {
   return db.prepare(
     `SELECT m.id, m.phone, m.name, m.type, m.body, m.direction, m.delivery, m.read_at,
             m.received_at, m.media_mime, (m.media_path IS NOT NULL) AS has_media,
-            m.reply_to_id,
+            m.reply_to_id, m.author,
             (SELECT q.body FROM wa_inbound q WHERE q.id = m.reply_to_id) AS reply_to_body
      FROM wa_inbound m WHERE m.phone = ? ORDER BY m.received_at DESC, m.rowid DESC LIMIT ?`
   ).all(phone, limit).reverse();

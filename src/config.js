@@ -108,6 +108,14 @@ const ConfigSchema = z.object({
   ADMIN_TOKEN: z.string().default(''),
   ADMIN_USER: z.string().default(''),
   ADMIN_PASS: z.string().default(''),
+  // Nombre a mostrar del dueño como autor de sus mensajes en el panel de soporte.
+  ADMIN_AGENT_NAME: z.string().default('Dueño'),
+  // Usuario OPERARIO del panel de soporte: login propio + token propio (para saber
+  // quién escribe cada mensaje y NO mandarle el push de venta). Los valores reales
+  // van SOLO en el .env del VM (este repo es público).
+  OPERATOR_USER: z.string().default(''),
+  OPERATOR_PASS: z.string().default(''),
+  OPERATOR_TOKEN: z.string().default(''),
 
   // ---- Correo redirigido (Cloudflare Email Worker → webhook) ----
   // Secreto compartido con el Worker para autenticar el POST a /webhook/email.
@@ -233,6 +241,7 @@ parsed.hasMetaCapi = Boolean(parsed.META_CAPI_TOKEN);
 // del QR (este último tiene default). Sin alias, el match jamás correría → apagado.
 parsed.hasOwnBreb = Boolean(parsed.SONO_PAGOS_ALIAS && parsed.SONO_BREB_EMVCO);
 parsed.hasAdminLogin = Boolean(parsed.ADMIN_USER && parsed.ADMIN_PASS && parsed.ADMIN_TOKEN);
+parsed.hasOperator = Boolean(parsed.OPERATOR_USER && parsed.OPERATOR_PASS && parsed.OPERATOR_TOKEN);
 parsed.hasInstagram = Boolean(parsed.IG_ACCESS_TOKEN && parsed.IG_USER_ID);
 parsed.hasSkydropx = Boolean(parsed.SKYDROPX_CLIENT_ID && parsed.SKYDROPX_CLIENT_SECRET);
 // Evolution API configurada → el WhatsApp sale desde la VM (wa-sender) y el

@@ -29,15 +29,17 @@ export function pushEnabled() {
 }
 
 /**
- * Manda una notificación push a TODOS los dispositivos admin suscritos.
+ * Manda una notificación push a los dispositivos admin suscritos.
  * payload: { title, body, url, tag }
+ * opts.ownerOnly: excluye al operario (para el push de venta, que es solo del dueño).
  */
-export async function notifyAdmins(payload) {
+export async function notifyAdmins(payload, opts = {}) {
   if (!ensure()) {
     logger.warn('web push sin VAPID configurado; no se envía notificación');
     return { sent: 0 };
   }
-  const subs = listPushSubs();
+  let subs = listPushSubs();
+  if (opts.ownerOnly) subs = subs.filter((s) => (s.role || 'owner') !== 'operator');
   if (!subs.length) return { sent: 0 };
 
   const data = JSON.stringify({

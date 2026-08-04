@@ -24,6 +24,7 @@
 // en esa conversación hasta que vuelva a mode=bot.
 
 import { config } from '../config.js';
+import { agentFromAuth } from '../admin-auth.js';
 import { logger } from '../logger.js';
 import { askGemini, ESCALATION_MESSAGE } from './gemini.js';
 import { suggestAgentReply } from './agent-suggest.js';
@@ -155,9 +156,9 @@ function tooFast(convId) {
 export function registerSupportRoutes(app) {
   const requireAdmin = (req, reply) => {
     if (!config.ADMIN_TOKEN) { reply.code(503).send({ error: 'admin disabled' }); return false; }
-    if ((req.headers.authorization || '') !== `Bearer ${config.ADMIN_TOKEN}`) {
-      reply.code(401).send({ error: 'unauthorized' }); return false;
-    }
+    const agent = agentFromAuth(req.headers.authorization); // dueño u operario
+    if (!agent) { reply.code(401).send({ error: 'unauthorized' }); return false; }
+    req.agent = agent;
     return true;
   };
 
@@ -598,6 +599,7 @@ export function registerSupportRoutes(app) {
           media_url: m.has_media ? `/soporte/admin/wa-media/${encodeURIComponent(m.id)}` : null,
           // Quote de WhatsApp: texto del mensaje al que este respondió (si aplica).
           reply_to: m.reply_to_body || null,
+          author: m.author || null, // quién del equipo lo escribió
         })),
       };
     }
@@ -689,9 +691,9 @@ export function registerSupportRoutes(app) {
       try {
         const wamid = await sendCloudText(phone, text);
         const id = wamid || `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        insertWaInbound({ id, phone, name: null, type: 'text', body: text, direction: 'out' });
-        logger.info({ phone }, 'soporte: respuesta WhatsApp enviada');
-        return { ok: true, message: { id, role: 'human', text, ts: Date.now() } };
+        insertWaInbound({ id, phone, name: null, type: 'text', body: text, direction: 'out', author: req.agent?.name });
+        logger.info({ phone, by: req.agent?.name }, 'soporte: respuesta WhatsApp enviada');
+        return { ok: true, message: { id, role: 'human', text, ts: Date.now(), author: req.agent?.name } };
       } catch (e) {
         const ventana = e.message.startsWith('VENTANA_CERRADA');
         logger.warn({ phone, err: e.message }, 'soporte: respuesta WhatsApp falló');
@@ -705,9 +707,9 @@ export function registerSupportRoutes(app) {
     const conv = getConversation(req.params.id);
     if (!conv) return reply.code(404).send({ error: 'no encontrada' });
     touchConversation(conv.id, { mode: 'human', status: 'human' });
-    const msg = addMessage(conv.id, 'human', text);
+    const msg = addMessage(conv.id, 'human', text, { author: req.agent?.name });
     clearUnreadAdmin(conv.id);
-    logger.info({ convId: conv.id }, 'soporte: respuesta humana enviada');
+    logger.info({ convId: conv.id, by: req.agent?.name }, 'soporte: respuesta humana enviada');
     return { ok: true, message: msg };
   });
 
@@ -737,7 +739,7 @@ export function registerSupportRoutes(app) {
     try {
       const { wamid, path: mediaPath, mime: outMime } = await sendCloudImage(phone, buf, mime, caption);
       const id = wamid || `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      insertWaInbound({ id, phone, name: null, type: 'image', body: caption || '[image]', direction: 'out' });
+      insertWaInbound({ id, phone, name: null, type: 'image', body: caption || '[image]', direction: 'out', author: req.agent?.name });
       setWaInboundMedia(id, mediaPath, outMime);
       logger.info({ phone }, 'soporte: imagen WhatsApp enviada');
       return { ok: true, id };
@@ -826,8 +828,9 @@ export function registerSupportRoutes(app) {
     if (!endpoint || !keys?.p256dh || !keys?.auth) {
       return reply.code(400).send({ error: 'suscripción inválida' });
     }
-    savePushSub({ endpoint, p256dh: keys.p256dh, auth: keys.auth, label });
-    logger.info({ label }, 'push sub admin registrada');
+    // El rol (owner|operator) viene del token: al operario NO se le manda la venta.
+    savePushSub({ endpoint, p256dh: keys.p256dh, auth: keys.auth, label, role: req.agent?.role || 'owner' });
+    logger.info({ label, role: req.agent?.role }, 'push sub admin registrada');
     return { ok: true };
   });
 

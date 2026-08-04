@@ -32,6 +32,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { config } from './config.js';
+import { agentFromAuth } from './admin-auth.js';
 import { logger } from './logger.js';
 import { buildAuthUrl, exchangeCodeForTokens } from './oauth.js';
 import {
@@ -211,9 +212,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
 
   const requireAdmin = (req, reply) => {
     if (!config.ADMIN_TOKEN) { reply.code(503).send({ error: 'admin disabled' }); return false; }
-    if ((req.headers.authorization || '') !== `Bearer ${config.ADMIN_TOKEN}`) {
-      reply.code(401).send({ error: 'unauthorized' }); return false;
-    }
+    const agent = agentFromAuth(req.headers.authorization); // dueño u operario
+    if (!agent) { reply.code(401).send({ error: 'unauthorized' }); return false; }
+    req.agent = agent;
     return true;
   };
 
@@ -403,10 +404,14 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     if (!config.hasAdminLogin) return reply.code(503).send({ error: 'admin login no configurado' });
     const { user, pass } = req.body || {};
     if (!user || !pass) return reply.code(400).send({ error: 'faltan usuario o contraseña' });
-    if (!safeEq(user, config.ADMIN_USER) || !safeEq(pass, config.ADMIN_PASS)) {
-      return reply.code(401).send({ error: 'usuario o contraseña incorrectos' });
+    // Dueño (ADMIN_*) u operario (OPERATOR_*): cada uno con su token para identificarlo.
+    if (safeEq(user, config.ADMIN_USER) && safeEq(pass, config.ADMIN_PASS)) {
+      return { token: config.ADMIN_TOKEN, agent: { name: config.ADMIN_AGENT_NAME || 'Dueño', role: 'owner' } };
     }
-    return { token: config.ADMIN_TOKEN };
+    if (config.hasOperator && safeEq(user, config.OPERATOR_USER) && safeEq(pass, config.OPERATOR_PASS)) {
+      return { token: config.OPERATOR_TOKEN, agent: { name: config.OPERATOR_USER, role: 'operator' } };
+    }
+    return reply.code(401).send({ error: 'usuario o contraseña incorrectos' });
   });
 
   // Raíz: respuesta amable (api.sono.lat es la API, no una página). Evita que el 404
