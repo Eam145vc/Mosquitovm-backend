@@ -422,6 +422,30 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
   app.get('/healthz', async () => ({ ok: true, time: new Date().toISOString() }));
 
   // -------------------------------------------------------------------------
+  // Factura electrónica: descarga pública por orden (el link viaja en el correo
+  // del cliente; el id de orden es impredecible, mismo criterio que /activar).
+  // -------------------------------------------------------------------------
+  app.get('/factura/:order/pdf', async (req, reply) => {
+    const o = getOrder(String(req.params.order));
+    if (!o || !o.invoice_number) return reply.code(404).send({ error: 'factura no encontrada' });
+    const { facturaPdf } = await import('./factura-pdf.js');
+    const pdf = await facturaPdf(o.invoice_number);
+    if (!pdf) return reply.code(404).send({ error: 'factura no encontrada' });
+    reply.header('Content-Disposition', `inline; filename="factura-${o.invoice_number}.pdf"`);
+    return reply.type('application/pdf').send(pdf);
+  });
+
+  app.get('/factura/:order/xml', async (req, reply) => {
+    const o = getOrder(String(req.params.order));
+    if (!o || !o.invoice_number) return reply.code(404).send({ error: 'factura no encontrada' });
+    const { FACTURAS_DIR } = await import('./facturacion.js');
+    const p = path.join(FACTURAS_DIR, `${o.invoice_number}.xml`);
+    if (!fs.existsSync(p)) return reply.code(404).send({ error: 'factura no encontrada' });
+    reply.header('Content-Disposition', `attachment; filename="${o.invoice_number}.xml"`);
+    return reply.type('application/xml').send(fs.readFileSync(p));
+  });
+
+  // -------------------------------------------------------------------------
   // Checkout MercadoPago
   // -------------------------------------------------------------------------
 
@@ -492,7 +516,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     if (!config.hasEfipay && !config.hasStripe && !config.hasMp) {
       return reply.code(503).send({ error: 'checkout no configurado' });
     }
-    const { business_name, bank, address, city, phone, email, plan, delivery, city_dane, force, reuse_order } = req.body || {};
+    const { business_name, bank, address, city, phone, email, plan, delivery, city_dane, force, reuse_order,
+      invoice_doc_type, invoice_doc_number, invoice_name } = req.body || {};
     if (!business_name || !address || !phone) {
       return reply.code(400).send({ error: 'faltan nombre, direccion o telefono' });
     }
@@ -556,6 +581,11 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       // En cuotas guardamos el total de cuotas desde ya (la 1ª se cobra en este checkout).
       installments_total: planNorm === 'cuotas' ? 3 : 1,
       installments_paid: 0,
+      // Factura electrónica nominativa (opcional). Solo dígitos en el documento;
+      // sin estos campos la venta se factura a consumidor final.
+      invoice_doc_type: invoice_doc_type === 'NIT' ? 'NIT' : (invoice_doc_type === 'CC' ? 'CC' : null),
+      invoice_doc_number: /^\d{6,10}$/.test(String(invoice_doc_number || '')) ? String(invoice_doc_number) : null,
+      invoice_name: invoice_name ? String(invoice_name).slice(0, 120) : null,
     });
     // CONTRAENTREGA: no se cobra online. La orden queda pendiente de confirmación
     // manual (el dueño valida por WhatsApp antes de despachar). Devolvemos la bandera

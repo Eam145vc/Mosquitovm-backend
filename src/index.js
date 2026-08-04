@@ -372,6 +372,17 @@ async function main() {
   reconcileEfipayJob();                              // corre una vez al arrancar (recupera lo pendiente)
   setInterval(reconcileEfipayJob, 5 * 60 * 1000);   // y cada 5 minutos
 
+  // ── Facturación electrónica DIAN: factura las ventas pagadas sin factura.
+  // Kill-switch FACTURACION_ENABLED=1 + cert en el VM. Import dinámico: si dian-kit
+  // no está instalado o el cert falta, el resto del backend arranca normal.
+  if (config.FACTURACION_ENABLED === '1') {
+    const facturacionJob = () => import('./facturacion.js')
+      .then((m) => m.runFacturacionJob())
+      .catch((e) => logger.error({ err: e.message }, 'facturación job error'));
+    setTimeout(facturacionJob, 30_000);              // arranque suave tras el boot
+    setInterval(facturacionJob, 5 * 60 * 1000);
+  }
+
   // ── Meta CAPI: Purchase servidor→Meta (ventas que el píxel del navegador no ve:
   // pestaña cerrada tras pagar, QR subido por el admin). Dedupe por event_id=orderId.
   if (config.hasMetaCapi) {

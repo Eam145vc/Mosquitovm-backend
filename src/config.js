@@ -135,6 +135,28 @@ const ConfigSchema = z.object({
   // API de ForwardEmail: crea un alias por cliente (recipients = correo + webhook).
   FE_API_TOKEN: z.string().default(''),
 
+  // ---- Facturación electrónica DIAN (software propio, dian-kit) ----
+  // Kill-switch: '1' = el job factura las ventas pagadas automáticamente.
+  FACTURACION_ENABLED: z.string().default(''),
+  // Epoch ms desde el cual se facturan las órdenes (las anteriores se ignoran).
+  FACTURACION_DESDE: z.string().default('1785819600000'), // 4-ago-2026 00:00 Bogotá
+  // Certificado .p12 de la CA (Camerfirma) en el VM + su contraseña.
+  DIAN_CERT_PATH: z.string().default(''),
+  DIAN_CERT_PASSWORD: z.string().default(''),
+  // Ambiente DIAN: '1' producción, '2' habilitación.
+  DIAN_AMBIENTE: z.string().default('1'),
+  // Software propio registrado en el catálogo FE.
+  DIAN_SOFTWARE_ID: z.string().default('03aac744-e29c-4fb1-a8dc-61aa9065b56e'),
+  DIAN_SOFTWARE_PIN: z.string().default(''),
+  // Resolución de numeración (formato 1876 de MUISCA) + clave técnica del rango.
+  DIAN_NUM_RESOLUCION: z.string().default('18764113503344'),
+  DIAN_NUM_PREFIJO: z.string().default('SONO'),
+  DIAN_NUM_DESDE: z.string().default('1'),
+  DIAN_NUM_HASTA: z.string().default('500000'),
+  DIAN_CLAVE_TECNICA: z.string().default(''),
+  // Base pública del API (los links de descarga de la factura en el correo).
+  PUBLIC_API_BASE: z.string().default('https://api.sono.lat'),
+
   // ---- Instagram (publicar desde el admin con la Graph API) ----
   // Page Access Token PERMANENTE (token de la página vinculada a la cuenta IG Business).
   // El IG_USER_ID es el instagram_business_account.id de la página.

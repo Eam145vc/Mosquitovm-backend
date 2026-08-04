@@ -261,6 +261,17 @@ export function openDb() {
     // Epoch ms de cuándo se reportó el Purchase de esta orden a la Meta CAPI
     // (NULL = sin reportar). Lo marca el job de meta-capi.js; idempotencia del envío.
     ['meta_capi_at', 'INTEGER'],
+    // ── Facturación electrónica DIAN ──
+    // Datos del adquirente si el cliente pidió factura a su nombre en el checkout
+    // (NULL = consumidor final). invoice_doc_type: 'CC' | 'NIT'.
+    ['invoice_doc_type', 'TEXT'],
+    ['invoice_doc_number', 'TEXT'],
+    ['invoice_name', 'TEXT'],
+    // Resultado de la factura emitida: número (SONO123), CUFE y epoch ms de emisión.
+    // invoice_number NULL = venta aún sin facturar (el job de facturación la toma).
+    ['invoice_number', 'TEXT'],
+    ['invoice_cufe', 'TEXT'],
+    ['invoice_at', 'INTEGER'],
   ]);
   // Cloud API oficial: wamid = id del mensaje en Meta (mapea los statuses del webhook
   // a la fila) y delivery = último estado real reportado (sent/delivered/read/failed).
@@ -877,6 +888,16 @@ export function findDuplicateOrder(phone, email) {
 }
 
 /** Actualiza campos de una orden. `patch` es un objeto { campo: valor }. */
+// Consecutivo de factura electrónica (rango DIAN SONO 1–500000). Fila única con el
+// próximo número; el UPDATE con RETURNING es atómico (no se repite ni con jobs cruzados).
+export function nextInvoiceNumber() {
+  openDb();
+  db.exec(`CREATE TABLE IF NOT EXISTS invoice_seq (id INTEGER PRIMARY KEY CHECK (id = 1), next INTEGER NOT NULL)`);
+  db.prepare(`INSERT OR IGNORE INTO invoice_seq (id, next) VALUES (1, 1)`).run();
+  const row = db.prepare(`UPDATE invoice_seq SET next = next + 1 WHERE id = 1 RETURNING next - 1 AS n`).get();
+  return row.n;
+}
+
 export function updateOrder(id, patch) {
   openDb();
   const allowed = new Set([
@@ -898,6 +919,9 @@ export function updateOrder(id, patch) {
     'archived_at', 'prev_status',
     // al reusar una orden pendiente desde el checkout (cliente cambió de plan)
     'amount_cents',
+    // facturación electrónica DIAN
+    'invoice_doc_type', 'invoice_doc_number', 'invoice_name',
+    'invoice_number', 'invoice_cufe', 'invoice_at',
   ]);
   const keys = Object.keys(patch).filter(k => allowed.has(k));
   if (keys.length === 0) return false;
