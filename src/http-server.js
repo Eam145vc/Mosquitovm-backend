@@ -1907,7 +1907,13 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
   app.get('/admin/orders', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
     const onlyArchived = req.query.archived === '1' || req.query.archived === 'true';
-    const byOrder = new Map(listDevices().filter(d => d.order_id).map(d => [d.order_id, d.spkr_id]));
+    const devsByOrder = new Map();
+    for (const d of listDevices()) {
+      if (!d.order_id) continue;
+      const arr = devsByOrder.get(d.order_id) || [];
+      arr.push(d);
+      devsByOrder.set(d.order_id, arr);
+    }
     return listOrders()
       .filter(o => onlyArchived ? Boolean(o.archived_at) : !o.archived_at)
       .map(o => ({
@@ -1917,7 +1923,12 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
         next_charge_at: o.next_charge_at, mp_payer_email: o.mp_payer_email,
         amount_cents: o.amount_cents, breb_key: o.breb_key, customer_email: o.customer_email,
         archived_at: o.archived_at || null,
-        speaker_id: byOrder.get(o.id) || null,
+        speaker_id: (devsByOrder.get(o.id) || [])[0]?.spkr_id || null,
+        // Llaves Bre-B buscables: la de la orden + las de sus devices (al asignar el
+        // speaker la llave se transfiere al device y la orden puede quedar sin ella).
+        breb_keys: [...new Set(
+          [o.breb_key, ...(devsByOrder.get(o.id) || []).map(d => d.breb_key)].filter(Boolean)
+        )],
       }));
   });
 
