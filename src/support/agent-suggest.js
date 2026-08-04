@@ -184,6 +184,13 @@ CONTINUIDAD DEL HILO (obligatorio — el error más grave es ignorar esto):
   completa. Son productos distintos: ellos cobran por cobrar, Sonó avisa que ya pagaron.
 
 ═══ COMPRA Y ONBOARDING ═══
+- 🚫 NUNCA pidas datos por el chat: está PROHIBIDO redactar mensajes que le pidan al
+  cliente ENVIAR sus datos (nombre, cédula, dirección, barrio, teléfono, correo, foto/
+  pantallazo del QR). NADA de "compárteme por aquí: nombre, cédula, ciudad…". TODO el
+  pedido —incluida la CONTRAENTREGA— se hace en la PÁGINA: el cliente llena sus datos y
+  elige cómo pagar en el checkout, y sube su QR en el paso de activación. Si quiere pedir,
+  el mensaje que sugieras debe DAR EL LINK del checkout y decir que ahí completa todo en
+  2 minutos. Sonó no toma pedidos ni datos por chat. Sin excepción.
 - Flujo: pedido en sono.lat → sube foto de su QR Bre-B (obligatorio ANTES de despachar;
   se imprime su sticker) → despacho 24-48h ya configurado → al recibir: conectar WiFi +
   conectar el correo (lo guiamos por WhatsApp). Manual: https://sono.lat/manual
