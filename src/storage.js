@@ -1221,6 +1221,15 @@ export function paymentsAggregate(accountId, fromMs, toMs) {
   ).get(accountId, fromMs, toMs);
 }
 
+/** Agregado GLOBAL (todas las cuentas) desde fromMs. Para el HUD de Operación. */
+export function paymentsTotalsSince(fromMs) {
+  openDb();
+  return db.prepare(
+    `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n
+     FROM payments WHERE at >= ? AND amount > 0`
+  ).get(fromMs);
+}
+
 /** Histograma por hora Bogotá (0-23) desde fromMs. 18000000 = 5h en ms. */
 export function bestHours(accountId, fromMs, limit = 24) {
   openDb();

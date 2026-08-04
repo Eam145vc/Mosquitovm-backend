@@ -5,9 +5,22 @@
 import mqtt from 'mqtt';
 import { config } from './config.js';
 import { logger } from './logger.js';
+import { opsEmit } from './ops-feed.js';
 
 let client = null;
 let onStatus = null; // callback(spkrId, info) para auto-provisioning
+
+// Estado del broker para el HUD de Operación. Se emite solo el CAMBIO (connect
+// dispara en cada reconexión y offline puede repetirse; sin dedupe sería ruido).
+let lastBrokerState = null;
+function emitBrokerState(state) {
+  if (state === lastBrokerState) return;
+  lastBrokerState = state;
+  opsEmit('broker', { state });
+}
+
+/** ¿El cliente MQTT está conectado al broker ahora? (para el snapshot del HUD) */
+export function isMqttConnected() { return Boolean(client && client.connected); }
 
 /** Registra el handler que recibe la telemetría de los speakers (speakers/+/status). */
 export function onSpeakerStatus(cb) { onStatus = cb; }
@@ -28,6 +41,7 @@ export function connect() {
 
   client.on('connect', () => {
     logger.info('mqtt connected');
+    emitBrokerState('online');
     // Escuchar la telemetría de TODOS los speakers para auto-provisioning + online.
     client.subscribe(STATUS_TOPIC, { qos: 0 }, (err) => {
       if (err) logger.error({ err: err.message }, 'mqtt subscribe status failed');
@@ -35,7 +49,7 @@ export function connect() {
     });
   });
   client.on('error', (err) => logger.error({ err: err.message }, 'mqtt error'));
-  client.on('offline', () => logger.warn('mqtt offline'));
+  client.on('offline', () => { logger.warn('mqtt offline'); emitBrokerState('offline'); });
   client.on('reconnect', () => logger.info('mqtt reconnecting'));
 
   client.on('message', (topic, buf) => {

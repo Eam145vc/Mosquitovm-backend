@@ -33,8 +33,16 @@ import { runWaReminderJob } from './wa-reminders.js';
 import { startWaSender } from './wa-sender.js';
 import { startWaCloudSender } from './wa-cloud.js';
 import * as announceLog from './announce-log.js';
+import { opsEmit } from './ops-feed.js';
 
 const watchers = new Map();   // id -> ImapWatcher (modo IMAP)
+
+// Nombre del negocio para el HUD de Operación (accountId → business_name de su orden).
+function bizName(accountId) {
+  if (!accountId) return null;
+  try { return listOrders().find((o) => o.account_id === accountId)?.business_name || null; }
+  catch { return null; }
+}
 
 async function announcePayment(payment) {
   // MODO ECO: un pago puede sonar en VARIOS speakers (misma llave en 2+ bocinas).
@@ -90,6 +98,10 @@ async function announcePayment(payment) {
     const acc = getAccount(payment.accountId);
     if (acc && acc.sub_status === 'suspendida') {
       logger.info({ accountId: payment.accountId }, 'cuenta suspendida: pago registrado, NO anunciado');
+      opsEmit('payment', {
+        amount: payment.amount, bank: payment.bank, accountId: payment.accountId,
+        name: bizName(payment.accountId), localName, speakerIds, announced: false,
+      });
       return;
     }
   }
@@ -112,12 +124,21 @@ async function announcePayment(payment) {
       await publishVoice(playAudibleMsg, { amount: payment.amount, speakerId: payment.speakerId });
     }
     // Cierra la medición de latencia del pipeline (solo si vino del webhook FE).
+    let latLine = null;
     if (payment._lat) {
-      markVoicePublished(payment._lat, {
+      latLine = markVoicePublished(payment._lat, {
         accountId: payment.accountId, amount: payment.amount, bank: payment.bank, source: 'fe-webhook',
         brebKey: payment.brebKey || null, alias: payment.alias || null, account: payment.account || null,
       });
     }
+    // HUD de Operación: el pago viajó completo (banco → correo → Sonó → voz).
+    opsEmit('payment', {
+      amount: payment.amount, bank: payment.bank, accountId: payment.accountId,
+      name: bizName(payment.accountId), localName, speakerIds, announced: speakerIds.length > 0,
+      bankToBackendMs: latLine?.bankToBackendMs ?? null,
+      backendToVoiceMs: latLine?.backendToVoiceMs ?? null,
+      precise: latLine?.precise ?? false,
+    });
     // ¿Algún speaker estaba apagado? El voice fue qos 0 (no queda encolado), así
     // que se guarda como pendiente POR SPEAKER y sonará UNA vez cuando responda
     // un getinfo (en eco, cada bocina apagada recibe su propio pendiente).
@@ -220,6 +241,11 @@ async function main() {
     } catch (e) {
       logger.warn({ err: e.message, spkrId }, 'auto-provisioning fallo');
     }
+    // HUD de Operación: el speaker reportó telemetría (está vivo AHORA).
+    opsEmit('status', {
+      spkrId, signal: info.signal ?? null, battery: info.battery ?? null,
+      model: info.model || null, firmware: info.firmware || null,
+    });
     // Si respondió es que está online: entregarle el último pago que se perdió
     // por estar apagado (solo el último; takePending borra antes de publicar,
     // así que varios status seguidos no lo repiten).

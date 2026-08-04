@@ -61,7 +61,7 @@ import {
   createPaymentIntent, getPaymentIntent, matchPaymentIntent, claimPooledAmount, getActiveIntentByOrder,
   getCuotasEnabled, setCuotasEnabled, setPoolQr, getPoolQr, listPoolQrs,
   createExpectedPayment, activeExpectedPayments, getExpectedByOrder, consumeExpectedPayment, cancelExpectedPayment,
-  speakersForBank,
+  speakersForBank, paymentsTotalsSince,
 } from './storage.js';
 import { bogotaDayStart, bogotaDayStartFromKey, bogotaMonthStart, bogotaPrevMonthStart, DAY_MS } from './libreta-time.js';
 import { getShipment, extractLabel, fetchLabelPdf } from './skydropx.js';
@@ -90,7 +90,8 @@ import {
   CUOTA_POOL_SIZE, CUOTA_INTENT_TTL_MS, CUOTA_MATCH_GRACE_MS,
   runCuotaSuspensions, reactivateIfSuspended, enviarRecordatorioCuota,
 } from './installments-scheduler.js';
-import { publishVoice, publishCommand } from './mqtt-publisher.js';
+import { publishVoice, publishCommand, isMqttConnected } from './mqtt-publisher.js';
+import { opsSubscribe, opsRecent } from './ops-feed.js';
 import { buildVoiceMessage } from './amount-to-wavs.js';
 import { startLatency, markVoicePublished } from './latency.js';
 import { getStats as getLatencyStats } from './latency-store.js';
@@ -2474,6 +2475,78 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     const all = req.query.all === '1' || req.query.all === 'true';
     // `incidentes`: estado del detector de demoras por banco (auto-aviso audio 120).
     return { ...getLatencyStats(resolveName, { from, to, all }), incidentes: bankStatusSnapshot() };
+  });
+
+  // ── Operación: HUD en vivo del sistema ─────────────────────────────────────
+  // Snapshot para pintar el tablero al abrir: flota con online/offline, estado
+  // del broker, pagos de hoy y latencia promedio de hoy. Lo vivo va por el SSE.
+  app.get('/admin/ops', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const now = Date.now();
+    // Umbral online igual al de La Libreta: ping getinfo cada 5 min → 12 min
+    // = 2 pings perdidos + margen. (Los speakers solo hablan si se les pregunta.)
+    const ONLINE_MS = 12 * 60 * 1000;
+    const battPct = (v) => {
+      if (v == null) return null;
+      if (v <= 100) return v;
+      return Math.max(0, Math.min(100, Math.round(((v - 3400) / (4150 - 3400)) * 100)));
+    };
+    const byOrder = new Map(listOrders().map((o) => [o.id, o]));
+    const devices = listDevices().map((d) => {
+      const o = d.order_id ? byOrder.get(d.order_id) : null;
+      return {
+        spkr_id: d.spkr_id,
+        model: d.model || null,
+        local_name: d.local_name || null,
+        assigned_to: o ? (o.business_name || o.customer_email || 'Sin nombre') : null,
+        assigned_city: o?.city || null,
+        signal: d.signal ?? null,
+        battery: battPct(d.battery),
+        firmware: d.firmware || null,
+        last_seen: d.last_seen ?? null,
+        online: d.last_seen != null && now - d.last_seen < ONLINE_MS,
+      };
+    });
+    const dayStart = bogotaDayStart(now);
+    return {
+      now,
+      brokerConnected: isMqttConnected(),
+      devices,
+      today: paymentsTotalsSince(dayStart),                       // { n, total }
+      latency: getLatencyStats(null, { from: dayStart }).global,  // promedios de hoy
+      events: opsRecent(),
+    };
+  });
+
+  // Stream SSE del bus de Operación: cada evento (pago, telemetría de speaker,
+  // broker arriba/abajo) sale como JSON. EventSource NO permite headers → el
+  // token va en ?auth= (el mismo Bearer del admin). Al reconectar, el navegador
+  // manda Last-Event-ID y se le reponen los eventos perdidos del ring buffer.
+  app.get('/admin/ops/stream', (req, reply) => {
+    if (!config.ADMIN_TOKEN) return reply.code(503).send({ error: 'admin disabled' });
+    if (!agentFromAuth(`Bearer ${req.query.auth || ''}`)) {
+      return reply.code(401).send({ error: 'unauthorized' });
+    }
+    reply.hijack();
+    const origin = req.headers.origin;
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no', // que ningún proxy bufferee el stream
+      ...(origin ? { 'Access-Control-Allow-Origin': origin } : {}),
+    });
+    const send = (ev) => {
+      try { reply.raw.write(`id: ${ev.id}\ndata: ${JSON.stringify(ev)}\n\n`); }
+      catch { /* socket cerrándose: el close de abajo limpia */ }
+    };
+    reply.raw.write('retry: 3000\n\n');
+    for (const ev of opsRecent(Number(req.headers['last-event-id']) || 0)) send(ev);
+    const unsub = opsSubscribe(send);
+    const ping = setInterval(() => {
+      try { reply.raw.write(': ping\n\n'); } catch { /* idem */ }
+    }, 25_000);
+    req.raw.on('close', () => { clearInterval(ping); unsub(); });
   });
 
   // ── Buzón (catch-all): correo que entra al MX a un alias DESCONOCIDO ──
