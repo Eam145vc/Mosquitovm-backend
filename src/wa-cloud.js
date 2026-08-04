@@ -19,11 +19,11 @@ import { config } from './config.js';
 import { logger } from './logger.js';
 import {
   claimWaPending, markWaSent, getWaSettings, touchWaAgent, countWaSentSince,
-  getShipmentByOrder, getOrder, insertWaInbound,
+  getShipmentByOrder, getOrder, insertWaInbound, cancelWa,
 } from './storage.js';
 import { bogotaHour, startOfBogotaDay, withinActiveHours, randDelay, sleep } from './wa-shared.js';
 import { moneyCo, esCodPendiente, firstNameOf } from './wa-enqueue.js';
-import { fechaLimiteCuota, fechaLimiteTexto } from './installments-scheduler.js';
+import { fechaLimiteCuota, fechaLimiteTexto, installmentDue } from './installments-scheduler.js';
 import { WA_TEMPLATES } from './wa-templates.js';
 
 const TICK_MS = 20 * 1000;
@@ -346,6 +346,15 @@ async function tick() {
       try {
         const order = getOrder(m.order_id);
         if (!order) throw new Error('orden no existe');
+        // Recordatorio de cuota que se volvió MENTIRA en la cola: el cliente pagó
+        // (o quedó pausado/suspendido) entre el encolado y este envío. Se cancela
+        // acá, a milímetros del envío real (3-ago: Ricardo pagó 10:49 p.m. y a las
+        // 12:04 a.m. le llegó un "sigue pendiente" encolado a las 10:30).
+        if ((m.kind === 'cuota_2' || m.kind === 'cuota_3') && !installmentDue(order)) {
+          cancelWa(m.id);
+          logger.info({ phone: m.phone, kind: m.kind, orderId: order.id }, 'wa-cloud: recordatorio de cuota obsoleto (ya no debe) — cancelado');
+          continue;
+        }
         const shipment = KINDS_CON_SHIPMENT.has(m.kind) ? getShipmentByOrder(m.order_id) : null;
         const template = buildWaCloudPayload(order, m.kind, shipment);
         if (!template) throw new Error(`kind sin plantilla: ${m.kind}`);
