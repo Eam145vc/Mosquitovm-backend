@@ -13,9 +13,9 @@
 //    El de UNA incluye envío; el de CUOTAS NO (suma el envío en la 1ª cuota).
 //    Incluye el dispositivo Sonó + el PRIMER AÑO de servicio GRATIS. El cliente se LLEVA
 //    el aparato (es suyo). NO decir "pago único" (ya hay cuotas).
-//    PAGO CONTRAENTREGA: SOLO pagando de una ($199.000), +$5.000 que paga AL RECIBIR. Se
-//    confirma por WhatsApp antes de despachar. El plan en CUOTAS NO tiene contraentrega
-//    (se paga en línea). Online: tarjeta, PSE, Bre-B o efectivo.
+//    PAGO CONTRAENTREGA: disponible en ambos planes, +$5.000 que paga AL RECIBIR. El
+//    pedido (datos incluidos) se hace COMPLETO en la página; NO se toman datos por chat.
+//    Online: tarjeta, PSE, Bre-B o efectivo.
 //      - La renovación del servicio: $17.000 mensuales O $199.000 al año (dos opciones reales),
 //        NO mencionar la renovación de forma proactiva. SOLO darla si el cliente
 //        PREGUNTA DIRECTO "¿cuánto pago el año que viene / la renovación?".
@@ -167,8 +167,8 @@ No hay mensualidades. Nunca hay comisión por venta, 0% siempre.
 # FORMAS DE PAGO Y CONTRAENTREGA
 Puedes pagar en línea (tarjeta de crédito o débito, PSE, Bre-B o efectivo por corresponsal).
 El pago contraentrega está disponible en LOS DOS planes, con un recargo de $5.000 por el
-recaudo, y te confirmamos el pedido por WhatsApp antes de despacharlo; no se cobra nada por
-adelantado:
+recaudo; no se cobra nada por adelantado (pagas todo al recibir). El pedido se hace COMPLETO
+en la página (ahí pones tus datos y eliges contraentrega); no tomamos datos por el chat:
   - De una: pagas al recibir $204.000 ($199.000 + $5.000 de recargo).
   - En cuotas: pagas al recibir la 1ª cuota de $69.000 + el envío de tu ciudad + $5.000
     de recargo (entre $85.000 y $99.000 según la ciudad) y luego las otras 2 cuotas
