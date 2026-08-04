@@ -302,7 +302,11 @@ export function enviarRecordatorioCuota(order, { now = Date.now() } = {}) {
     patch.installment_plazo_at = Math.max(d.venceAt, now + CUOTA_GRACIA_MS);
   }
   updateOrder(order.id, patch);
-  enqueueWhatsAppForce(order, d.n === 3 ? 'cuota_3' : 'cuota_2');
+  // Pasar la orden YA parchada: el body del CRM elige su texto por
+  // installment_reminder_count y con el objeto viejo iba una etapa atrás
+  // (el cliente recibía la plantilla correcta, pero el espejo del CRM
+  // mostraba "Ya puedes pagar" en vez de "Te recordamos" — visto 3-ago).
+  enqueueWhatsAppForce({ ...order, ...patch }, d.n === 3 ? 'cuota_3' : 'cuota_2');
   const plazoAt = order.installment_plazo_at || patch.installment_plazo_at;
   logger.info({ orderId: order.id, cuota: d.n, etapa, intento: count + 1 }, 'cuotas breb: recordatorio encolado');
   return { ok: true, etapa, cuota: d.n, intento: count + 1, plazoTexto: fechaLimiteTexto(plazoAt) };
