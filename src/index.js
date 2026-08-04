@@ -37,11 +37,14 @@ import { opsEmit } from './ops-feed.js';
 
 const watchers = new Map();   // id -> ImapWatcher (modo IMAP)
 
-// Nombre del negocio para el HUD de Operación (accountId → business_name de su orden).
-function bizName(accountId) {
-  if (!accountId) return null;
-  try { return listOrders().find((o) => o.account_id === accountId)?.business_name || null; }
-  catch { return null; }
+// Nombre del negocio y ciudad para el HUD de Operación (accountId → su orden).
+// La ciudad ilumina el punto en el mapa de Colombia del panel.
+function bizInfo(accountId) {
+  if (!accountId) return { name: null, city: null };
+  try {
+    const o = listOrders().find((x) => x.account_id === accountId);
+    return { name: o?.business_name || null, city: o?.city || null };
+  } catch { return { name: null, city: null }; }
 }
 
 async function announcePayment(payment) {
@@ -100,7 +103,7 @@ async function announcePayment(payment) {
       logger.info({ accountId: payment.accountId }, 'cuenta suspendida: pago registrado, NO anunciado');
       opsEmit('payment', {
         amount: payment.amount, bank: payment.bank, accountId: payment.accountId,
-        name: bizName(payment.accountId), localName, speakerIds, announced: false,
+        ...bizInfo(payment.accountId), localName, speakerIds, announced: false,
       });
       return;
     }
@@ -134,7 +137,7 @@ async function announcePayment(payment) {
     // HUD de Operación: el pago viajó completo (banco → correo → Sonó → voz).
     opsEmit('payment', {
       amount: payment.amount, bank: payment.bank, accountId: payment.accountId,
-      name: bizName(payment.accountId), localName, speakerIds, announced: speakerIds.length > 0,
+      ...bizInfo(payment.accountId), localName, speakerIds, announced: speakerIds.length > 0,
       bankToBackendMs: latLine?.bankToBackendMs ?? null,
       backendToVoiceMs: latLine?.backendToVoiceMs ?? null,
       precise: latLine?.precise ?? false,

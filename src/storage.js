@@ -898,6 +898,15 @@ export function nextInvoiceNumber() {
   return row.n;
 }
 
+// Devuelve el consecutivo si la DIAN rechazó la factura: el número nunca existió
+// fiscalmente y puede reusarse. Solo aplica si nadie tomó un número después (el
+// job factura en serie, así que en la práctica siempre aplica).
+export function rollbackInvoiceNumber(numero) {
+  openDb();
+  return db.prepare(`UPDATE invoice_seq SET next = @n WHERE id = 1 AND next = @n + 1`)
+    .run({ n: numero }).changes > 0;
+}
+
 export function updateOrder(id, patch) {
   openDb();
   const allowed = new Set([
@@ -1249,8 +1258,59 @@ export function paymentsAggregate(accountId, fromMs, toMs) {
 export function paymentsTotalsSince(fromMs) {
   openDb();
   return db.prepare(
-    `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n
+    `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n,
+            COUNT(DISTINCT account_id) AS clients
      FROM payments WHERE at >= ? AND amount > 0`
+  ).get(fromMs);
+}
+
+/** Agregado GLOBAL en [fromMs, toMs). Para el "ayer a esta misma hora" del HUD. */
+export function paymentsTotalsBetween(fromMs, toMs) {
+  openDb();
+  return db.prepare(
+    `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n
+     FROM payments WHERE at >= ? AND at < ? AND amount > 0`
+  ).get(fromMs, toMs);
+}
+
+/** Histograma GLOBAL por hora Bogotá (0-23) desde fromMs. 18000000 = 5h en ms. */
+export function paymentsByHourSince(fromMs) {
+  openDb();
+  return db.prepare(
+    `SELECT CAST(((at - 18000000) / 3600000) % 24 AS INTEGER) AS hour,
+            COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total
+     FROM payments WHERE at >= ? AND amount > 0
+     GROUP BY hour ORDER BY hour`
+  ).all(fromMs);
+}
+
+/** Agregado GLOBAL por banco desde fromMs (más recaudo primero). */
+export function paymentsByBankSince(fromMs) {
+  openDb();
+  return db.prepare(
+    `SELECT COALESCE(bank, 'unknown') AS bank, COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total
+     FROM payments WHERE at >= ? AND amount > 0
+     GROUP BY COALESCE(bank, 'unknown') ORDER BY total DESC`
+  ).all(fromMs);
+}
+
+/** Top cuentas por recaudo desde fromMs. Para el "top comercios" del HUD. */
+export function topAccountsSince(fromMs, limit = 5) {
+  openDb();
+  return db.prepare(
+    `SELECT account_id, COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total, MAX(amount) AS max
+     FROM payments WHERE at >= ? AND amount > 0 AND account_id IS NOT NULL
+     GROUP BY account_id ORDER BY total DESC LIMIT ?`
+  ).all(fromMs, limit);
+}
+
+/** El pago más grande desde fromMs, o undefined si no hubo. */
+export function biggestPaymentSince(fromMs) {
+  openDb();
+  return db.prepare(
+    `SELECT account_id, amount, bank, local_name, at
+     FROM payments WHERE at >= ? AND amount > 0
+     ORDER BY amount DESC, at DESC LIMIT 1`
   ).get(fromMs);
 }
 

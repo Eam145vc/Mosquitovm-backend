@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
 import { logger } from './logger.js';
-import { listOrders, updateOrder, nextInvoiceNumber, getOrder } from './storage.js';
+import { listOrders, updateOrder, nextInvoiceNumber, rollbackInvoiceNumber, getOrder } from './storage.js';
 import { cityByDane } from './co-dane.js';
 
 const FACTURAS_DIR = path.join(path.dirname(config.DB_PATH), 'facturas');
@@ -64,12 +64,12 @@ async function getKit() {
     certificatePassword: config.DIAN_CERT_PASSWORD,
     environment: config.DIAN_AMBIENTE,          // '1' producción | '2' habilitación
     supplier: {
-      name: 'Sono Tech S.A.S',
+      name: 'SONO TECH S.A.S',
       identification: { number: '902078586', type: '31', dv: '1' },
       personType: '1',
       fiscalResponsibilities: ['R-99-PN'],
       taxInfo: {
-        registrationName: 'Sono Tech S.A.S',
+        registrationName: 'SONO TECH S.A.S',
         companyId: { number: '902078586', type: '31', dv: '1' },
         taxLevelCode: 'R-99-PN',
         taxScheme: { code: '01' },
@@ -82,7 +82,7 @@ async function getKit() {
       id: config.DIAN_SOFTWARE_ID,
       pin: config.DIAN_SOFTWARE_PIN,
       providerNit: '902078586',
-      providerName: 'Sono Tech S.A.S',
+      providerName: 'SONO TECH S.A.S',
     },
     numbering: {
       authorizationNumber: config.DIAN_NUM_RESOLUCION,
@@ -216,7 +216,8 @@ export async function facturarOrden(orderId) {
   if (!resp.isValid) {
     const errs = (resp.errors || []).map((e) => e.description || e).join(' | ');
     logger.error({ orderId, id, errs, status: resp.statusDescription }, 'facturación: DIAN rechazó la factura');
-    return null;                                             // el consecutivo usado se pierde (aceptable, rango de 500k)
+    rollbackInvoiceNumber(numero);                           // rechazada = el número nunca existió, se reusa
+    return null;
   }
 
   const cufe = factura.uuid;

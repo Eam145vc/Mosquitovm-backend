@@ -61,7 +61,8 @@ import {
   createPaymentIntent, getPaymentIntent, matchPaymentIntent, claimPooledAmount, getActiveIntentByOrder,
   getCuotasEnabled, setCuotasEnabled, setPoolQr, getPoolQr, listPoolQrs,
   createExpectedPayment, activeExpectedPayments, getExpectedByOrder, consumeExpectedPayment, cancelExpectedPayment,
-  speakersForBank, paymentsTotalsSince,
+  speakersForBank, paymentsTotalsSince, paymentsTotalsBetween, paymentsByHourSince,
+  paymentsByBankSince, topAccountsSince, biggestPaymentSince,
 } from './storage.js';
 import { bogotaDayStart, bogotaDayStartFromKey, bogotaMonthStart, bogotaPrevMonthStart, DAY_MS } from './libreta-time.js';
 import { getShipment, extractLabel, fetchLabelPdf } from './skydropx.js';
@@ -2538,11 +2539,36 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       };
     });
     const dayStart = bogotaDayStart(now);
+    // Nombre del comercio para top/pago más grande (business_name de su orden, o el email).
+    const orders = [...byOrder.values()];
+    const resolveName = (accountId) => {
+      if (!accountId) return null;
+      const ord = orders.find((o) => o.account_id === accountId && o.business_name);
+      if (ord) return ord.business_name;
+      return getAccount(accountId)?.email || null;
+    };
+    // Histograma por hora: SQL solo trae horas con pagos → completar las 24.
+    const hourRows = new Map(paymentsByHourSince(dayStart).map((r) => [r.hour, r]));
+    const byHour = Array.from({ length: 24 }, (_, h) => ({
+      hour: h, n: hourRows.get(h)?.n || 0, total: hourRows.get(h)?.total || 0,
+    }));
+    const biggest = biggestPaymentSince(dayStart);
     return {
       now,
       brokerConnected: isMqttConnected(),
       devices,
-      today: paymentsTotalsSince(dayStart),                       // { n, total }
+      today: paymentsTotalsSince(dayStart),                       // { n, total, clients }
+      // Ayer HASTA ESTA MISMA HORA: comparable con lo que va de hoy, no el día entero.
+      yesterday: paymentsTotalsBetween(dayStart - DAY_MS, now - DAY_MS),
+      byHour,
+      byBank: paymentsByBankSince(dayStart),
+      topClients: topAccountsSince(dayStart, 5).map((t) => ({
+        accountId: t.account_id, name: resolveName(t.account_id), n: t.n, total: t.total, max: t.max,
+      })),
+      biggest: biggest ? {
+        amount: biggest.amount, bank: biggest.bank, at: biggest.at,
+        name: resolveName(biggest.account_id) || biggest.local_name || null,
+      } : null,
       latency: getLatencyStats(null, { from: dayStart }).global,  // promedios de hoy
       events: opsRecent(),
     };
