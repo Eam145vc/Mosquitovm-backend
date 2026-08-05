@@ -202,14 +202,16 @@ export async function downloadWaMedia(mediaId) {
   return { path: file, mime };
 }
 
-/** Sube una imagen a Meta y la envía a un chat. Guarda copia local para el hilo.
- *  Devuelve { wamid, path, mime }. Misma regla de ventana de 24h que el texto. */
-export async function sendCloudImage(phone, buffer, mime, caption = '') {
+/** Sube IMAGEN o VIDEO a Meta y lo envía a un chat. Guarda copia local para el hilo.
+ *  Devuelve { wamid, path, mime, kind }. Misma regla de ventana de 24h que el texto. */
+export async function sendCloudMedia(phone, buffer, mime, caption = '') {
   if (!config.hasWaCloud) throw new Error('Cloud API no configurada');
+  const kind = String(mime).startsWith('video/') ? 'video' : 'image';
+  const ext = EXT_BY_MIME[mime] || (kind === 'video' ? '.mp4' : '.jpg');
   const form = new FormData();
   form.append('messaging_product', 'whatsapp');
   form.append('type', mime);
-  form.append('file', new Blob([buffer], { type: mime }), `imagen${EXT_BY_MIME[mime] || '.jpg'}`);
+  form.append('file', new Blob([buffer], { type: mime }), `${kind}${ext}`);
   const up = await fetch(
     `https://graph.facebook.com/${config.WA_CLOUD_GRAPH_VERSION}/${config.WA_CLOUD_PHONE_NUMBER_ID}/media`,
     { method: 'POST', headers: { Authorization: `Bearer ${config.WA_CLOUD_ACCESS_TOKEN}` }, body: form },
@@ -220,16 +222,16 @@ export async function sendCloudImage(phone, buffer, mime, caption = '') {
     const data = await graph(`/${config.WA_CLOUD_PHONE_NUMBER_ID}/messages`, {
       method: 'POST',
       body: JSON.stringify({
-        messaging_product: 'whatsapp', to: phone, type: 'image',
-        image: { id: upData.id, ...(caption ? { caption } : {}) },
+        messaging_product: 'whatsapp', to: phone, type: kind,
+        [kind]: { id: upData.id, ...(caption ? { caption } : {}) },
       }),
     });
     const wamid = data?.messages?.[0]?.id || null;
     // Copia local para que el hilo del panel muestre lo enviado.
     mkdirSync(MEDIA_DIR, { recursive: true });
-    const file = join(MEDIA_DIR, `${wamid || `out-${Date.now()}`}${EXT_BY_MIME[mime] || '.jpg'}`);
+    const file = join(MEDIA_DIR, `${wamid || `out-${Date.now()}`}${ext}`);
     writeFileSync(file, buffer);
-    return { wamid, path: file, mime };
+    return { wamid, path: file, mime, kind };
   } catch (e) {
     if (/131047|re-engagement/i.test(e.message)) {
       throw new Error('VENTANA_CERRADA: han pasado más de 24h desde el último mensaje del cliente; solo puede iniciarse con plantilla');
@@ -237,6 +239,9 @@ export async function sendCloudImage(phone, buffer, mime, caption = '') {
     throw e;
   }
 }
+
+// Alias retro-compatible (antes solo imágenes).
+export const sendCloudImage = sendCloudMedia;
 
 /** Texto libre para el CRM /soporte-app. Solo funciona dentro de la ventana de
  *  servicio de 24h (desde el último mensaje DEL cliente); fuera de ella Meta

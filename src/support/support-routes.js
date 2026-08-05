@@ -41,7 +41,7 @@ import { listWaChats, listWaChatMessages, markWaChatRead, insertWaInbound, listO
   getAccount, getAccountByEmailCI, getAccountByAlias, findAccountByForward,
   listDevicesByAccount, getShipmentByOrder, paymentsFor } from '../storage.js';
 import { normalizePhoneCO } from '../wa-enqueue.js';
-import { sendCloudText, sendCloudImage } from '../wa-cloud.js';
+import { sendCloudText, sendCloudMedia } from '../wa-cloud.js';
 import { createReadStream, existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { setMessageMedia } from './support-store.js';
@@ -724,7 +724,7 @@ export function registerSupportRoutes(app) {
     return reply.send(createReadStream(m.media_path));
   });
 
-  // Enviar una IMAGEN a un chat de WhatsApp (multipart: file + caption opcional).
+  // Enviar IMAGEN o VIDEO a un chat de WhatsApp (multipart: file + caption opcional).
   app.post('/soporte/admin/conv/:id/media', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
     if (!isWaId(req.params.id)) return reply.code(400).send({ error: 'solo disponible en chats de WhatsApp' });
@@ -732,24 +732,27 @@ export function registerSupportRoutes(app) {
     const part = await req.file();
     if (!part) return reply.code(400).send({ error: 'falta el archivo' });
     const mime = part.mimetype || '';
-    if (!mime.startsWith('image/')) return reply.code(415).send({ error: 'solo imágenes por ahora' });
+    const esVideo = mime.startsWith('video/');
+    if (!mime.startsWith('image/') && !esVideo) return reply.code(415).send({ error: 'solo imágenes o videos' });
     const buf = await part.toBuffer();
-    if (buf.length > 5 * 1024 * 1024) return reply.code(413).send({ error: 'máximo 5MB (límite de WhatsApp)' });
+    // Límites de WhatsApp: imagen 5MB, video 16MB.
+    const maxMB = esVideo ? 16 : 5;
+    if (buf.length > maxMB * 1024 * 1024) return reply.code(413).send({ error: `máximo ${maxMB}MB (límite de WhatsApp para ${esVideo ? 'video' : 'imagen'})` });
     const caption = String(part.fields?.caption?.value || '').trim();
     try {
-      const { wamid, path: mediaPath, mime: outMime } = await sendCloudImage(phone, buf, mime, caption);
+      const { wamid, path: mediaPath, mime: outMime, kind } = await sendCloudMedia(phone, buf, mime, caption);
       const id = wamid || `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      insertWaInbound({ id, phone, name: null, type: 'image', body: caption || '[image]', direction: 'out', author: req.agent?.name });
+      insertWaInbound({ id, phone, name: null, type: kind, body: caption || `[${kind}]`, direction: 'out', author: req.agent?.name });
       setWaInboundMedia(id, mediaPath, outMime);
-      logger.info({ phone }, 'soporte: imagen WhatsApp enviada');
+      logger.info({ phone, kind }, 'soporte: media WhatsApp enviada');
       return { ok: true, id };
     } catch (e) {
       const ventana = e.message.startsWith('VENTANA_CERRADA');
-      logger.warn({ phone, err: e.message }, 'soporte: imagen WhatsApp falló');
+      logger.warn({ phone, err: e.message }, 'soporte: media WhatsApp falló');
       return reply.code(ventana ? 409 : 502).send({
         error: ventana
           ? 'Pasaron más de 24h desde el último mensaje del cliente: WhatsApp solo permite reabrir con una plantilla.'
-          : `No se pudo enviar la imagen: ${e.message}`,
+          : `No se pudo enviar: ${e.message}`,
       });
     }
   });
