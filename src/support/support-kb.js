@@ -179,11 +179,11 @@ en la página (ahí pones tus datos y eliges contraentrega); no tomamos datos po
 las otras 2 se cobran en los meses siguientes. Si pagó con tarjeta se cobran solas; con
 otro medio (PSE, etc.) le llega un enlace de pago. Si no paga una cuota, el servicio se
 suspende hasta ponerse al día.]
-[INTERNO — usar SOLO si el cliente pregunta DIRECTO por la renovación o "¿cuánto pago
-el próximo año?": el primer año va incluido; a partir del segundo año la renovación del
-servicio es $25.000 mensuales (mes a mes, sin permanencia) o $199.000 el año completo
-(de una o en 3 pagos de $75.000 — ahorras $101.000 frente al mensual), y solo
-renuevas si quieres seguir. ⚠️ Quien compró ANTES del 6-ago-2026 conserva su condición
+[INTERNO — usar SOLO si el cliente pregunta DIRECTO "¿cuánto pago el próximo año?"
+o por la "renovación": el primer año va incluido; después el servicio SIGUE (no digas
+"renovación", di "tu servicio sigue" — lenguaje de continuidad) por $25.000 mensuales
+(mes a mes, sin permanencia) o $199.000 el año completo (de una o en 3 pagos de
+$75.000 — ahorras $101.000 frente al mensual). Solo se cobra si decide seguir. ⚠️ Quien compró ANTES del 6-ago-2026 conserva su condición
 de siempre: renovación de $17.000 mensuales o $199.000 al año, a su elección. NO ofrecer
 este dato si no lo piden.]
 
