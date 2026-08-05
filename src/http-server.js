@@ -2230,6 +2230,25 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     return { ok: true };
   });
 
+  // Marca pagada A MANO una orden de checkout (pago Bre-B que llegó tarde y no
+  // matcheó, transferencia directa, efectivo…): mismos efectos que el matcher —
+  // pendiente_qr + notificación de venta + correo + WhatsApp de activación.
+  // Es el "Pagó por fuera" del checkout (4-ago: Yarlines, correo 2s tarde).
+  app.post('/admin/orders/:order/pagada', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const o = getOrder(req.params.order);
+    if (!o) return reply.code(404).send({ error: 'orden no encontrada' });
+    if (isPaid(o)) return reply.code(409).send({ error: 'la orden ya está pagada' });
+    updateOrder(o.id, { status: 'pendiente_qr', wompi_txn_id: `breb-manual-${Date.now()}` });
+    logger.info({ orderId: o.id, admin: true }, 'orden marcada PAGADA a mano (admin)');
+    notifySale(getOrder(o.id), 'Registro manual');
+    sendActivationEmail(getOrder(o.id)).catch(() => {});
+    try { enqueueWhatsApp(getOrder(o.id), 'activacion'); } catch (e) {
+      logger.error({ orderId: o.id, err: e.message }, 'wa: no se pudo encolar activación (pagada manual)');
+    }
+    return { ok: true, status: 'pendiente_qr' };
+  });
+
   app.post('/admin/orders/:order/device', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
     const o = getOrder(req.params.order);
