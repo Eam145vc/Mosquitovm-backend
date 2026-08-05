@@ -386,6 +386,15 @@ async function main() {
     setInterval(facturacionJob, 5 * 60 * 1000);
   }
 
+  // ── Paquete contable mensual al contador (día 1, reintentos hasta el 5) ──
+  if (config.CONTADOR_EMAIL) {
+    const contaMailJob = () => import('./contabilidad.js')
+      .then((m) => m.runContaMailJob())
+      .catch((e) => logger.error({ err: e.message }, 'conta mail job error'));
+    setTimeout(contaMailJob, 60_000);
+    setInterval(contaMailJob, 12 * 3600 * 1000);
+  }
+
   // ── Meta CAPI: Purchase servidor→Meta (ventas que el píxel del navegador no ve:
   // pestaña cerrada tras pagar, QR subido por el admin). Dedupe por event_id=orderId.
   if (config.hasMetaCapi) {

@@ -116,6 +116,14 @@ const ConfigSchema = z.object({
   OPERATOR_USER: z.string().default(''),
   OPERATOR_PASS: z.string().default(''),
   OPERATOR_TOKEN: z.string().default(''),
+  // Usuario CONTADOR: login propio de solo lectura contable. Su token SOLO pasa
+  // los endpoints /admin/conta/* (requireConta); el resto del admin le responde 401.
+  CONTADOR_USER: z.string().default(''),
+  CONTADOR_PASS: z.string().default(''),
+  CONTADOR_TOKEN: z.string().default(''),
+  // Correo del contador: si está, el día 1 de cada mes recibe el paquete contable
+  // del mes anterior (links de descarga firmados: Excel, CSV y ZIP de XML+PDF).
+  CONTADOR_EMAIL: z.string().default(''),
 
   // ---- Correo redirigido (Cloudflare Email Worker → webhook) ----
   // Secreto compartido con el Worker para autenticar el POST a /webhook/email.

@@ -14,5 +14,8 @@ export function agentFromAuth(authHeader) {
   if (config.OPERATOR_TOKEN && a === `Bearer ${config.OPERATOR_TOKEN}`) {
     return { name: config.OPERATOR_USER || 'Operario', role: 'operator' };
   }
+  if (config.CONTADOR_TOKEN && a === `Bearer ${config.CONTADOR_TOKEN}`) {
+    return { name: config.CONTADOR_USER || 'Contador', role: 'contador' };
+  }
   return null;
 }

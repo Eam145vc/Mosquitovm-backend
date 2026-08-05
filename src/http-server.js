@@ -33,6 +33,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { config } from './config.js';
 import { agentFromAuth } from './admin-auth.js';
+import { registerContaRoutes } from './contabilidad.js';
 import { logger } from './logger.js';
 import { buildAuthUrl, exchangeCodeForTokens } from './oauth.js';
 import {
@@ -215,10 +216,21 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
   const requireAdmin = (req, reply) => {
     if (!config.ADMIN_TOKEN) { reply.code(503).send({ error: 'admin disabled' }); return false; }
     const agent = agentFromAuth(req.headers.authorization); // dueño u operario
-    if (!agent) { reply.code(401).send({ error: 'unauthorized' }); return false; }
+    // El contador NO es admin: su token solo abre /admin/conta/* (requireConta).
+    if (!agent || agent.role === 'contador') { reply.code(401).send({ error: 'unauthorized' }); return false; }
     req.agent = agent;
     return true;
   };
+
+  // Contabilidad: dueño o contador (solo lectura contable, sin el resto del panel).
+  const requireConta = (req, reply) => {
+    if (!config.ADMIN_TOKEN) { reply.code(503).send({ error: 'admin disabled' }); return false; }
+    const agent = agentFromAuth(req.headers.authorization);
+    if (!agent || agent.role === 'operator') { reply.code(401).send({ error: 'unauthorized' }); return false; }
+    req.agent = agent;
+    return true;
+  };
+  registerContaRoutes(app, requireConta);
 
   // Linkea una cuenta a su orden al conectar el correo, y HEREDA el speaker que
   // ya estaba asignado a la orden (asignación previa al onboarding). Así, cuando
@@ -426,6 +438,10 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     }
     if (config.hasOperator && safeEq(user, config.OPERATOR_USER) && safeEq(pass, config.OPERATOR_PASS)) {
       return { token: config.OPERATOR_TOKEN, agent: { name: config.OPERATOR_USER, role: 'operator' } };
+    }
+    if (config.CONTADOR_TOKEN && config.CONTADOR_USER
+      && safeEq(user, config.CONTADOR_USER) && safeEq(pass, config.CONTADOR_PASS)) {
+      return { token: config.CONTADOR_TOKEN, agent: { name: config.CONTADOR_USER, role: 'contador' } };
     }
     return reply.code(401).send({ error: 'usuario o contraseña incorrectos' });
   });
