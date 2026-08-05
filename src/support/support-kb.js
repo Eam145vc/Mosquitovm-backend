@@ -181,7 +181,8 @@ otro medio (PSE, etc.) le llega un enlace de pago. Si no paga una cuota, el serv
 suspende hasta ponerse al día.]
 [INTERNO — usar SOLO si el cliente pregunta DIRECTO por la renovación o "¿cuánto pago
 el próximo año?": el primer año va incluido; a partir del segundo año la renovación del
-servicio es $199.000 al año (puedes pagarla de una o en 3 pagos de $75.000), y solo
+servicio es $25.000 mensuales (mes a mes, sin permanencia) o $199.000 el año completo
+(de una o en 3 pagos de $75.000 — ahorras $101.000 frente al mensual), y solo
 renuevas si quieres seguir. ⚠️ Quien compró ANTES del 6-ago-2026 conserva su condición
 de siempre: renovación de $17.000 mensuales o $199.000 al año, a su elección. NO ofrecer
 este dato si no lo piden.]
