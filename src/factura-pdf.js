@@ -50,31 +50,45 @@ export async function facturaPdf(invoiceNumber) {
   doc.fillColor(gris).fontSize(9).font('Helvetica')
     .text(`${m.customer.type === '31' ? 'NIT' : 'CC'} ${m.customer.doc}`, 48, 161);
 
-  // Detalle
+  // Detalle: una fila por ítem (facturas v2 traen equipo + servicio; las v1, uno solo).
+  const items = Array.isArray(m.items) && m.items.length
+    ? m.items
+    : [{ item: m.descripcion, bruto: m.base, iva: m.iva }];
   const y0 = 195;
   doc.rect(48, y0, 516, 22).fill('#f4f4ef');
   doc.fillColor(gris).fontSize(8).font('Helvetica-Bold')
     .text('DESCRIPCIÓN', 56, y0 + 7)
-    .text('CANT.', 380, y0 + 7)
+    .text('IVA', 380, y0 + 7)
     .text('VALOR', 470, y0 + 7, { width: 86, align: 'right' });
-  doc.fillColor(negro).fontSize(10).font('Helvetica')
-    .text(m.descripcion, 56, y0 + 30, { width: 310 })
-    .text('1', 380, y0 + 30)
-    .text(cop(m.base), 470, y0 + 30, { width: 86, align: 'right' });
+  let yRow = y0 + 30;
+  for (const it of items) {
+    doc.fillColor(negro).fontSize(10).font('Helvetica')
+      .text(it.item, 56, yRow, { width: 310 })
+      .text(it.excluido ? 'Excluido' : cop(it.iva), 380, yRow)
+      .text(cop(it.bruto), 470, yRow, { width: 86, align: 'right' });
+    yRow += Math.max(26, doc.heightOfString(it.item, { width: 310 }) + 10);
+  }
 
   // Totales
-  const yT = y0 + 78;
+  const yT = yRow + 14;
   doc.moveTo(340, yT).lineTo(564, yT).strokeColor('#e4e4de').stroke();
   doc.fillColor(gris).fontSize(10).font('Helvetica')
-    .text('Subtotal (base)', 340, yT + 10).text(cop(m.base), 470, yT + 10, { width: 86, align: 'right' })
+    .text('Subtotal (base gravable)', 340, yT + 10).text(cop(m.base), 470, yT + 10, { width: 86, align: 'right' })
     .text('IVA 19%', 340, yT + 26).text(cop(m.iva), 470, yT + 26, { width: 86, align: 'right' });
   doc.fillColor(negro).fontSize(12).font('Helvetica-Bold')
     .text('TOTAL', 340, yT + 46).text(cop(m.total), 450, yT + 46, { width: 106, align: 'right' });
   doc.fillColor(gris).fontSize(9).font('Helvetica')
     .text(`Forma de pago: ${m.plan === 'cuotas' ? 'Crédito (cuotas)' : 'Contado'}`, 340, yT + 68);
 
+  // Notas (v2: exclusión de IVA del servicio, num. 21 art. 476 E.T.)
+  let yQ = yT + 100;
+  if (Array.isArray(m.notas) && m.notas.length) {
+    doc.fillColor(gris).fontSize(8).font('Helvetica-Oblique')
+      .text(m.notas.join(' '), 48, yT + 86, { width: 516 });
+    yQ += 18;
+  }
+
   // QR + CUFE
-  const yQ = yT + 100;
   doc.image(qrPng, 48, yQ, { width: 110 });
   doc.fillColor(gris).fontSize(8).font('Helvetica-Bold').text('CUFE', 170, yQ + 4);
   doc.fillColor(negro).fontSize(7).font('Helvetica').text(m.cufe, 170, yQ + 15, { width: 390 });

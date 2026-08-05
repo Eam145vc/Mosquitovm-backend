@@ -148,6 +148,14 @@ const ConfigSchema = z.object({
   FACTURACION_ENABLED: z.string().default(''),
   // Epoch ms desde el cual se facturan las órdenes (las anteriores se ignoran).
   FACTURACION_DESDE: z.string().default('1785819600000'), // 4-ago-2026 00:00 Bogotá
+  // Modelo de factura: 'v1' = 1 ítem gravado 19% (lanzamiento). 'v2' = 2 ítems según
+  // el procedimiento del contador: equipo a precio de costo (gravado) + servicio de
+  // computación en la nube EXCLUIDO de IVA (num. 21, art. 476 E.T., nota en factura).
+  // v2 solo aplica a órdenes con términos v2 (esOrdenV2); las viejas siguen en v1.
+  FACTURACION_MODELO: z.string().default('v1'),
+  // Precio de costo del equipo (PESOS) para el ítem gravado del modelo v2.
+  // Lo define el contador con la declaración de importación. Sin esto, v2 no factura.
+  DIAN_EQUIPO_COSTO: z.string().default(''),
   // Certificado .p12 de la CA (Camerfirma) en el VM + su contraseña.
   DIAN_CERT_PATH: z.string().default(''),
   DIAN_CERT_PASSWORD: z.string().default(''),

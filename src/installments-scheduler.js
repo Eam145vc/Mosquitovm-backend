@@ -13,6 +13,7 @@
 // Las cuotas pagadas con PSE/otros medios (sin token) caen en 'sin_token' y NO se cobran
 // acá: requieren link manual (lo cuadramos aparte). El job las salta.
 
+import { cuotaCentsFor, CUOTA_V1_CENTS } from './pricing.js';
 import { config } from './config.js';
 import { logger } from './logger.js';
 import {
@@ -128,16 +129,15 @@ export function installmentDue(order, now = Date.now(), { ignorePause = false } 
   return { n: paidEff + 1, paidEff, total, venceAt };
 }
 
-// Las cuotas 2 y 3 son $69.000 PLANAS: el envío (según ciudad, $11.000–$25.000,
+// Las cuotas 2 y 3 son PLANAS ($69.000 órdenes v1 / $75.000 desde el 6-ago-2026,
+// ver pricing.js): el envío (según ciudad, $11.000–$25.000,
 // ver shipping.js) y el recargo de contraentrega ($5.000) van SOLO en la 1ª
 // (el amount_cents del checkout).
 // Cobrar amount_cents acá repetía el envío en cada cuota (bug detectado el
 // 8-jul-2026 al mostrar el monto en La Libreta; ninguna cuota 2/3 se había
 // cobrado aún). Exportada: La Libreta muestra este mismo monto.
-export const CUOTA_2_3_CENTS = 6_900_000;
-function cuotaCents() {
-  return CUOTA_2_3_CENTS;
-}
+export const CUOTA_2_3_CENTS = CUOTA_V1_CENTS; // compat: monto v1 (los módulos nuevos usan cuotaCentsFor)
+export { cuotaCentsFor };
 
 // payer + identificación a partir de los datos de envío que guardó la orden.
 function payerFrom(order) {
@@ -167,7 +167,7 @@ async function chargeOneInstallment(order) {
 
   try {
     const res = await chargeWithToken(
-      orderId, cuotaCents(), order.card_token, payerFrom(order),
+      orderId, cuotaCentsFor(order), order.card_token, payerFrom(order),
       { idType: 'CC', idNumber: '0000000000', phone: order.phone },
       `Sonó · cuota ${nextNum} de ${total}`,
     );

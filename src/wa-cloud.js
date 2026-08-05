@@ -15,6 +15,7 @@
 // DOCUMENT, cuya creación necesita subir un asset de ejemplo). El link de rastreo
 // va en guia_creada; el PDF vendrá con una plantilla sono_guia_pdf futura.
 
+import { cuotaCentsFor } from './pricing.js';
 import { config } from './config.js';
 import { logger } from './logger.js';
 import {
@@ -109,13 +110,14 @@ export function buildWaCloudPayload(order, kind, shipment = null) {
   if (kind === 'correo') return tpl('sono_correo', [nombre]);
   if (kind === 'libreta') return tpl('sono_libreta', [nombre]);
   if (kind === 'cuota_2' || kind === 'cuota_3') {
-    // El recordatorio SOLO avisa (monto plano de $69.000): el monto único del
+    // El recordatorio SOLO avisa (monto plano de SU precio, v1 $69k / v2 $75k):
+    // el monto único del
     // pool se reserva recién cuando el cliente toca "Voy a pagar" en la página.
     const n = kind === 'cuota_3' ? '3' : '2';
     // La fecha límite sale del plazo congelado en el primer aviso (misma que ve
     // en la página y en los 3 mensajes de la escalera).
     const limite = fechaLimiteTexto(fechaLimiteCuota(order));
-    const params = [nombre, n, moneyCo(69_000 * 100), limite];
+    const params = [nombre, n, moneyCo(cuotaCentsFor(order)), limite];
     // Escalera de cobro por nº de recordatorio ya enviado (el scheduler lo sube
     // ANTES de encolar, así que acá 1=primer aviso, 2=intermedio, 3=último).
     const etapa = order.installment_reminder_count || 1;
@@ -126,11 +128,11 @@ export function buildWaCloudPayload(order, kind, shipment = null) {
     // Respaldos mientras Meta revisa la escalera: Flow → v3 → v2.
     if (config.hasWaFlow && approvedTemplates.has('sono_cuota_flow')) return tpl('sono_cuota_flow', params);
     if (approvedTemplates.has('sono_cuota_v3')) return tpl('sono_cuota_v3', params);
-    return tpl('sono_cuota_v2', [nombre, n, moneyCo(69_000 * 100)]);
+    return tpl('sono_cuota_v2', [nombre, n, moneyCo(cuotaCentsFor(order))]);
   }
   if (kind === 'suspension') {
     const n = String((order.installments_paid || 0) >= 2 ? 3 : 2);
-    return tpl('sono_suspendido', [nombre, n, moneyCo(69_000 * 100)]);
+    return tpl('sono_suspendido', [nombre, n, moneyCo(cuotaCentsFor(order))]);
   }
   if (kind === 'reactivacion') return tpl('sono_reactivado', [nombre]);
   if (kind === 'qr_problema') return tpl('sono_qr_problema', [nombre]);

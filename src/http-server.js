@@ -32,6 +32,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { config } from './config.js';
+import { cuotaCentsFor, CUOTA_V2_CENTS } from './pricing.js';
 import { agentFromAuth } from './admin-auth.js';
 import { registerContaRoutes } from './contabilidad.js';
 import { logger } from './logger.js';
@@ -485,17 +486,17 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
   // Mismo producto (dispositivo + 1er año de servicio + envío; el aparato queda del
   // cliente), DOS formas de pagar lo que se cobra HOY:
   //   - contado: $199.000 de una.
-  //   - cuotas:  $69.000 = 1ª de 3 cuotas ($207.000 total). Las cuotas 2 y 3 se cobran
+  //   - cuotas:  $75.000 = 1ª de 3 cuotas ($225.000 total; órdenes viejas $69.000, pricing.js). Las cuotas 2 y 3 se cobran
   //              después: tarjeta tokenizada (automático) o link por WhatsApp (PSE/otros).
   //              Si no paga una cuota, se corta el servicio (enforcement MQTT).
   // La renovación ($99.000/año) NO se cobra acá: va por recordatorio a partir del 2º año.
   // "test" = orden de diagnóstico de /test-mp ($5.000, va directo al Brick de MP).
   // Compat: el viejo "anual" sigue mapeando a $199.000. Cualquier plan desconocido
   // (o ausente) cae a contado vía el ?? de abajo.
-  // contado: $199.000 (envío incluido). cuotas: 1ª cuota $69.000 + envío SEGÚN CIUDAD
+  // contado: $199.000 (envío incluido). cuotas: 1ª cuota $75.000 + envío SEGÚN CIUDAD
   // ($11.000–$25.000, tabla en shipping.js; jul-2026: reemplaza el $12.000 plano) →
   // hoy paga $80.000–$94.000. anual = compat viejo → contado.
-  const PLAN_PRICES_CENTS = { contado: 19_900_000, cuotas: 6_900_000, anual: 19_900_000, test: 500_000 };
+  const PLAN_PRICES_CENTS = { contado: 19_900_000, cuotas: 7_500_000, anual: 19_900_000, test: 500_000 };
   // Recargo de pago contraentrega (se suma al monto en AMBOS planes).
   const RECARGO_CONTRAENTREGA_CENTS = 500_000;
 
@@ -549,7 +550,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       return reply.code(503).send({ error: 'checkout no configurado' });
     }
     const { business_name, bank, address, city, phone, email, plan, delivery, city_dane, force, reuse_order,
-      invoice_doc_type, invoice_doc_number, invoice_name } = req.body || {};
+      invoice_doc_type, invoice_doc_number, invoice_name, terms_version } = req.body || {};
     if (!business_name || !address || !phone) {
       return reply.code(400).send({ error: 'faltan nombre, direccion o telefono' });
     }
@@ -618,6 +619,11 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       invoice_doc_type: invoice_doc_type === 'NIT' ? 'NIT' : (invoice_doc_type === 'CC' ? 'CC' : null),
       invoice_doc_number: /^\d{6,10}$/.test(String(invoice_doc_number || '')) ? String(invoice_doc_number) : null,
       invoice_name: invoice_name ? String(invoice_name).slice(0, 120) : null,
+      // Evidencia de la aceptación digital de términos (requisito del modelo SaaS
+      // excluido de IVA): qué versión aceptó el cliente y cuándo. La versión la
+      // manda el front (TERMS_VERSION de plans.ts).
+      terms_version: terms_version ? String(terms_version).slice(0, 40) : null,
+      terms_accepted_at: terms_version ? Date.now() : null,
     });
     // CONTRAENTREGA: no se cobra online. La orden queda pendiente de confirmación
     // manual (el dueño valida por WhatsApp antes de despachar). Devolvemos la bandera
@@ -1008,7 +1014,6 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
   app.get('/admin/cuotas', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
     const now = Date.now();
-    const CUOTA_PESOS = Math.round(CUOTA_2_3_CENTS / 100);
     const rows = listOrders()
       // Solo ventas COMPLETADAS (shipped): misma regla que el cobro. Una orden sin
       // despachar no es cartera — aparece acá cuando su equipo salga.
@@ -1040,6 +1045,9 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
           plazoVencido: Boolean(o.installment_plazo_at && now > o.installment_plazo_at),
           accountId: o.account_id || null,
           compradaAt: o.created_at,
+          // Cuota de ESTA orden (v1 $69.000 / v2 $75.000): las estadísticas suman
+          // por orden porque las cohortes conviven.
+          cuotaPesos: Math.round(cuotaCentsFor(o) / 100),
           // Próximo vencimiento teórico (para "vencen esta semana" en el panel)
           proximaAt: due ? null : o.created_at + 30 * 24 * 3600 * 1000 * Math.max(1, o.installments_paid || 0),
         };
@@ -1060,10 +1068,10 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       pausadas: rows.filter((r) => r.paused).length,
       completadas: rows.filter((r) => r.estado === 'completado').length,
       vencenEstaSemana: semana,
-      recaudadoPesos: cobradas * CUOTA_PESOS,
-      porRecaudarPesos: porCobrar * CUOTA_PESOS,
-      deudaVencidaPesos: rows.filter((r) => r.cuotaDue).length * CUOTA_PESOS,
-      cuotaPesos: CUOTA_PESOS,
+      recaudadoPesos: rows.reduce((s, r) => s + Math.max(0, r.pagadas - 1) * r.cuotaPesos, 0),
+      porRecaudarPesos: rows.reduce((s, r) => s + Math.max(0, r.total - r.pagadas) * r.cuotaPesos, 0),
+      deudaVencidaPesos: rows.filter((r) => r.cuotaDue).reduce((s, r) => s + r.cuotaPesos, 0),
+      cuotaPesos: Math.round(CUOTA_V2_CENTS / 100),
       orders: rows,
     };
   });
@@ -1311,7 +1319,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       cuotasTotal: order.installments_total || 3,
       // Monto plano informativo (aún sin reservar): lo real puede diferir en 1-19
       // pesos cuando toque "Voy a pagar" (le tocará un slot libre del pool).
-      amount: Math.round(CUOTA_2_3_CENTS / 100),
+      amount: Math.round(cuotaCentsFor(order) / 100),
       fechaLimite: fechaLimiteTexto(fechaLimiteCuota(order)),
       vencida: Date.now() > fechaLimiteCuota(order),
       business: order.business_name || null,
@@ -1327,7 +1335,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     if (!due) return reply.code(409).send({ error: 'no tienes cuotas pendientes' });
     let intent = getActiveIntentByOrder(order.id, 'cuota');
     if (!intent) {
-      const amount = claimPooledAmount(Math.round(CUOTA_2_3_CENTS / 100), CUOTA_POOL_SIZE, { graceMs: CUOTA_MATCH_GRACE_MS });
+      const amount = claimPooledAmount(Math.round(cuotaCentsFor(order) / 100), CUOTA_POOL_SIZE, { graceMs: CUOTA_MATCH_GRACE_MS });
       if (amount === null) {
         avisarPoolLleno('cuota', order.id);
         return reply.code(202).send({ queued: true, retryInMs: 4000 });
@@ -4013,7 +4021,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
         const n = Math.min(Math.max(pagadas, 1) + 1, total);
         return {
           n, pagadas, total,                             // n = la cuota que SIGUE por pagar
-          monto: Math.round(CUOTA_2_3_CENTS / 100),      // $69.000 planos (el envío fue solo en la 1ª)
+          monto: Math.round(cuotaCentsFor(o) / 100),     // cuota plana de SU precio (el envío fue solo en la 1ª)
           // fecha programada por el scheduler; si no hay, la teórica del plan
           // (cuota 2 = orden+30d, cuota 3 = orden+60d)
           proximaAt: o.installment_next_at || (o.created_at + (n - 1) * 30 * DAY_MS),

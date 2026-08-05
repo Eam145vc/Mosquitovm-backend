@@ -16,6 +16,7 @@ import crypto from 'node:crypto';
 import { config } from './config.js';
 import { logger } from './logger.js';
 import { getOrder, createPaymentIntent, claimPooledAmount, getActiveIntentByOrder, getPoolQr } from './storage.js';
+import { cuotaCentsFor } from './pricing.js';
 import {
   CUOTA_2_3_CENTS, CUOTA_POOL_SIZE, CUOTA_INTENT_TTL_MS, CUOTA_MATCH_GRACE_MS, installmentDue,
 } from './installments-scheduler.js';
@@ -93,7 +94,7 @@ function pantallaAviso(order, due) {
     data: {
       cuota: String(due.n),
       total: String(order.installments_total || 3),
-      monto: moneyCo(CUOTA_2_3_CENTS / 100),
+      monto: moneyCo(cuotaCentsFor(order) / 100),
     },
   };
 }
@@ -102,7 +103,7 @@ async function pantallaPago(order, due) {
   // Reserva el monto único del pool (o reusa el vigente si el cliente reabrió el Flow).
   let intent = getActiveIntentByOrder(order.id, 'cuota');
   if (!intent) {
-    const amount = claimPooledAmount(Math.round(CUOTA_2_3_CENTS / 100), CUOTA_POOL_SIZE, { graceMs: CUOTA_MATCH_GRACE_MS });
+    const amount = claimPooledAmount(Math.round(cuotaCentsFor(order) / 100), CUOTA_POOL_SIZE, { graceMs: CUOTA_MATCH_GRACE_MS });
     if (amount === null) {
       // Pool lleno: no dejamos al cliente sin salida, se queda en el aviso con nota.
       logger.warn({ orderId: order.id }, 'wa-flow: pool de montos lleno');
@@ -111,7 +112,7 @@ async function pantallaPago(order, due) {
         data: {
           cuota: String(due.n),
           total: String(order.installments_total || 3),
-          monto: moneyCo(CUOTA_2_3_CENTS / 100) + ' · muchas personas pagando ahora, intenta en un minuto',
+          monto: moneyCo(cuotaCentsFor(order) / 100) + ' · muchas personas pagando ahora, intenta en un minuto',
         },
       };
     }

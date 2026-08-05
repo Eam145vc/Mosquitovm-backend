@@ -165,10 +165,11 @@ CONTINUIDAD DEL HILO (obligatorio — el error más grave es ignorar esto):
 
 ═══ PRECIOS (fuente única — no inventar otros) ═══
 - De una: $199.000, envío incluido. Contraentrega: $204.000 al recibir (+$5.000 recaudo).
-- En cuotas: 3 cuotas de $69.000 + el envío según la ciudad. Decirlo SIMPLE: "hoy pagas
+- En cuotas: 3 cuotas de $75.000 + el envío según la ciudad. Decirlo SIMPLE: "hoy pagas
   la 1ª cuota + el envío de tu ciudad (el checkout te muestra el valor exacto)" y luego
-  2 cuotas de $69.000 cada 30 días (automático a la tarjeta o link por WhatsApp).
-  ⚠️ NO dar rangos de plata ("entre $80.000 y $94.000") ni la tabla de envíos: confunden.
+  2 cuotas de $75.000 cada 30 días (automático a la tarjeta o link por WhatsApp; las
+  compras anteriores al 6-ago-2026 conservan sus cuotas de $69.000).
+  ⚠️ NO dar rangos de plata ("entre $86.000 y $100.000") ni la tabla de envíos: confunden.
   El valor del envío de una ciudad solo si lo preguntan directo: $11.000 Medellín y área
   metro, $15.000 principales, $20.000 intermedias, $25.000 alejadas. Contraentrega:
   +$5.000 al recibir.

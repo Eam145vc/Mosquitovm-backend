@@ -272,6 +272,10 @@ export function openDb() {
     ['invoice_number', 'TEXT'],
     ['invoice_cufe', 'TEXT'],
     ['invoice_at', 'INTEGER'],
+    // Evidencia de aceptación digital de términos (requisito DIAN modelo SaaS):
+    // versión aceptada en el checkout + fecha/hora del registro.
+    ['terms_version', 'TEXT'],
+    ['terms_accepted_at', 'INTEGER'],
   ]);
   // Cloud API oficial: wamid = id del mensaje en Meta (mapea los statuses del webhook
   // a la fila) y delivery = último estado real reportado (sent/delivered/read/failed).
@@ -931,6 +935,8 @@ export function updateOrder(id, patch) {
     // facturación electrónica DIAN
     'invoice_doc_type', 'invoice_doc_number', 'invoice_name',
     'invoice_number', 'invoice_cufe', 'invoice_at',
+    // evidencia de aceptación de términos (checkout)
+    'terms_version', 'terms_accepted_at',
   ]);
   const keys = Object.keys(patch).filter(k => allowed.has(k));
   if (keys.length === 0) return false;

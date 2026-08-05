@@ -17,6 +17,7 @@ import { config } from './config.js';
 import { logger } from './logger.js';
 import { listOrders, updateOrder, nextInvoiceNumber, rollbackInvoiceNumber, getOrder } from './storage.js';
 import { cityByDane } from './co-dane.js';
+import { esOrdenV2 } from './pricing.js';
 
 const FACTURAS_DIR = path.join(path.dirname(config.DB_PATH), 'facturas');
 fs.mkdirSync(FACTURAS_DIR, { recursive: true });
@@ -163,17 +164,106 @@ export async function facturarOrden(orderId) {
 
   const k = await getKit();
   const total = Math.round(order.amount_cents) / 100;
-  // Precio con IVA incluido → base y IVA desglosados a 2 decimales exactos.
-  const base = Math.round((total / (1 + IVA)) * 100) / 100;
-  const iva = Math.round((total - base) * 100) / 100;
+  const now = new Date();
+  const esCuotas = order.plan === 'cuotas';
+  const round2 = (n) => Math.round(n * 100) / 100;
+
+  // ── Modelo v2 (procedimiento del contador, órdenes con términos v2): dos ítems.
+  //    Equipo a precio de costo (gravado 19%) + servicio de computación en la nube
+  //    por el resto del precio (EXCLUIDO de IVA, num. 21 art. 476 E.T.).
+  const equipoCosto = Number(config.DIAN_EQUIPO_COSTO) || 0;
+  const usaV2 = config.FACTURACION_MODELO === 'v2' && equipoCosto > 0 && esOrdenV2(order);
+  // Una orden v2 NUNCA se factura con el modelo viejo (gravado total): si aún no está
+  // definido el costo del equipo (lo da el contador), la orden ESPERA en la cola —
+  // el job la retoma sola cuando DIAN_EQUIPO_COSTO exista en el .env.
+  if (config.FACTURACION_MODELO === 'v2' && esOrdenV2(order) && !(equipoCosto > 0)) {
+    logger.warn({ orderId }, 'facturación v2: falta DIAN_EQUIPO_COSTO — orden v2 en espera');
+    return null;
+  }
+
+  let items;               // se guarda en el .json (reportes por ítem + PDF)
+  let lines, taxTotals, legalMonetaryTotal, notes;
+  if (usaV2) {
+    const equipoIva = round2(equipoCosto * IVA);
+    const servicio = round2(total - equipoCosto - equipoIva);
+    if (servicio <= 0) {
+      // El pago no alcanza a cubrir el equipo a costo + IVA (¿costo mal configurado?).
+      logger.error({ orderId, total, equipoCosto }, 'facturación v2: el total no cubre equipo+IVA — orden SIN facturar');
+      return null;
+    }
+    const descripcionServicio = esCuotas
+      ? 'Servicio de computación en la nube para procesamiento e integración de pagos — Sonó, primer año (plan en 3 pagos)'
+      : 'Anualidad servicio de computación en la nube para procesamiento e integración de pagos — Sonó';
+    const equipoTax = {
+      taxAmount: equipoIva,
+      subtotals: [{ taxableAmount: equipoCosto, taxAmount: equipoIva, percent: 19, taxScheme: { code: '01' } }],
+    };
+    lines = [
+      {
+        id: '1', quantity: 1, unitCode: 'EA',
+        description: 'Equipo altavoz Sonó (terminal de audio)',
+        price: equipoCosto, lineExtensionAmount: equipoCosto,
+        taxTotals: [equipoTax],
+      },
+      {
+        id: '2', quantity: 1, unitCode: 'EA',
+        description: descripcionServicio,
+        price: servicio, lineExtensionAmount: servicio,
+        taxTotals: [],                                   // excluido: sin IVA
+      },
+    ];
+    taxTotals = [equipoTax];
+    legalMonetaryTotal = {
+      lineExtensionAmount: round2(equipoCosto + servicio),
+      taxExclusiveAmount: round2(equipoCosto + servicio),
+      taxInclusiveAmount: total,
+      allowanceTotalAmount: 0,
+      chargeTotalAmount: 0,
+      prepaidAmount: 0,
+      payableAmount: total,
+    };
+    notes = ['El servicio de computación en la nube se encuentra excluido de IVA de conformidad con el numeral 21 del artículo 476 del Estatuto Tributario.'];
+    items = [
+      { item: 'Equipo altavoz Sonó', bruto: equipoCosto, iva: equipoIva, total: round2(equipoCosto + equipoIva) },
+      { item: descripcionServicio, bruto: servicio, iva: 0, excluido: true, total: servicio },
+    ];
+  } else {
+    // ── Modelo v1 (lanzamiento): un ítem gravado, precio con IVA incluido.
+    const base = round2(total / (1 + IVA));
+    const iva = round2(total - base);
+    const descripcion = esCuotas
+      ? 'Sonó — anunciador de pagos QR (dispositivo + servicio, plan en cuotas)'
+      : 'Sonó — anunciador de pagos QR (dispositivo + servicio, plan anual)';
+    const taxTotal = {
+      taxAmount: iva,
+      subtotals: [{ taxableAmount: base, taxAmount: iva, percent: 19, taxScheme: { code: '01' } }],
+    };
+    lines = [{
+      id: '1', quantity: 1, unitCode: 'EA',
+      description: descripcion,
+      price: base, lineExtensionAmount: base,
+      taxTotals: [taxTotal],
+    }];
+    taxTotals = [taxTotal];
+    legalMonetaryTotal = {
+      lineExtensionAmount: base,
+      taxExclusiveAmount: base,
+      taxInclusiveAmount: total,
+      allowanceTotalAmount: 0,
+      chargeTotalAmount: 0,
+      prepaidAmount: 0,
+      payableAmount: total,
+    };
+    notes = undefined;
+    items = [{ item: descripcion, bruto: base, iva, total }];
+  }
+  // Base gravable e IVA de la factura completa (para reportes y PDF).
+  const base = round2(items.filter((i) => !i.excluido).reduce((s, i) => s + i.bruto, 0));
+  const iva = round2(items.reduce((s, i) => s + i.iva, 0));
 
   const numero = nextInvoiceNumber();                       // consecutivo atómico (SQLite)
   const id = `${config.DIAN_NUM_PREFIJO}${numero}`;
-  const now = new Date();
-  const esCuotas = order.plan === 'cuotas';
-  const descripcion = esCuotas
-    ? 'Sonó — anunciador de pagos QR (dispositivo + servicio, plan en cuotas)'
-    : 'Sonó — anunciador de pagos QR (dispositivo + servicio, plan anual)';
+  const descripcion = items.map((i) => i.item).join(' + ');
 
   const direccionEmisor = {
     street: 'Calle 42 # 80A-39', cityCode: '05001', cityName: 'Medellín',
@@ -191,22 +281,10 @@ export async function facturarOrden(orderId) {
     issueDate: now,
     issueTime: now,
     customer,
-    lines: [{
-      id: '1', quantity: 1, unitCode: 'EA',
-      description: descripcion,
-      price: base, lineExtensionAmount: base,
-      taxTotals: [taxTotal],
-    }],
-    taxTotals: [taxTotal],
-    legalMonetaryTotal: {
-      lineExtensionAmount: base,
-      taxExclusiveAmount: base,
-      taxInclusiveAmount: total,
-      allowanceTotalAmount: 0,
-      chargeTotalAmount: 0,
-      prepaidAmount: 0,
-      payableAmount: total,
-    },
+    lines,
+    taxTotals,
+    legalMonetaryTotal,
+    ...(notes ? { notes } : {}),
     paymentMeans: esCuotas
       ? { paymentForm: '2', paymentMethod: '30', dueDate: new Date(now.getTime() + 60 * 24 * 3600 * 1000) }
       : { paymentForm: '1', paymentMethod: '48' },
@@ -225,6 +303,9 @@ export async function facturarOrden(orderId) {
   fs.writeFileSync(path.join(FACTURAS_DIR, `${id}.json`), JSON.stringify({
     id, cufe, orderId, at: now.toISOString(),
     total, base, iva,
+    modelo: usaV2 ? 'v2' : 'v1',
+    items,                       // desglose por ítem (reportes del contador + PDF)
+    ...(notes ? { notas: notes } : {}),
     customer: { name: customer.name, doc: customer.identification.number, type: customer.identification.type },
     descripcion, plan: order.plan || 'contado',
   }, null, 2));
