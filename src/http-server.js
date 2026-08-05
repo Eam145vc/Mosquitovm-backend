@@ -67,7 +67,8 @@ import {
 } from './storage.js';
 import { bogotaDayStart, bogotaDayStartFromKey, bogotaMonthStart, bogotaPrevMonthStart, DAY_MS } from './libreta-time.js';
 import { getShipment, extractLabel, fetchLabelPdf } from './skydropx.js';
-import { scanBrebImage, decodeBrebImage, normalizeKey } from './breb-qr.js';
+import { normalizeKey } from './breb-qr.js';
+import { scanBrebImageOffThread } from './qr-scan.js';
 import { parseEmail } from './parsers/index.js';
 import { simpleParser } from 'mailparser';
 import { generateAlias, createClientAlias, updateClientAliasRecipients } from './forwardemail.js';
@@ -1834,7 +1835,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     let scan = { qrText: null, decoded: null, isBreb: false };
     if (isImage) {
       try {
-        scan = await scanBrebImage(buf);
+        scan = await scanBrebImageOffThread(buf);
       } catch (e) {
         logger.warn({ orderId: order.id, err: e.message }, 'multipunto: fallo al leer el QR');
       }
@@ -2095,7 +2096,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       const fp = path.join(QR_DIR, o.qr_path);
       if (fs.existsSync(fp)) {
         try {
-          const decoded = await decodeBrebImage(fs.readFileSync(fp));
+          const { decoded } = await scanBrebImageOffThread(fs.readFileSync(fp));
           if (decoded && decoded.raw) {
             return { raw: decoded.raw, key: normalizeKey(decoded.key), keyType: decoded.keyType };
           }

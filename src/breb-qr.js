@@ -198,6 +198,13 @@ export async function scanBrebImage(imageBuffer) {
     return { qrText: firstText, decoded: null, isBreb: isBrebString(firstText) };
   }
 
+  // Techo de resolución: una foto de cámara (12MP) hacía 1-2 MINUTOS de CPU en
+  // las variantes de abajo (convolute/resize de Jimp son JS puro) — incidente
+  // 5-ago-2026. A 1400px un QR sigue legible (la cascada jsQR reescala incluso
+  // a 400px) y el costo cae ~50x. El intento zxing sobre el archivo original
+  // (arriba) ya corrió a resolución completa.
+  if (base.bitmap.width > 1400) base.resize({ w: 1400 });
+
   // Variantes preprocesadas para zxing: sharpen recupera QRs borrosos/reescalados
   // (kernel unsharp 3x3), el upscale ayuda con módulos de ~3px.
   const SHARPEN = [[-0.125, -0.125, -0.125], [-0.125, 2, -0.125], [-0.125, -0.125, -0.125]];

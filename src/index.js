@@ -647,6 +647,17 @@ async function main() {
   process.on('SIGTERM', shutdown);
 }
 
+// Vigía del event loop: si el tick de 1s llega con >2s de atraso, algo tuvo el
+// proceso bloqueado en CPU sincrónica (como el escaneo de QR del incidente
+// 5-ago-2026) y todo lo demás — pagos, admin, soporte — estuvo congelado ese
+// tiempo. Deja rastro de cuándo y cuánto para correlacionar con el resto del log.
+let lastTick = Date.now();
+setInterval(() => {
+  const lag = Date.now() - lastTick - 1000;
+  if (lag > 2000) logger.warn({ lagMs: lag }, 'event loop estuvo bloqueado');
+  lastTick = Date.now();
+}, 1000).unref();
+
 main().catch(e => {
   logger.error({ err: e.message, stack: e.stack }, 'fatal');
   process.exit(1);
