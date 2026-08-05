@@ -41,6 +41,7 @@ import { listWaChats, listWaChatMessages, markWaChatRead, insertWaInbound, listO
   getAccount, getAccountByEmailCI, getAccountByAlias, findAccountByForward,
   listDevicesByAccount, getShipmentByOrder, paymentsFor } from '../storage.js';
 import { normalizePhoneCO } from '../wa-enqueue.js';
+import { cuotaCentsFor, esOrdenV2 } from '../pricing.js';
 import { sendCloudText, sendCloudMedia } from '../wa-cloud.js';
 import { compressVideo } from '../video-compress.js';
 import { createReadStream, existsSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -110,6 +111,19 @@ function accountSummary(acc, order) {
   if (order) {
     lines.push(`Negocio: ${order.business_name || '—'}${order.city ? ` (${order.city})` : ''}`);
     lines.push(`Pedido: plan ${order.plan || '—'}, entrega ${order.delivery || '—'}, estado ${order.status}`);
+    // ⚠️ CONDICIONES DE SU COMPRA (cohorte v1/v2): cada cliente conserva los precios
+    // del día que compró. Sin esto, la IA le recitaba los precios de lista nuevos a
+    // clientes viejos (incidente Sahamir 5-ago-2026: cuotas de $75k a un cliente de $69k).
+    const v2 = esOrdenV2(order);
+    const cuota = Math.round(cuotaCentsFor(order) / 100).toLocaleString('es-CO');
+    lines.push(
+      `CONDICIONES DE SU COMPRA (términos ${v2 ? 'v2, desde 6-ago-2026' : 'v1, plan de lanzamiento'}) — ` +
+      `USA ESTOS NÚMEROS con este cliente, NO los precios de lista: ` +
+      (order.plan === 'cuotas'
+        ? `sus cuotas son de $${cuota} cada una (3 en total; la 1ª incluyó el envío${order.delivery === 'contraentrega' ? ' y el recargo contraentrega, pagada al recibir' : ''}). `
+        : `pagó de una. `) +
+      `Su continuidad tras el 1er año: ${v2 ? '$25.000/mes o $199.000/año' : '$17.000/mes o $199.000/año (condición de lanzamiento que conserva)'}.`
+    );
     try {
       const sh = getShipmentByOrder(order.id);
       if (sh?.tracking) {
