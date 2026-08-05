@@ -42,6 +42,7 @@ import { listWaChats, listWaChatMessages, markWaChatRead, insertWaInbound, listO
   listDevicesByAccount, getShipmentByOrder, paymentsFor } from '../storage.js';
 import { normalizePhoneCO } from '../wa-enqueue.js';
 import { sendCloudText, sendCloudMedia } from '../wa-cloud.js';
+import { compressVideo } from '../video-compress.js';
 import { createReadStream, existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { setMessageMedia } from './support-store.js';
@@ -734,13 +735,26 @@ export function registerSupportRoutes(app) {
     const mime = part.mimetype || '';
     const esVideo = mime.startsWith('video/');
     if (!mime.startsWith('image/') && !esVideo) return reply.code(415).send({ error: 'solo imágenes o videos' });
-    const buf = await part.toBuffer();
-    // Límites de WhatsApp: imagen 5MB, video 16MB.
-    const maxMB = esVideo ? 16 : 5;
-    if (buf.length > maxMB * 1024 * 1024) return reply.code(413).send({ error: `máximo ${maxMB}MB (límite de WhatsApp para ${esVideo ? 'video' : 'imagen'})` });
+    let buf = await part.toBuffer();
+    let sendMime = mime;
+    // Imagen: 5MB tope duro (WhatsApp). Video: se ACEPTA pesado (hasta 100MB) y la VM
+    // lo COMPRIME a <16MB con ffmpeg, como WhatsApp — el operario no convierte nada.
+    if (!esVideo && buf.length > 5 * 1024 * 1024) {
+      return reply.code(413).send({ error: 'la imagen supera 5MB (límite de WhatsApp)' });
+    }
+    if (esVideo && buf.length > 15 * 1024 * 1024) {
+      try {
+        const t0 = Date.now();
+        const c = await compressVideo(buf);
+        logger.info({ phone, antes: buf.length, despues: c.buffer.length, ms: Date.now() - t0 }, 'soporte: video comprimido');
+        buf = c.buffer; sendMime = c.mime;
+      } catch (e) {
+        return reply.code(413).send({ error: e.message || 'no se pudo comprimir el video' });
+      }
+    }
     const caption = String(part.fields?.caption?.value || '').trim();
     try {
-      const { wamid, path: mediaPath, mime: outMime, kind } = await sendCloudMedia(phone, buf, mime, caption);
+      const { wamid, path: mediaPath, mime: outMime, kind } = await sendCloudMedia(phone, buf, sendMime, caption);
       const id = wamid || `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       insertWaInbound({ id, phone, name: null, type: kind, body: caption || `[${kind}]`, direction: 'out', author: req.agent?.name });
       setWaInboundMedia(id, mediaPath, outMime);
