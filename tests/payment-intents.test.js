@@ -69,25 +69,25 @@ describe('payment intents (checkout Bre-B propio)', () => {
     const orderId = s.createOrder({ amountCents: 7700000 });
     const it = s.createPaymentIntent({ orderId, amount: 77000, ttlMs: TTL });
     const db = s.openDb();
-    // venció hace 45s → dentro de la gracia de 60s (el correo de BBVA tarda) → matchea
-    db.prepare('UPDATE payment_intents SET expires_at = ? WHERE id = ?').run(Date.now() - 45_000, it.id);
+    // venció hace 10s → dentro de la gracia de 15s (Nequi avisa casi al instante) → matchea
+    db.prepare('UPDATE payment_intents SET expires_at = ? WHERE id = ?').run(Date.now() - 10_000, it.id);
     const hit = s.matchPaymentIntent(77000);
     assert.equal(hit.id, it.id);
 
     const orderId2 = s.createOrder({ amountCents: 7700000 });
     const it2 = s.createPaymentIntent({ orderId: orderId2, amount: 77000, ttlMs: TTL });
-    // venció hace 90s → fuera de la gracia de 60s → no matchea
-    db.prepare('UPDATE payment_intents SET expires_at = ? WHERE id = ?').run(Date.now() - 90_000, it2.id);
+    // venció hace 30s → fuera de la gracia de 15s → no matchea
+    db.prepare('UPDATE payment_intents SET expires_at = ? WHERE id = ?').run(Date.now() - 30_000, it2.id);
     assert.equal(s.matchPaymentIntent(77000), null);
   });
 
   test('red de seguridad: pago tardío con candidato ÚNICO matchea; con 2 candidatos NO', () => {
-    // Único: expiró hace 90s (fuera de la gracia de 60s) → el match normal lo
+    // Único: expiró hace 30s (fuera de la gracia de 15s) → el match normal lo
     // rechaza pero el tardío lo toma (Yarlines 4-ago: el correo llegó 2s tarde).
     const o1 = s.createOrder({ amountCents: 19900000 });
     const a = s.createPaymentIntent({ orderId: o1, amount: 199000, ttlMs: TTL });
     const db = s.openDb();
-    db.prepare('UPDATE payment_intents SET expires_at = ? WHERE id = ?').run(Date.now() - 90_000, a.id);
+    db.prepare('UPDATE payment_intents SET expires_at = ? WHERE id = ?').run(Date.now() - 30_000, a.id);
     assert.equal(s.matchPaymentIntent(199000), null);
     const late = s.matchLatePaymentIntent(199000, { bank: 'bbva' });
     assert.equal(late.intent.id, a.id);
@@ -99,8 +99,8 @@ describe('payment intents (checkout Bre-B propio)', () => {
     const o3 = s.createOrder({ amountCents: 19900000 });
     const b = s.createPaymentIntent({ orderId: o2, amount: 199000, ttlMs: TTL });
     const c = s.createPaymentIntent({ orderId: o3, amount: 199000, ttlMs: TTL });
-    db.prepare('UPDATE payment_intents SET expires_at = ?, created_at = ? WHERE id = ?').run(Date.now() - 90_000, Date.now() - 240_000, b.id);
-    db.prepare('UPDATE payment_intents SET expires_at = ? WHERE id = ?').run(Date.now() - 100_000, c.id);
+    db.prepare('UPDATE payment_intents SET expires_at = ?, created_at = ? WHERE id = ?').run(Date.now() - 30_000, Date.now() - 120_000, b.id);
+    db.prepare('UPDATE payment_intents SET expires_at = ? WHERE id = ?').run(Date.now() - 40_000, c.id);
     const amb = s.matchLatePaymentIntent(199000);
     assert.equal(amb.ambiguous, 2);
     assert.equal(s.getPaymentIntent(b.id).status, 'pending'); // nadie quedó paid

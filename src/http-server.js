@@ -920,7 +920,11 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
   // contador de 2 min. La confirmación llega por el correo de Nequi a la cuenta
   // de pagos (settleOwnBrebPayment matchea por monto). Reemplaza el Bre-B de
   // EfiPay en el front; el de EfiPay queda solo como fallback si esto está apagado.
-  const BREB_INTENT_TTL_MS = 150 * 1000; // 2:30 (pedido del dueño: 2 min quedaba justo)
+  // 5 min (4-ago, decisión del dueño): con 2:30 Yarlines pagó a tiempo pero el
+  // correo de BBVA llegó 17s después del vencimiento y el pago quedó huérfano.
+  // Los montos del pool son únicos mientras están reservados → ventana más larga
+  // no crea ambigüedad, solo retiene el monto unos minutos más.
+  const BREB_INTENT_TTL_MS = 5 * 60 * 1000;
 
   // Aviso al dueño (Telegram) cuando el pool de montos se llena y un cliente queda
   // esperando en cola para pagar — señal de que faltan QRs con valor o hay un pico.

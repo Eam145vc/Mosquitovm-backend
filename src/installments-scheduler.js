@@ -37,7 +37,7 @@ export const CUOTA_POOL_SIZE = 20;               // hasta 20 cobros "en pantalla
 // página y confirmar en su banco — 2:30 alcanzaba en el checkout pero no acá; como
 // el pool da montos ÚNICOS, retener el monto media hora no crea ambigüedad).
 export const CUOTA_INTENT_TTL_MS = 30 * 60 * 1000;
-export const CUOTA_MATCH_GRACE_MS = 60_000;      // misma gracia que el matcher (BBVA recibe: su correo tarda mas que Nequi)
+export const CUOTA_MATCH_GRACE_MS = 15_000;      // misma gracia que el matcher
 const MAX_RECORDATORIOS = 3;                     // 3 recordatorios sin pago → gestión manual
 const REMINDER_EVERY_MS = 3 * DAY;               // cadencia entre recordatorios
 // Plazo que se le da al cliente desde el PRIMER aviso. Se ancla a ese primer
