@@ -1834,6 +1834,34 @@ export function matchPaymentIntent(amount, { graceMs = 15_000, bank = null } = {
   return { ...hit, status: 'paid', paid_at: now, bank };
 }
 
+/**
+ * Red de seguridad para pagos TARDÍOS (4-ago: Yarlines pagó $199.000 y el correo
+ * llegó 2 segundos después de la gracia; Carlos, 10 min después). Si el pago no
+ * matcheó ningún intent vigente, se busca entre los que EXPIRARON hace poco con
+ * ese monto exacto: con UN solo candidato no hay ambigüedad posible (los montos
+ * del pool son únicos mientras están reservados) → se matchea. Con 2+ candidatos
+ * (el monto se liberó y reasignó) NO se adivina: devuelve {ambiguous} para que
+ * el matcher alerte al dueño por Telegram y se concilie a mano.
+ */
+export function matchLatePaymentIntent(amount, { windowMs = 30 * 60 * 1000, graceMs = 15_000, bank = null } = {}) {
+  openDb();
+  const now = Date.now();
+  const candidates = db.prepare(
+    `SELECT * FROM payment_intents
+     WHERE status = 'pending' AND amount = ?
+       AND expires_at + ? <= ?      -- ya fuera de la gracia (no lo tomó el match normal)
+       AND expires_at > ?           -- pero expiró hace poco
+     ORDER BY created_at ASC`
+  ).all(Math.round(amount), graceMs, now, now - windowMs);
+  if (!candidates.length) return null;
+  if (candidates.length > 1) return { ambiguous: candidates.length };
+  const hit = candidates[0];
+  db.prepare(
+    `UPDATE payment_intents SET status = 'paid', paid_at = ?, bank = ? WHERE id = ?`
+  ).run(now, bank, hit.id);
+  return { intent: { ...hit, status: 'paid', paid_at: now, bank } };
+}
+
 // ── "Pago esperado" por punto (multipunto/eco por monto, desde La Libreta) ───
 
 /** Registra que el punto de `orderId` espera un pago de `amount` pesos. Reemplaza

@@ -58,7 +58,7 @@ import {
   insertWaInbound, listWaInbound, updateWaDeliveryByWamid, countWaSentSince, setWaInboundMedia,
   getShipmentByOrder, updateShipmentRow, renameDeviceLocal, listShipments,
   insertUgcApplication, listUgcApplications, countUgcNuevo, setUgcStatus, deleteUgcApplication,
-  createPaymentIntent, getPaymentIntent, matchPaymentIntent, claimPooledAmount, getActiveIntentByOrder,
+  createPaymentIntent, getPaymentIntent, matchPaymentIntent, matchLatePaymentIntent, claimPooledAmount, getActiveIntentByOrder,
   getCuotasEnabled, setCuotasEnabled, setPoolQr, getPoolQr, listPoolQrs,
   createExpectedPayment, activeExpectedPayments, getExpectedByOrder, consumeExpectedPayment, cancelExpectedPayment,
   speakersForBank, paymentsTotalsSince, paymentsTotalsBetween, paymentsByHourSince,
@@ -340,11 +340,25 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     if (!config.hasOwnBreb || alias !== config.SONO_PAGOS_ALIAS) return;
     if (!result || result.direction === 'out' || !result.amount) return;
     try {
-      const intent = matchPaymentIntent(result.amount, { bank: result.bank || null });
+      let intent = matchPaymentIntent(result.amount, { bank: result.bank || null });
       if (!intent) {
-        logger.warn({ alias, amount: result.amount, bank: result.bank },
-          'breb propio: pago a la cuenta Sonó sin intent que matchee (conciliar a mano)');
-        return;
+        // Red de seguridad: pago tardío con UN solo candidato expirado reciente
+        // (mismo monto exacto) → se registra igual. Ambiguo o sin candidato →
+        // Telegram al dueño YA (que no se entere por el comprobante del cliente).
+        const late = matchLatePaymentIntent(result.amount, { bank: result.bank || null });
+        if (late?.intent) {
+          intent = late.intent;
+          logger.info({ intentId: intent.id, orderId: intent.order_id, amount: result.amount },
+            'breb propio: pago TARDÍO matcheado (candidato único expirado)');
+        } else {
+          logger.warn({ alias, amount: result.amount, bank: result.bank, ambiguous: late?.ambiguous || 0 },
+            'breb propio: pago a la cuenta Sonó sin intent que matchee (conciliar a mano)');
+          sendTelegram(late?.ambiguous
+            ? `⚠️ Pago de $${result.amount.toLocaleString('es-CO')} a la cuenta Bre-B con ${late.ambiguous} ventanas vencidas de ese monto — no se puede saber de quién es. Concíliala a mano en el admin.`
+            : `⚠️ Pago de $${result.amount.toLocaleString('es-CO')} a la cuenta Bre-B sin ninguna ventana que coincida. Revisa quién fue y regístralo a mano.`)
+            .catch(() => {});
+          return;
+        }
       }
       const order = getOrder(intent.order_id);
       if (!order) { logger.error({ intentId: intent.id, orderId: intent.order_id }, 'breb propio: intent sin orden'); return; }
