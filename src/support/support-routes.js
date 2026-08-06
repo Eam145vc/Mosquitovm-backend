@@ -74,7 +74,8 @@ function resolveAccountByEmail(raw) {
   let acc = null;
   try {
     acc = getAccountByEmailCI(email) || findAccountByForward(email);
-    if (!acc && email.endsWith('@sono.lat')) acc = getAccountByAlias(email.split('@')[0]);
+    // Si escribió su alias de Sonó (cualquiera de nuestros dominios), buscar por alias.
+    if (!acc && config.mailDomains.includes(email.split('@')[1])) acc = getAccountByAlias(email.split('@')[0]);
   } catch { /* lookup no crítico */ }
   const orders = listOrders().filter((o) => !o.archived_at);
   let order = acc ? orders.find((o) => o.account_id === acc.id) : null;

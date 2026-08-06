@@ -134,6 +134,18 @@ const MIME_EXT = {
   'image/webp': 'webp', 'application/pdf': 'pdf',
 };
 
+/** Dirección completa del alias de una cuenta (ej. juan-abc@sonopagos.com).
+ *  Los clientes viejos se crearon con @sono.lat y los nuevos con config.aliasDomain:
+ *  el dominio real vive en accounts.email, y reconstruirlo con el dominio actual le
+ *  cambiaría el correo a un cliente que ya lo configuró en su banco. Solo cuando no
+ *  hay email guardado se arma con el dominio de alias nuevos. */
+function aliasAddress(account, aliasFallback) {
+  const saved = account && account.email ? String(account.email) : '';
+  if (saved.includes('@')) return saved;
+  const a = aliasFallback || (account && account.alias) || '';
+  return a ? `${a}@${config.aliasDomain}` : '';
+}
+
 /** Vista publica de una orden (sin datos sensibles), con el paso actual del wizard.
  *  El envio se recoge ANTES de pagar (checkout), asi que el post-pago son 2 pasos:
  *  1=qr, 2=correo, 3=listo.
@@ -1712,7 +1724,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     // crea un loop en ForwardEmail y los correos del banco caen al catch-all
     // (incidente Linpan chen, jul-2026).
     const fwdDomain = forwardTo.split('@')[1];
-    if (fwdDomain === config.MAIL_DOMAIN || fwdDomain === config.FWD_DOMAIN) {
+    if (config.mailDomains.includes(fwdDomain)) {
       return reply.code(400).send({ error: 'Ese es tu correo de Sonó. Pon tu correo personal (el que usas normalmente, ej. Gmail).' });
     }
     // associate: la elección del cliente cuando el correo ya existía (true = mismo negocio,
@@ -1762,7 +1774,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       logger.info({ orderId: order.id, alias: self.alias }, 'email-redirect: alias ya existente reusado (idempotente)');
       return {
         ok: true,
-        alias: `${self.alias}@${config.MAIL_DOMAIN}`,
+        alias: aliasAddress(self),
         forwardTo,
         needsVerification: false,
         now: Date.now(),
@@ -1784,7 +1796,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       logger.info({ orderId: order.id, alias: self.alias, forwardTo }, 'email-redirect: alias conservado, destino actualizado');
       return {
         ok: true,
-        alias: `${self.alias}@${config.MAIL_DOMAIN}`,
+        alias: aliasAddress(self),
         forwardTo,
         needsVerification: false,
         now: Date.now(),
@@ -1802,14 +1814,14 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     }
 
     // Guardar la cuenta (sin watcher; el ingreso es por webhook).
-    upsertAccount({ id: accountId, email: `${alias}@${config.MAIL_DOMAIN}`, authType: 'imap', provider: 'redirect' });
+    upsertAccount({ id: accountId, email: `${alias}@${config.aliasDomain}`, authType: 'imap', provider: 'redirect' });
     setAccountForward(accountId, { alias, forwardTo });
     linkOrderToAccount(order, accountId, 'redirect');
 
-    logger.info({ orderId: order.id, alias, fe: fe.skipped ? 'skipped(catch-all)' : 'created' }, 'email-redirect onboard');
+    logger.info({ orderId: order.id, alias, domain: config.aliasDomain, fe: fe.skipped ? 'skipped(catch-all)' : 'created' }, 'email-redirect onboard');
     return {
       ok: true,
-      alias: `${alias}@${config.MAIL_DOMAIN}`,
+      alias: `${alias}@${config.aliasDomain}`,
       forwardTo,
       // ForwardEmail NO requiere verificación del destino → el cliente puede ir directo al banco.
       needsVerification: false,
@@ -2202,7 +2214,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       email_method: o.email_method || null,
       account_id: o.account_id || null,
       email: acc ? acc.email : null,
-      alias: acc && acc.alias ? `${acc.alias}@${config.MAIL_DOMAIN}` : null,
+      alias: acc && acc.alias ? aliasAddress(acc) : null,
       forward_to: acc ? (acc.forwardTo || null) : null,
       change_confirmed: acc ? Boolean(acc.change_confirmed) : false,
       // speaker
@@ -2919,7 +2931,10 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     if (clash && clash.id !== acc.id) {
       return reply.code(409).send({ error: `alias en uso por otra cuenta (${clash.email})` });
     }
-    const email = `${alias}@${config.MAIL_DOMAIN}`;
+    // Renombrar conserva el DOMINIO que ya tenía la cuenta (un cliente viejo sigue en
+    // @sono.lat); solo cambia la parte local. Si no había email, usa el de alias nuevos.
+    const accDomain = String(acc.email || '').split('@')[1] || config.aliasDomain;
+    const email = `${alias}@${accDomain}`;
     // Si FE está activo, crear el alias nuevo allí (idempotente; skipped sin token).
     try {
       const fe = await createClientAlias({ name: alias, forwardTo: acc.forwardTo || null });
@@ -3817,8 +3832,8 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     }
 
     // Extraer el alias del destinatario que sea @MAIL_DOMAIN.
-    const dom = '@' + config.MAIL_DOMAIN.toLowerCase();
-    const target = recipients.map((r) => String(r || '').toLowerCase()).find((r) => r.endsWith(dom));
+    const doms = config.mailDomains.map((d) => '@' + d);
+    const target = recipients.map((r) => String(r || '').toLowerCase()).find((r) => doms.some((d) => r.endsWith(d)));
     const alias = target ? target.slice(0, target.indexOf('@')) : null;
 
     // Log de diagnóstico (primer correo de prueba): ver qué manda ForwardEmail.
@@ -3827,7 +3842,7 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       'fe webhook recibido'
     );
 
-    if (!alias) return reply.code(200).send({ ok: true, note: 'sin alias @' + config.MAIL_DOMAIN });
+    if (!alias) return reply.code(200).send({ ok: true, note: 'sin alias de ' + config.mailDomains.join('/') });
 
     const account = getAccountByAlias(alias);
     if (!account) {

@@ -130,8 +130,14 @@ const ConfigSchema = z.object({
   // También autentica los endpoints /wa/pending y /wa/sent que consume el agente
   // de WhatsApp de la PC del dueño (header x-sono-secret). NO requiere secret nuevo.
   EMAIL_WEBHOOK_SECRET: z.string().default(''),
-  // Dominio de los alias (ej. 'sono.lat' → alias juan-abc@sono.lat).
+  // Dominio HISTÓRICO de los alias (ej. 'sono.lat' → alias juan-abc@sono.lat).
+  // Es el dominio con el que firmamos DKIM y desde el que sale el correo saliente.
   MAIL_DOMAIN: z.string().default('sono.lat'),
+  // Dominio con el que se crean los alias NUEVOS. Existe porque validadores viejos de
+  // Nequi rechazan el TLD .lat como "correo no válido" (caso Sara jacome, ago-2026).
+  // Los clientes ya creados conservan el dominio guardado en accounts.email; el MX
+  // acepta ambos dominios, así que ninguno deja de recibir. Vacío = usar MAIL_DOMAIN.
+  ALIAS_DOMAIN: z.string().default(''),
   // Subdominio (MX = Forward Email) donde se crean los aliases para reenvío al cliente.
   FWD_DOMAIN: z.string().default('fwd.sono.lat'),
   // API HTTP interna del MX propio para ENVIAR correo saliente (responder desde /admin).
@@ -290,5 +296,14 @@ parsed.hasWaCloud = Boolean(parsed.WA_CLOUD_ACCESS_TOKEN && parsed.WA_CLOUD_PHON
 // Flow de cuotas activo: hay llave privada para descifrar y Flow publicado al que apuntar.
 parsed.hasWaFlow = Boolean(parsed.hasWaCloud && parsed.WA_FLOW_PRIVATE_KEY && parsed.WA_FLOW_ID);
 parsed.hasTelegram = Boolean(parsed.TG_BOT_TOKEN && parsed.TG_CHAT_ID);
+// Dominio efectivo para los alias NUEVOS (ALIAS_DOMAIN si está seteado, si no el histórico).
+parsed.aliasDomain = (parsed.ALIAS_DOMAIN || parsed.MAIL_DOMAIN).toLowerCase();
+// Todos los dominios que son "de Sonó" para el correo de clientes. Se usa para
+// validar que el correo personal no sea un alias nuestro (evita el loop del catch-all).
+parsed.mailDomains = [...new Set([
+  parsed.MAIL_DOMAIN.toLowerCase(),
+  parsed.aliasDomain,
+  parsed.FWD_DOMAIN.toLowerCase(),
+])];
 
 export const config = parsed;
