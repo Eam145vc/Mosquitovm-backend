@@ -2714,10 +2714,11 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
   });
 
   // Stream SSE público: reusa el mismo bus del HUD pero SOLO deja pasar pagos,
-  // reducidos a { bank, city } — sin monto, sin nombre, sin speaker. Alimenta
-  // la animación banco→speaker y el mapa en vivo de la web.
+  // reducidos a { bank, city, amount } — sin nombre ni speaker (el monto suelto
+  // no identifica a nadie; decisión del dueño ago-2026). Alimenta la animación
+  // banco→speaker y el mapa en vivo de la web.
   const publicOpsEvent = (ev) => (ev.type === 'payment'
-    ? { id: ev.id, at: ev.at, type: 'payment', bank: ev.bank || null, city: ev.city || null }
+    ? { id: ev.id, at: ev.at, type: 'payment', bank: ev.bank || null, city: ev.city || null, amount: ev.amount ?? null }
     : null);
   app.get('/public/ops/stream', (req, reply) => {
     reply.hijack();
