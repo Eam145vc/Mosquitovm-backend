@@ -26,3 +26,13 @@ export function esOrdenV2(order) {
 export function cuotaCentsFor(order) {
   return esOrdenV2(order) ? CUOTA_V2_CENTS : CUOTA_V1_CENTS;
 }
+
+// ── Registro canónico del resto de precios (v2, 6-ago-2026) ──
+// Los leen product-facts.js (prompts de Valeria y el rayito) y quien los necesite.
+// El backend aún NO cobra la continuidad; cuando se cobre, se cobra de AQUÍ.
+export const PRECIO_LANZAMIENTO_CENTS = 19_900_000;   // $199.000 (equipo + 1er año)
+export const PRECIO_NORMAL_CENTS = 40_000_000;        // $400.000 (ancla tachada)
+export const RECARGO_CONTRAENTREGA_CENTS = 500_000;   // $5.000 al recibir
+export const CONTINUIDAD_MES_V2_CENTS = 2_500_000;    // $25.000/mes desde 6-ago-2026
+export const CONTINUIDAD_MES_V1_CENTS = 1_700_000;    // $17.000/mes pre-6-ago (se honra)
+export const CONTINUIDAD_ANUAL_CENTS = 19_900_000;    // $199.000/año (ambas cohortes)

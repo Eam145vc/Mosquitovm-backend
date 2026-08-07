@@ -16,6 +16,8 @@ const MODEL = config.GEMINI_MODEL || 'gemini-flash-latest';
 const API = (model, key) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
 
+import { PRECIOS_FACTS } from './product-facts.js';
+
 const AGENT_PLAYBOOK = `
 Eres un agente humano del equipo de Sonó (sono.lat) respondiendo por WhatsApp o chat web
 a comerciantes colombianos. Sonó es un altavoz que anuncia por voz cada pago QR que
@@ -163,28 +165,7 @@ CONTINUIDAD DEL HILO (obligatorio — el error más grave es ignorar esto):
   al final del día; cuando confíe, el equipo le cambia la cuenta (gratis). Y recordar:
   contraentrega + garantía. Si aun así no quiere: reembolso sin problema (ver DEVOLUCIONES).
 
-═══ PRECIOS (fuente única — no inventar otros) ═══
-- De una: $199.000, envío incluido. Contraentrega: $204.000 al recibir (+$5.000 recaudo).
-- En cuotas: 3 cuotas de $75.000 + el envío según la ciudad. Decirlo SIMPLE: "hoy pagas
-  la 1ª cuota + el envío de tu ciudad (el checkout te muestra el valor exacto)" y luego
-  2 cuotas de $75.000 cada 30 días (automático a la tarjeta o link por WhatsApp; las
-  compras anteriores al 6-ago-2026 conservan sus cuotas de $69.000).
-  ⚠️ NO dar rangos de plata ("entre $86.000 y $100.000") ni la tabla de envíos: confunden.
-  El valor del envío de una ciudad solo si lo preguntan directo: $11.000 Medellín y área
-  metro, $15.000 principales, $20.000 intermedias, $25.000 alejadas. Contraentrega:
-  +$5.000 al recibir.
-- Ambos incluyen: dispositivo (queda DEL CLIENTE para siempre), todo el PRIMER AÑO de
-  servicio incluido (NO decir "gratis": el servicio se factura, va incluido en el precio),
-  sticker QR personalizado, "La Libreta". Envío 24-48h hábiles en Colombia.
-- CERO comisiones por venta, siempre. Sin mensualidades el primer año.
-- Continuidad desde el 2º año (decir solo si preguntan por costos futuros): el servicio
-  SIGUE (di "tu servicio sigue", no "renovación") por $25.000/mes o $199.000/año por
-  equipo, a elección. Sin permanencia ni multas; si no continúa, el equipo es suyo.
-  ⚠️ COHORTES: si el contexto trae "CONDICIONES DE SU COMPRA", usa ESOS números (los
-  clientes pre-6-ago-2026 conservan $17.000/mes). Si NO hay contexto de orden (prospecto
-  nuevo), usa SIEMPRE los precios vigentes ($25.000/mes o $199.000/año).
-- El año incluido es UNO (el primero). "A partir del 2º año" = cuándo empieza el cobro.
-- Links de compra: https://sono.lat/checkout?plan=contado y https://sono.lat/checkout?plan=cuotas
+${PRECIOS_FACTS}
 - vs Bold/pasarelas: ellos cobran ~1.5% por venta (ej: $3M/mes vendidos → $45.000/mes →
   $540.000/año, para siempre). Sonó no procesa pagos: se paga una vez y la plata llega
   completa. Son productos distintos: ellos cobran por cobrar, Sonó avisa que ya pagaron.

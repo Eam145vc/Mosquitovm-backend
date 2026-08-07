@@ -30,6 +30,8 @@
 //  - Bancos: Nequi, Bancolombia y BBVA hoy (BBVA agregado jul-2026). No prometer fechas
 //    de otros. Nequi va SIEMPRE de primero en toda lista de bancos (decisión jul-2026).
 
+import { PRECIOS_FACTS } from './product-facts.js';
+
 export const SUPPORT_KB = `
 # QUÉ ES SONÓ
 Sonó es un altavoz que anuncia en voz alta cada pago QR que recibe tu negocio.
@@ -147,45 +149,7 @@ lista ni recomendación: sus notificaciones tienen demasiado delay.)
   más bancos y que cuando eso pase el Sonó se actualiza solo, sin cambiar nada. NO des
   fechas ni confirmes cómo funcionará ese banco (ej: su QR de cobro) hasta que esté integrado.
 
-# PLANES Y PRECIOS (lanzamiento)
-El precio de lanzamiento es $199.000 (precio normal $400.000), y lo puedes pagar de dos formas:
-  - De una: $199.000, con el envío incluido.
-  - En cuotas: 3 cuotas de $75.000 más el envío, que depende de tu ciudad (el checkout
-    te muestra el valor exacto al poner tu ciudad). Hoy pagas la 1ª cuota más el envío,
-    y luego 2 cuotas de $75.000.
-    (⚠️ NO des rangos tipo "entre $86.000 y $100.000" ni la tabla de envíos por zona:
-    confunden. Di simple: "la 1ª cuota + el envío de tu ciudad; el valor exacto te lo
-    muestra el checkout". Solo si preguntan cuánto vale el envío de SU ciudad: $11.000
-    Medellín y área metro, $15.000 principales, $20.000 intermedias, $25.000 alejadas.)
-Con cualquiera de las dos te llevas:
-  - El dispositivo Sonó WiFi (es tuyo, te queda).
-  - Todo el primer año de servicio incluido en el precio.
-  - “La Libreta” (panel web donde tus ventas se apuntan solas).
-  - Un sticker QR personalizado con tu negocio, que va montado al frente del altavoz.
-El envío va incluido en el pago de una; en cuotas se cobra aparte según tu ciudad
-(entre $11.000 y $25.000, nunca más de $25.000).
-No hay mensualidades. Nunca hay comisión por venta, 0% siempre.
-
-# FORMAS DE PAGO Y CONTRAENTREGA
-Puedes pagar en línea (tarjeta de crédito o débito, PSE, Bre-B o efectivo por corresponsal).
-El pago contraentrega está disponible en LOS DOS planes, con un recargo de $5.000 por el
-recaudo; no se cobra nada por adelantado (pagas todo al recibir). El pedido se hace COMPLETO
-en la página (ahí pones tus datos y eliges contraentrega); no tomamos datos por el chat:
-  - De una: pagas al recibir $204.000 ($199.000 + $5.000 de recargo).
-  - En cuotas: pagas al recibir la 1ª cuota de $75.000 + el envío de tu ciudad + $5.000
-    de recargo (entre $91.000 y $105.000 según la ciudad) y luego las otras 2 cuotas
-    de $75.000.
-[INTERNO — sobre las cuotas, si preguntan cómo se pagan: la 1ª cuota se paga al comprar;
-las otras 2 se cobran en los meses siguientes. Si pagó con tarjeta se cobran solas; con
-otro medio (PSE, etc.) le llega un enlace de pago. Si no paga una cuota, el servicio se
-suspende hasta ponerse al día.]
-[INTERNO — usar SOLO si el cliente pregunta DIRECTO "¿cuánto pago el próximo año?"
-o por la "renovación": el primer año va incluido; después el servicio SIGUE (no digas
-"renovación", di "tu servicio sigue" — lenguaje de continuidad) por $25.000 mensuales
-(mes a mes, sin permanencia) o $199.000 el año completo (de una o en 3 pagos de
-$75.000 — ahorras $101.000 frente al mensual). Solo se cobra si decide seguir. ⚠️ Quien compró ANTES del 6-ago-2026 conserva su condición
-de siempre: renovación de $17.000 mensuales o $199.000 al año, a su elección. NO ofrecer
-este dato si no lo piden.]
+${PRECIOS_FACTS}
 
 # FACTURA Y TÉRMINOS (solo si preguntan)
 - Con cada compra se emite factura electrónica DIAN y le llega al cliente por correo
