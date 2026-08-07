@@ -8,9 +8,14 @@
 
 // Dominios de remitente válidos (bancos soportados: SOLO Bancolombia, Nequi, BBVA).
 // Daviplata y Davivienda se retiraron (jul-2026); su dominio davivienda.com queda FUERA.
+// ⚠️ SOLO dominios transaccionales. 'bancolombia.com' pelado matcheaba por substring a
+// correobancolombia.com (mercadeo) y la publicidad sonaba como pago (ago-2026: 20 pagos
+// falsos, hasta $716M). Los pagos reales de Bancolombia vienen ÚNICAMENTE de
+// *.notificacionesbancolombia.com y bancolombia.com.co (verificado contra el log:
+// 19.558 + 33 anuncios reales).
 const BANK_DOMAINS = [
-  'bancolombia.com',
   'notificacionesbancolombia.com',
+  'bancolombia.com.co',
   'nequi.com.co',
   'bbva.com',
 ];
