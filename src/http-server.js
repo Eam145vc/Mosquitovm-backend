@@ -2679,6 +2679,70 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
     req.raw.on('close', () => { clearInterval(ping); unsub(); });
   });
 
+  // ── Operación PÚBLICA (sección "en vivo" de sono.lat): SIN auth ────────────
+  // Versión incógnita del HUD para prueba social: solo CANTIDADES por banco
+  // (sin montos ni recaudo), comercios conectados ahora (sin nombres) y flota
+  // por ciudad (para la coropleta del mapa). Nada acá identifica a un comercio.
+  app.get('/public/ops', async (req, reply) => {
+    reply.header('Access-Control-Allow-Origin', '*');
+    const now = Date.now();
+    const ONLINE_MS = 12 * 60 * 1000; // mismo umbral que el HUD del admin
+    const byOrder = new Map(listOrders().map((o) => [o.id, o]));
+    const owners = new Set();      // dueños distintos con ≥1 speaker en línea
+    const fleetByCity = new Map(); // ciudad → { n, online }, sin nombres
+    for (const d of listDevices()) {
+      const o = d.order_id ? byOrder.get(d.order_id) : null;
+      if (!o) continue; // speakers sin asignar (stock/escritorio) no cuentan
+      const online = d.last_seen != null && now - d.last_seen < ONLINE_MS;
+      if (online) owners.add(o.account_id || o.id);
+      if (!o.city) continue;
+      const g = fleetByCity.get(o.city) || { city: o.city, n: 0, online: 0 };
+      g.n += 1;
+      if (online) g.online += 1;
+      fleetByCity.set(o.city, g);
+    }
+    const dayStart = bogotaDayStart(now);
+    const today = paymentsTotalsSince(dayStart);
+    return {
+      now,
+      todayN: today.n,                 // pagos anunciados hoy (cantidad)
+      merchantsToday: today.clients,   // comercios con ventas hoy
+      merchantsOnline: owners.size,    // comercios conectados AHORA
+      byBank: paymentsByBankSince(dayStart).map((b) => ({ bank: b.bank, n: b.n })),
+      fleet: [...fleetByCity.values()],
+    };
+  });
+
+  // Stream SSE público: reusa el mismo bus del HUD pero SOLO deja pasar pagos,
+  // reducidos a { bank, city } — sin monto, sin nombre, sin speaker. Alimenta
+  // la animación banco→speaker y el mapa en vivo de la web.
+  const publicOpsEvent = (ev) => (ev.type === 'payment'
+    ? { id: ev.id, at: ev.at, type: 'payment', bank: ev.bank || null, city: ev.city || null }
+    : null);
+  app.get('/public/ops/stream', (req, reply) => {
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+      'Access-Control-Allow-Origin': '*',
+    });
+    const send = (ev) => {
+      const pub = publicOpsEvent(ev);
+      if (!pub) return;
+      try { reply.raw.write(`id: ${pub.id}\ndata: ${JSON.stringify(pub)}\n\n`); }
+      catch { /* socket cerrándose: el close de abajo limpia */ }
+    };
+    reply.raw.write('retry: 3000\n\n');
+    for (const ev of opsRecent(Number(req.headers['last-event-id']) || 0)) send(ev);
+    const unsub = opsSubscribe(send);
+    const ping = setInterval(() => {
+      try { reply.raw.write(': ping\n\n'); } catch { /* idem */ }
+    }, 25_000);
+    req.raw.on('close', () => { clearInterval(ping); unsub(); });
+  });
+
   // ── Buzón (catch-all): correo que entra al MX a un alias DESCONOCIDO ──
   // (los de clientes conocidos NO se guardan acá; van al buzón de cada cliente).
   // Reemplaza el viejo reenvío del catch-all al correo personal. Agrupado por alias.
