@@ -2708,7 +2708,11 @@ export function startHttp(onAccountAdded, onPaymentDetected, onSubStatusChange, 
       todayN: today.n,                 // pagos anunciados hoy (cantidad)
       merchantsToday: today.clients,   // comercios con ventas hoy
       merchantsOnline: owners.size,    // comercios conectados AHORA
-      byBank: paymentsByBankSince(dayStart).map((b) => ({ bank: b.bank, n: b.n })),
+      // Ordenado por CANTIDAD de pagos (la web solo muestra cantidades; el
+      // orden por recaudo del admin acá descuadra al llegar el primer SSE).
+      byBank: paymentsByBankSince(dayStart)
+        .map((b) => ({ bank: b.bank, n: b.n }))
+        .sort((a, b) => b.n - a.n),
       fleet: [...fleetByCity.values()],
     };
   });
